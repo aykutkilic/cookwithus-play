@@ -216,6 +216,7 @@ export class Scene3D {
   setFirstPerson(on) {
     this.firstPerson = on;
     this.camera.fov = on ? 80 : 32;
+    this.fpCam = null; // (start right at my eyes)
     this.camera.near = on ? 0.03 : 0.1;
     this.camera.updateProjectionMatrix();
     this.camInit = false;
@@ -232,6 +233,142 @@ export class Scene3D {
   project(gx, y, gz) {
     const v = new THREE.Vector3(gx, y, gz).project(this.camera);
     return { x: (v.x + 1) / 2 * this.canvas.clientWidth, y: (1 - v.y) / 2 * this.canvas.clientHeight, on: v.z < 1 };
+  }
+
+  // ---------------------------------------------------------------- first person: hands on things
+  // (client px ↔ the world)
+  screenOf(w) {
+    const r = this.canvas.getBoundingClientRect();
+    const v = w.clone().project(this.camera);
+    return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height, on: v.z < 1 && v.z > -1 };
+  }
+  rayAt(cx, cy) {
+    const r = this.canvas.getBoundingClientRect();
+    const rc = this.raycaster || (this.raycaster = new THREE.Raycaster());
+    rc.setFromCamera(new THREE.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), this.camera);
+    return rc.ray;
+  }
+  // where the middle of the view is on the screen (the view is shifted clear of the panels)
+  viewCenter() {
+    const d = new THREE.Vector3();
+    this.camera.getWorldDirection(d);
+    return this.screenOf(this.camera.position.clone().add(d));
+  }
+  rayPoint(cx, cy, d) { return this.rayAt(cx, cy).at(d, new THREE.Vector3()); }
+  // how many screen px a world size is, there
+  pxOf(w, size) {
+    const r = this.canvas.getBoundingClientRect();
+    const d = Math.max(0.05, w.distanceTo(this.camera.position));
+    return size / (2 * d * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) * r.height;
+  }
+  // how far a store's door is open (as drawn)
+  doorOpenness(fx) {
+    const F = this.k3.fx[fx];
+    return F && F.parts.door ? F.parts.door.userData.o || 0 : 0;
+  }
+  // a store's handle (where a hand takes it), in the world
+  handleWorld(fx) {
+    const F = this.k3.fx[fx];
+    if (!F || !F.parts.leaf) return null;
+    F.parts.leaf.updateWorldMatrix(true, false);
+    const [a, b] = F.parts.handle;
+    return F.parts.leaf.localToWorld(a.clone().lerp(b, 0.5));
+  }
+  // How far open the door would be with the hand holding its handle at this
+  // point of the screen: round its hinge, as far as the handle swings.
+  doorAt(fx, cx, cy) {
+    const F = this.k3.fx[fx];
+    const hinge = F.parts.door, g = hinge.parent;
+    const ray = this.rayAt(cx, cy);
+    const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+    const o = ray.origin.clone().applyMatrix4(inv), d = ray.direction.clone().transformDirection(inv);
+    const h = hinge.position, R = F.parts.handle[0].x + F.parts.leaf.position.x;
+    // in the floor plane: where the line of sight meets the handle's circle round the hinge
+    const ox = o.x - h.x, oz = o.z - h.z, n = Math.hypot(d.x, d.z) || 1, dx = d.x / n, dz = d.z / n;
+    const b = ox * dx + oz * dz, c = ox * ox + oz * oz - R * R, disc = b * b - c;
+    let px, pz;
+    if (disc >= 0) { const t = -b - Math.sqrt(disc) > 0 ? -b - Math.sqrt(disc) : -b + Math.sqrt(disc); px = ox + dx * t; pz = oz + dz * t; } else { px = ox - dx * b; pz = oz - dz * b; }
+    return Math.max(0, Math.min(1, Math.atan2(pz, px) / 1.75));
+  }
+  // the spot on a store's shelves under this point of the screen: {r, x, w}
+  shelfSpotAt(fx, cx, cy) {
+    const F = this.k3.fx[fx];
+    if (!F || !F.anchors.shelfL || this.doorOpenness(fx) < 0.45) return null;
+    const g = F.parts.door.parent;
+    const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+    const ray = this.rayAt(cx, cy);
+    const o = ray.origin.clone().applyMatrix4(inv), d = ray.direction.clone().transformDirection(inv);
+    const Ls = F.anchors.shelfL.map((w) => w.clone().applyMatrix4(inv)), Rs = F.anchors.shelfR.map((w) => w.clone().applyMatrix4(inv));
+    let best = null;
+    Ls.forEach((L, lv) => {
+      if (Math.abs(d.y) < 1e-4) return;
+      const t = (L.y + 0.02 - o.y) / d.y;
+      if (t <= 0 || (best && t >= best.t)) return;
+      const p = o.clone().addScaledVector(d, t);
+      if (p.x < L.x - 0.06 || p.x > Rs[lv].x + 0.06 || p.z < L.z - 0.6 || p.z > L.z + 0.26) return; // (from the back of the shelf to just in front of it)
+      const u = Math.max(0, Math.min(1, (p.x - L.x) / (Rs[lv].x - L.x)));
+      best = { t, r: Ls.length - 1 - lv, x: Math.round(Math.max(0, Math.min(1, (u - 0.08) / 0.84)) * 100) / 100, w: F.anchors.shelfL[lv].clone().lerp(F.anchors.shelfR[lv], u) };
+    });
+    return best && { r: best.r, x: best.x, w: best.w };
+  }
+  // What a hand could take hold of at this point of the screen, in reach:
+  // a thing in my hands, a store's door handle, a thing on its shelves (door
+  // open), or a spot on a shelf (to put something) – or null.
+  fpPick(cx, cy, me, held = []) {
+    if (!this.firstPerson || !me) return null;
+    const near = (q) => {
+      const best = { d: Infinity, q: null };
+      for (const c of q) { const s = this.screenOf(c.w); if (!s.on) continue; const d = Math.hypot(s.x - cx, s.y - cy); if (d < c.r && d < best.d) { best.d = d; best.q = c; } }
+      return best.q;
+    };
+    // what's in my hands
+    const mine = [];
+    for (const [k, e] of this.stashAt || []) {
+      if (!e.fp || !held.includes(k)) continue;
+      const w = this.glides.get(k) ? this.glides.get(k).pos.clone() : e.pos.clone();
+      const vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
+      w.y += vr ? vr.h * 0.5 : (e.size || 0.1) * 0.4;
+      mine.push({ kind: 'held', key: k, w, r: Math.max(34, this.pxOf(w, vr ? vr.r * 1.6 : (e.size || 0.1) * 0.9)) });
+    }
+    const m = near(mine);
+    if (m) return m;
+    // the stores in reach, in front of me
+    for (const [fx, F] of Object.entries(this.k3.fx)) {
+      if (!F.parts.leaf) continue;
+      const c = F.f;
+      const ddx = Math.max(c.x, Math.min(c.x + c.w, me.x)) - me.x, ddz = Math.max(c.y, Math.min(c.y + c.h, me.y)) - me.y;
+      if (Math.hypot(ddx, ddz) > 1.3) continue;
+      const hw = this.handleWorld(fx);
+      const [a, b] = F.parts.handle.map((p) => this.screenOf(F.parts.leaf.localToWorld(p.clone())));
+      if (a.on && b.on) {
+        // near the handle's line on the screen
+        const vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((cx - a.x) * vx + (cy - a.y) * vy) / L2));
+        if (Math.hypot(a.x + vx * t - cx, a.y + vy * t - cy) < Math.max(28, this.pxOf(hw, 0.07))) return { kind: 'door', fx, w: hw };
+      }
+      if (this.doorOpenness(fx) < 0.45) continue;
+      const things = [];
+      for (const [k, e] of this.stashAt || []) {
+        if (!e.stored || !e.sig || !e.sig.startsWith(`s:${fx}:`)) continue;
+        const w = (this.glides.get(k) ? this.glides.get(k).pos : e.pos).clone();
+        const vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
+        w.y += vr ? vr.h * 0.8 * 0.5 : 0.17 * 0.4;
+        things.push({ kind: 'thing', key: k, fx, w, r: Math.max(26, this.pxOf(w, vr ? vr.r * 0.8 * 1.6 : 0.15)) });
+      }
+      const t = near(things);
+      if (t) return t;
+      const spot = this.shelfSpotAt(fx, cx, cy);
+      if (spot) return { kind: 'shelf', fx, ...spot };
+    }
+    // (or just the fridge / pantry itself: its door to open or shut)
+    for (const [fx, F] of Object.entries(this.k3.fx)) {
+      if (!F.parts.leaf) continue;
+      const c = F.f;
+      if (Math.hypot(Math.max(c.x, Math.min(c.x + c.w, me.x)) - me.x, Math.max(c.y, Math.min(c.y + c.h, me.y)) - me.y) > 1.3) continue;
+      const box = new THREE.Box3(new THREE.Vector3(c.x, 0, c.y), new THREE.Vector3(c.x + c.w, 1.25, c.y + c.h));
+      if (this.rayAt(cx, cy).intersectsBox(box)) return { kind: 'store', fx };
+    }
+    return null;
   }
 
   // the screen-space directions of the grid axes (for moving with keys / stick)
@@ -267,12 +404,21 @@ export class Scene3D {
     const me = view.cooks.find((c) => c.me);
     if (this.firstPerson && me) {
       // at my eyes, looking where I face (and up / down as I like)
-      const pitch = view.pitch ?? -0.18;
+      // (the view eases after where I face – keys, stick or dragging – so it never jumps)
+      const c = this.fpCam;
+      if (!c || Math.hypot(c.x - me.x, c.y - me.y) > 1.5) this.fpCam = { x: me.x, y: me.y, yaw: me.yaw || 0, pitch: view.pitch ?? -0.18 };
+      const F = this.fpCam, k = 1 - Math.exp(-dt * 22);
+      let dy = (me.yaw || 0) - F.yaw;
+      dy -= Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
+      F.yaw += dy * k;
+      F.pitch += ((view.pitch ?? -0.18) - F.pitch) * k;
+      F.x = me.x; F.y = me.y;
+      const pitch = F.pitch, yaw = F.yaw;
       // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
       // (leaning in a little while reaching for something)
       const lean = this.fpArms.lean();
-      const eye = new THREE.Vector3(me.x - Math.sin(me.yaw) * (0.14 - lean), 0.74 - lean * 0.35, me.y - Math.cos(me.yaw) * (0.14 - lean));
-      const dir = new THREE.Vector3(Math.sin(me.yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(me.yaw) * Math.cos(pitch));
+      const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), 0.74 - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
+      const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
       this.camTarget.copy(eye).add(dir);
       this.camera.lookAt(this.camTarget);
@@ -738,13 +884,22 @@ export class Scene3D {
       const dest = this.restPos(k, D);
       if (dest) this.fpArms.reach(i, { key: k, take: false, hold: this.fpHold.get(k), ...gripAt(k, i, dest, 0) });
     }
-    const holds = slots.map((k) => {
+    // (a point in the world, for the hand on side s: in the right hand's camera space)
+    const handAt = (w, s) => { const p = this.camera.worldToLocal(w.clone()); if (s < 0) p.x = -p.x; return p; };
+    const holds = slots.map((k, i) => {
       if (!k) return null;
       const h = this.fpHold.get(k) || 'palm';
+      // carried over to a shelf with the pointer
+      if (view.fpGrab && view.fpGrab.key === k && h !== 'side') return { kind: h, at: handAt(view.fpGrab.w, i ? 1 : -1) };
       if (h !== 'side') return { kind: h };
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
       return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.17, -0.3 - r) };
     });
+    // a free hand on a door's handle
+    if (view.fpGrab && !view.fpGrab.key) {
+      const i = holds[1] == null ? 1 : holds[0] == null ? 0 : -1;
+      if (i >= 0) holds[i] = { kind: 'grab', at: handAt(view.fpGrab.w, i ? 1 : -1) };
+    }
     this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t });
   }
 
@@ -752,10 +907,15 @@ export class Scene3D {
   // place's spot for it) – null if it went nowhere to be seen.
   restPos(k, D) {
     const t = k[0] === 'v' ? D && D.vessels[k.slice(2)] : D && D.items[k.slice(2)];
-    const fx = t && (k[0] === 'v' ? t.at && t.at.fx : t.at);
+    const fx = t && (k[0] === 'v' ? (t.at ? t.at.fx : t.held == null && t.home) : t.at);
     const F = fx && this.k3.fx[fx];
     if (!F || t.in) return null;
     const A = F.anchors;
+    // put away: its spot on the shelf
+    if (A.shelfL) {
+      const n = A.shelfL.length, r = t.spot ? Math.min(n - 1, t.spot.r) : 1, u = t.spot ? 0.08 + t.spot.x * 0.84 : 0.5;
+      return A.shelfL[n - 1 - r].clone().lerp(A.shelfR[n - 1 - r], u);
+    }
     if (k[0] === 'v' && A.burners && (t.onHob || F.f.type === 'stove') && A.burners[t.at.slot]) return A.burners[t.at.slot];
     return A.board || A.basin || (A.spots && A.spots[0]) || A.top || A.mouth || null;
   }

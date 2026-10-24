@@ -411,6 +411,8 @@ function fridge(g, ctx, d) {
   for (const y of [0.25, 0.6]) door.add(box(0.7, 0.05, 0.08, lining, 0, y, -0.07));
   g.add(hinge);
   d.parts.door = hinge;
+  d.parts.leaf = door;
+  d.parts.handle = [v3(0.34, 0.32, 0.05), v3(0.34, 0.7, 0.05)]; // (door space) the long handle a hand takes
   // a fruit bowl on top
   g.add(lathe([[0, 0], [0.14, 0.02], [0.17, 0.08]], mat(ctx.T.tileB, { rough: 0.4, double: true }), 0, 1.18, -0.05));
   for (const [x, z, c] of [[-0.05, 0, '#e8432e'], [0.06, -0.06, '#f7d330'], [0.04, 0.06, '#f08a24']]) g.add(ball(0.05, mat(c, { rough: 0.5 }), x, 1.24, -0.05 + z));
@@ -448,6 +450,8 @@ function pantry(g, ctx, d) {
   door.add(ball(0.025, M.brass(), 0.38, 0.5, 0.03));
   g.add(hinge);
   d.parts.door = hinge;
+  d.parts.leaf = door;
+  d.parts.handle = [v3(0.38, 0.47, 0.03), v3(0.38, 0.53, 0.03)]; // (door space) the knob
   // below: the pots, pans, bowls and plates, and the food that isn't kept cold – put away
   // on the three lower shelves, each in its own place near the front where you can see it
   d.anchors.shelfL = [0.085, 0.415, 0.735, 1.055].map((y) => v3(-0.38, y, 0.22));

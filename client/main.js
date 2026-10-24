@@ -33,6 +33,7 @@ const store = {
 };
 const SPEED = 2.5;   // tiles per second
 const TURN = 2.6;    // first person: radians per second turning with the keys / stick
+const TURN_UP = 9, TURN_DOWN = 12; // (how quickly a turn gets going, and settles)
 const ACCEL = 12, BRAKE = 15; // how quickly the cook gets up to speed / stops
 const RADIUS = 0.26; // how wide a cook is
 
@@ -489,6 +490,8 @@ function moveMe(dt) {
   const v = me.v;
   let wx = 0, wy = 0;
   const d = S.working || !$('modal').hidden || !$('menu').hidden ? { mag: 0 } : controls.dir();
+  // (first person: turning gets up to speed and settles rather than starting and stopping dead)
+  let turn = 0;
   if (d.mag && S.fp) {
     // first person: up / down walk forward / back, left / right turn – but
     // facing a counter (the stove, the sink …) close up, left / right step
@@ -502,7 +505,7 @@ function moveMe(dt) {
         const square = Math.round(me.yaw / (Math.PI / 2)) * (Math.PI / 2);
         if (Math.abs(square - me.yaw) < 0.6) me.yaw += (square - me.yaw) * (1 - Math.exp(-dt * 5));
       }
-    } else me.yaw -= d.x * TURN * dt * Math.min(1, d.mag + 0.2);
+    } else turn = -d.x * TURN * Math.min(1, d.mag + 0.2);
   } else if (d.mag) {
     // the stick / keys are in screen space: turn them into kitchen directions
     const ax = scene.screenAxes();
@@ -514,6 +517,9 @@ function moveMe(dt) {
       me.yaw = Math.atan2(u, w);
     }
   }
+  me.turn = (me.turn || 0) + (turn - (me.turn || 0)) * (1 - Math.exp(-dt * (turn ? TURN_UP : TURN_DOWN)));
+  if (!S.fp || (!turn && Math.abs(me.turn) < 0.01)) me.turn = 0;
+  me.yaw += me.turn * dt;
   const k = 1 - Math.exp(-dt * (wx || wy ? ACCEL : BRAKE));
   v.x += (wx - v.x) * k; v.y += (wy - v.y) * k;
   if (!(wx || wy) && Math.hypot(v.x, v.y) < 0.05) v.x = v.y = 0;
@@ -649,12 +655,100 @@ function zoomFrom(f) {
   el.classList.remove('zoom'); void el.offsetWidth; el.classList.add('zoom');
 }
 
+// ------------------------------------------------------------------ first person: hands on things
+// In first person there's no close-up for the fridge or the pantry: you do it
+// right there in the kitchen. Take the handle and swing the door (or E, the
+// door you look at); click / tap a thing on a shelf – or look at it and press
+// E – and your hand takes it; drag a thing from your hand onto a shelf, or
+// look at the shelf and press E, to put it there; drag things about on the
+// shelves to arrange them.
+function myHeld() { return S.M.cook ? heldBy(S.M.cook, S.myId) : []; }
+function freeHandSlot() { const sl = scene.fpSlots; return sl[1] == null ? 1 : sl[0] == null ? 0 : -1; }
+function fpGrab(e) {
+  const pick = scene.fpPick(e.clientX, e.clientY, S.me, myHeld());
+  if (!pick) return;
+  if (pick.kind === 'door' && freeHandSlot() < 0) { toast('Both your hands are full – put something down first, then come back for the door'); return; }
+  S.fpDrag = { ...pick, pid: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, sent: 0 };
+  touches.delete(e.pointerId); // (not looking round)
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ } // (let go over anything)
+  canvas.style.cursor = 'grabbing';
+  if (pick.kind === 'door') { S.fpDrag.v = scene.doorOpenness(pick.fx); sfx.play('door', 0.5); } else sfx.play('grab', 0.5);
+}
+function fpDragTo(cx, cy) {
+  const d = S.fpDrag;
+  if (Math.hypot(cx - d.x0, cy - d.y0) > 12) d.moved = true;
+  if (d.kind === 'door') {
+    d.v = scene.doorAt(d.fx, cx, cy);
+    const now = performance.now();
+    if (now - d.sent > 100) { d.sent = now; send({ t: 'door', fx: d.fx, v: d.v }); }
+  } else {
+    // carrying it over the shelves: where it would go
+    const fxs = d.fx ? [d.fx] : storesNear();
+    d.spot = null;
+    for (const fx of fxs) { const sp = scene.shelfSpotAt(fx, cx, cy); if (sp) { d.spot = { ...sp, fx }; break; } }
+    d.cx = cx; d.cy = cy;
+  }
+}
+function fpLetGo(cx, cy, cancel) {
+  const d = S.fpDrag;
+  S.fpDrag = null;
+  canvas.style.cursor = '';
+  if (cancel) return;
+  if (d.kind === 'door') {
+    const v = d.v >= 0.5 ? 1 : 0;
+    send({ t: 'door', fx: d.fx, v, done: true });
+    sfx.play(v ? 'door' : 'clunk', 0.6);
+  } else if (d.kind === 'thing') {
+    if (d.moved && d.spot && d.spot.fx === d.fx) send({ t: 'arrange', what: d.key, fx: d.fx, r: d.spot.r, x: d.spot.x });
+    else send({ t: 'take', what: d.key, fx: d.fx });
+  } else if (d.kind === 'held') {
+    if (d.spot) { send({ t: 'put', what: d.key, fx: d.spot.fx, r: d.spot.r, x: d.spot.x }); sfx.play('clunk', 0.5); }
+  } else if (d.kind === 'shelf') { /* (pressed on a bare shelf: nothing to do) */ }
+}
+function storesNear() { return S.K.fixtures.filter((f) => isStore(f) && Math.hypot(Math.max(f.x, Math.min(f.x + f.w, S.me.x)) - S.me.x, Math.max(f.y, Math.min(f.y + f.h, S.me.y)) - S.me.y) < 1.3).map((f) => f.id); }
+// first person: the fridge / pantry I'm looking into (its handle, a shelf, a thing on one)
+function fpLookTarget() {
+  const cross = $('cross');
+  cross.hidden = !S.fp || !!S.working;
+  if (!S.fp) return null;
+  const c = scene.viewCenter();
+  cross.style.left = `${c.x}px`; cross.style.top = `${c.y}px`;
+  const pick = scene.fpPick(c.x, c.y, S.me, []);
+  cross.classList.toggle('on', !!pick && pick.kind !== 'shelf');
+  return pick && pick.fx ? fixtureById(S.K, pick.fx) : null;
+}
+// E at a store in first person: what's in the middle of the view
+function fpStoreLook(f) {
+  const c = scene.viewCenter();
+  const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
+  const C = S.M.cook, fridge = f.type === 'fridge', name = fridge ? 'fridge' : 'pantry';
+  const open = C && C.fx[f.id] && C.fx[f.id].door;
+  if (pick && pick.kind === 'thing') return { label: `${thingEmoji(C, pick.key)} Take the ${thingName(C, S.x, pick.key)}`, run: () => send({ t: 'take', what: pick.key, fx: pick.fx }) };
+  const held = myHeld();
+  if (pick && pick.kind === 'shelf' && held.length) {
+    const k = scene.fpSlots[1] || scene.fpSlots[0] || held[0];
+    return { label: `${thingEmoji(C, k)} Put the ${thingName(C, S.x, k)} here`, run: () => { send({ t: 'put', what: k, fx: pick.fx, r: pick.r, x: pick.x }); sfx.play('clunk', 0.5); } };
+  }
+  return {
+    label: `${fridge ? '🧊' : '🫙'} ${open ? 'Shut' : 'Open'} the ${name}`,
+    run: () => {
+      const i = freeHandSlot();
+      if (i < 0) { toast('Both your hands are full – put something down first, then come back for the door'); return; }
+      const w = scene.handleWorld(f.id);
+      if (w) scene.fpArms.reach(i, { key: null, take: false, hold: 'grab', world: w });
+      send({ t: 'door', fx: f.id, v: open ? 0 : 1, done: true });
+      sfx.play(open ? 'clunk' : 'door', 0.6);
+    },
+  };
+}
+
 // The fridge / the pantry, close up: open it by the handle, take what you
 // need, put things back, swing it shut.
 function openStore(fx) {
   const C = S.M.cook, x = S.x, K = S.K;
   const f = fixtureById(K, fx);
   if (!f || !C || !x) return;
+  if (S.fp) { fpStoreLook(f).run(); return; } // (first person: right there in the kitchen)
   closeMenu();
   if (S.working) closeStation(true);
   S.me.yaw = yawTo(f);
@@ -721,9 +815,19 @@ const canvas = $('world');
 // two fingers pinch-zoom the kitchen; the mouse wheel too
 const touches = new Map();
 let pinch = 0;
-canvas.addEventListener('pointerdown', (e) => { sfx.unlock(); closeMenu(); touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
+canvas.addEventListener('pointerdown', (e) => {
+  sfx.unlock(); closeMenu();
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  // first person: a hand takes hold of what's under the pointer (else you look round)
+  if (S.fp && touches.size === 1 && !S.working) fpGrab(e);
+});
 canvas.addEventListener('pointermove', (e) => {
-  if (!touches.has(e.pointerId)) return;
+  if (S.fpDrag && S.fpDrag.pid === e.pointerId) { fpDragTo(e.clientX, e.clientY); return; }
+  if (!touches.has(e.pointerId)) {
+    // (the mouse over something a hand could take)
+    if (S.fp && e.pointerType === 'mouse' && !S.working) canvas.style.cursor = scene.fpPick(e.clientX, e.clientY, S.me, myHeld()) ? 'grab' : '';
+    return;
+  }
   const was = touches.get(e.pointerId);
   if (S.fp && touches.size === 1) {
     // first person: drag to look round and up / down
@@ -738,7 +842,10 @@ canvas.addEventListener('pointermove', (e) => {
     pinch = d;
   }
 });
-const lift = (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = 0; };
+const lift = (e) => {
+  touches.delete(e.pointerId); if (touches.size < 2) pinch = 0;
+  if (S.fpDrag && S.fpDrag.pid === e.pointerId) fpLetGo(e.clientX, e.clientY, e.type === 'pointercancel');
+};
 canvas.addEventListener('pointerup', lift);
 canvas.addEventListener('pointercancel', lift);
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
@@ -1340,7 +1447,7 @@ function frame(now) {
   if (S.K && S.M.room) {
     const t0 = performance.now();
     moveMe(dt);
-    S.target = S.working ? null : findTarget();
+    S.target = S.working ? null : fpLookTarget() || findTarget();
     tickTimers(dt);
     sendPos(now);
     const view = buildView(now, dt);
@@ -1451,7 +1558,13 @@ function buildView(now, dt) {
   if (C) for (const [id, f] of Object.entries(C.fx)) if (f.swing != null) doors.set(id, f.swing);
   if (S.working && station.g && station.g.kind === 'door') doors.set(S.working.fx, station.g.v);
   if (S.working && S.working.store && station.store) doors.set(S.working.fx, station.store.v);
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, working: !!S.working, target: S.target ? S.target.id : null };
+  // first person: my hand on a door's handle, or carrying something over a shelf
+  let fpGrab = null;
+  const fd = S.fpDrag;
+  if (fd && fd.kind === 'door') { doors.set(fd.fx, fd.v); fpGrab = { w: scene.handleWorld(fd.fx) }; }
+  if (fd && fd.kind === 'held' && fd.cx != null) fpGrab = { key: fd.key, w: fd.spot ? fd.spot.w.clone().setY(fd.spot.w.y + 0.06) : scene.rayPoint(fd.cx, fd.cy, 0.42) };
+  if (fpGrab && !fpGrab.w) fpGrab = null;
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, working: !!S.working, target: S.target ? S.target.id : null, fpGrab };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:
@@ -1489,8 +1602,9 @@ function drawTags(view) {
   if (f && !S.working && $('menu').hidden && $('modal').hidden) {
     const all = jobsAt(f);
     const jobs = all.filter((j) => !j.off);
+    const look = S.fp && isStore(f) ? fpStoreLook(f) : null;
     const pick = bestJob(f, all);
-    const what = pick ? pick.label : jobs.length ? `${FIXTURES[f.type].name} · ${jobs.length} things to do` : FIXTURES[f.type].name;
+    const what = look ? look.label : pick ? pick.label : jobs.length ? `${FIXTURES[f.type].name} · ${jobs.length} things to do` : FIXTURES[f.type].name;
     const p = scene.project(f.x + f.w / 2, 0.95, f.y + f.h / 2);
     pr.hidden = false;
     pr.style.transform = `translate(${p.x}px, ${p.y}px)`;

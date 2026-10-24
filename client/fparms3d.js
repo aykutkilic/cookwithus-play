@@ -42,6 +42,7 @@ const HOLDS = {
   handle: { at: v(0.12, -0.15, -0.3), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1 },
   palm: { at: v(0.1, -0.13, -0.26), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
   side: { at: v(0.16, -0.17, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-1, 0.35, 0), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.55 },
+  grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85 }, // a door's handle
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
 
@@ -119,7 +120,10 @@ export class FpArms {
     const H = HOLDS[kind] || HOLDS.away;
     let base = this.poseCache.get(kind);
     if (!base) { base = aim(H.a, H.b, H.c, H.pref); this.poseCache.set(kind, base); }
-    const grip = at ? at.clone() : H.at; // (in the right hand's space)
+    const grip = at ? at.clone() : H.at.clone(); // (in the right hand's space)
+    // (no further than an arm reaches)
+    const toG = grip.clone().sub(SHOULDER), gl = H.grip.clone().multiplyScalar(HS).length();
+    if (toG.length() > REACH - gl) grip.copy(SHOULDER).add(toG.setLength(REACH - gl));
     const wrist = grip.clone().sub(H.grip.clone().multiplyScalar(HS).applyQuaternion(base));
     return { wrist: mirrorV(wrist, s), q: s < 0 ? mirrorQ(base) : base.clone(), curl: H.curl, grip: H.grip };
   }
