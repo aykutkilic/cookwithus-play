@@ -39,7 +39,7 @@ const THUMB = { base: v(-0.006, 0.036, -0.012), open: [v(-0.02, 0.058, -0.05), v
 // direction a turned to b, and twisted so the forearm (or the palm) goes the
 // way of pref; how far the fingers close. The left hand is the mirror image.
 const HOLDS = {
-  handle: { at: v(0.12, -0.15, -0.3), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1 },
+  handle: { at: v(0.12, -0.16, -0.25), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1 },
   palm: { at: v(0.1, -0.13, -0.26), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
   side: { at: v(0.16, -0.17, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-1, 0.35, 0), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.55 },
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85 }, // a door's handle
@@ -236,7 +236,7 @@ export class FpArms {
     if (d > reach) {
       sh = sh0.clone().add(w.clone().sub(sh0).normalize().multiplyScalar(Math.min(d - reach, SLIDE)));
       d = w.distanceTo(sh);
-      if (d > reach) { w.copy(sh).add(w.clone().sub(sh).setLength(reach)); d = reach; } // (never a stretched arm)
+      if (d > reach) { const dir = w.clone().sub(sh).normalize(); w.copy(sh).addScaledVector(dir, reach); d = reach; } // (never a stretched arm)
     }
     d = Math.max(d, Math.abs(UPPER - FORE) + 0.02);
     const u = w.clone().sub(sh).normalize();
