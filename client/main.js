@@ -1431,7 +1431,7 @@ function buildView(now, dt) {
   if (C) for (const [id, f] of Object.entries(C.fx)) if (f.swing != null) doors.set(id, f.swing);
   if (S.working && station.g && station.g.kind === 'door') doors.set(S.working.fx, station.g.v);
   if (S.working && S.working.store && station.store) doors.set(S.working.fx, station.store.v);
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, target: S.target ? S.target.id : null };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, working: !!S.working, target: S.target ? S.target.id : null };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:

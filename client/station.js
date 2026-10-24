@@ -49,6 +49,8 @@ export class Station {
     this.t = 0;
     this.fx = [];      // transient effects
     this.ptr = { x: SIDE.x + 300, y: 300, down: false, seen: false };
+    this.ptr2 = null;     // a second finger on a touch screen: your other hand
+    this.touchy = false;  // fingers, not a mouse (work for two hands then takes two fingers)
     this.paint = document.createElement('canvas');
     this.paint.width = 320; this.paint.height = 320;
     this.bindPointer();
@@ -216,7 +218,7 @@ export class Station {
     const names = this.c.x.names || {};
     const into = names[this.c.def.into || this.c.def.vessel] || 'pot';
     this.hooks.progress({
-      title: this.c.def.name, hint: ph ? ph.hint.replace('{into}', into) : 'Done!', ph: this.ph, phases: this.c.phases.length,
+      title: this.c.def.name, hint: this.tip && performance.now() < this.tip.until ? this.tip.msg : ph ? ph.hint.replace('{into}', into) : 'Done!', ph: this.ph, phases: this.c.phases.length,
       k: this.k, n: ph ? phaseTarget(ph) : 0, value: ph && ['pour', 'fill', 'paint'].includes(ph.g) ? this.g && this.g.v : null,
       band: ph && ph.band, cover: ph && ph.cover, done: this.done,
     });
@@ -266,18 +268,29 @@ export class Station {
       const ox = (r.width - SW * sc) / 2, oy = (r.height - SH * sc) / 2;
       return { x: (e.clientX - r.left - ox) / sc, y: (e.clientY - r.top - oy) / sc };
     };
+    // Each finger is a hand: the first does the work, a second one is your
+    // other hand (holding the food steady, the other half of an egg, the door).
     el.addEventListener('pointerdown', (e) => {
       if (!this.on) return;
       e.preventDefault();
       try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       const p = toLocal(e);
-      Object.assign(this.ptr, p, { down: true, seen: true, vx: 0, vy: 0, t: performance.now() });
+      if (e.pointerType === 'touch') this.touchy = true;
       this.idle = 0;
+      if (this.ptr.down && e.pointerId !== this.ptr.id) {
+        if (this.ptr2) return; // (two hands is all you have)
+        this.ptr2 = { ...p, id: e.pointerId, down: true };
+        this.onDown2(p);
+        return;
+      }
+      Object.assign(this.ptr, p, { id: e.pointerId, down: true, seen: true, vx: 0, vy: 0, t: performance.now() });
       this.onDown(p);
     });
     el.addEventListener('pointermove', (e) => {
       if (!this.on) return;
       const p = toLocal(e);
+      if (this.ptr2 && e.pointerId === this.ptr2.id) { Object.assign(this.ptr2, p); this.idle = 0; this.onMove2(p); return; }
+      if (this.ptr.down && this.ptr.id !== undefined && e.pointerId !== this.ptr.id) return;
       const now = performance.now();
       const dt = Math.max(1, now - (this.ptr.t || now));
       this.ptr.vx = (p.x - this.ptr.x) / dt * 1000;
@@ -287,7 +300,9 @@ export class Station {
       if (this.ptr.down) { this.idle = 0; this.onMove(p, prev); }
     });
     const up = (e) => {
-      if (!this.on || !this.ptr.down) return;
+      if (!this.on) return;
+      if (this.ptr2 && e.pointerId === this.ptr2.id) { const id = this.ptr2.id; this.ptr2 = null; this.onUp2(toLocal(e), id); return; }
+      if (!this.ptr.down || (this.ptr.id !== undefined && e.pointerId !== this.ptr.id)) return;
       this.ptr.down = false;
       this.onUp(toLocal(e));
     };
@@ -296,8 +311,89 @@ export class Station {
     el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') this.ptr.seen = false; });
   }
 
+  // (tests) where a point of the scene is on the screen
+  screenPoint(p) {
+    const r = this.canvas.getBoundingClientRect();
+    const sc = sceneScale(r.width, r.height);
+    return { x: r.left + (r.width - SW * sc) / 2 + p.x * sc, y: r.top + (r.height - SH * sc) / 2 + p.y * sc };
+  }
+
+  // the second finger: your other hand
+  onDown2(p) {
+    if (this.mode === 'store') { this.storeDown(p, this.ptr2.id); return; }
+    const g = this.g;
+    if (!g || this.done) return;
+    // the finger on the food is the hand holding it; the other one works
+    if (this.steadies() && this.onFood(this.ptr) && !this.onFood(p)) {
+      const a = { x: this.ptr.x, y: this.ptr.y, id: this.ptr.id };
+      Object.assign(this.ptr, { x: p.x, y: p.y, id: this.ptr2.id, vx: 0, vy: 0, t: performance.now() });
+      Object.assign(this.ptr2, a);
+      this.onDown(this.ptr);
+      return;
+    }
+    // an egg knocked open: a thumb in each side of the crack
+    if (g.kind === 'crack' && g.stage === 1) { g.two = { d0: dist(this.ptr, p) }; g.start = null; }
+  }
+  onMove2(p) {
+    if (this.mode === 'store') { this.storeMove(p, this.ptr2.id); return; }
+    const g = this.g;
+    if (g && !this.done && g.kind === 'crack' && g.two) this.crackSpread();
+  }
+  onUp2(p, id) {
+    if (this.mode === 'store') { this.storeUp(p, id); return; }
+    const g = this.g;
+    if (g && g.kind === 'crack' && g.two) { g.two = null; g.spread = 0; }
+  }
+
+  // pulling the shell apart with two thumbs
+  crackSpread() {
+    const g = this.g;
+    if (!this.ptr2) return;
+    g.spread = Math.max(0, dist(this.ptr, this.ptr2) - g.two.d0);
+    if (g.spread > 70) this.cracked();
+  }
+  cracked() {
+    const g = this.g;
+    g.stage = 0; g.start = null; g.two = null; g.spread = 0; g.egg = { ...SIDE, y: SIDE.y - 40 };
+    this.hooks.sfx('plop'); this.splash(MAIN.x, MAIN.y - 80, '#ffd34d');
+    this.count();
+  }
+
+  // Board work takes both hands: one holds the food steady while the other
+  // cuts, peels or grates. With a mouse that's taken care of; on a touch
+  // screen the other hand is a second finger on the food.
+  steadies() {
+    const g = this.g;
+    if (!g || !g.ph || !this.subjectItem()) return false;
+    return ['chop', 'peel'].includes(g.kind) || (g.kind === 'strokes' && ['knife', 'grater'].includes(g.ph.tool));
+  }
+  onFood(p) {
+    const b = this.subjectBox();
+    return !!p && p.x > b.x0 - 40 && p.x < b.x1 + 40 && p.y > b.y0 - 50 && p.y < b.y1 + 30;
+  }
+  // where the steadying hand is (null: nothing holds the food)
+  steadyAt() {
+    const b = this.subjectBox(), ph = this.g.ph;
+    if (!this.touchy) return { x: ph.tool === 'grater' ? b.cx - 30 : b.x0 + Math.min(70, b.w * 0.18), y: b.cy + 6 };
+    const q = this.ptr2;
+    if (!q || !this.onFood(q)) return null;
+    return { x: clamp(q.x, b.x0 + 20, b.x1 - 20), y: clamp(q.y, b.y0 + 10, b.y1 - 6) };
+  }
+  // may this stroke of the knife (peeler, grater) count? Not with the food loose.
+  held() {
+    if (!this.steadies() || this.steadyAt()) return true;
+    this.twoHint('Hold it steady with your other hand – a second finger on the food');
+    return false;
+  }
+  twoHint(msg) {
+    this.tip = { msg, until: performance.now() + 2400 };
+    this.report();
+    clearTimeout(this.tipT);
+    this.tipT = setTimeout(() => { if (this.on && this.mode !== 'store') this.report(); }, 2500);
+  }
+
   onDown(p) {
-    if (this.mode === 'store') { this.storeDown(p); return; }
+    if (this.mode === 'store') { this.storeDown(p, this.ptr.id); return; }
     const g = this.g;
     if (!g || this.done) return;
     switch (g.kind) {
@@ -338,7 +434,7 @@ export class Station {
   }
 
   onMove(p, prev) {
-    if (this.mode === 'store') { this.storeMove(p); return; }
+    if (this.mode === 'store') { this.storeMove(p, this.ptr.id); return; }
     const g = this.g;
     if (!g || this.done) return;
     switch (g.kind) {
@@ -381,13 +477,11 @@ export class Station {
             g.stage = 1; g.drag = null; g.egg = { x: rim.x, y: rim.y - 34 };
             this.hooks.sfx('crack'); this.burst(rim.x, rim.y - 30, '#fff8e8', 8);
           }
-        } else if (g.stage === 1 && g.start) {
+        } else if (g.stage === 1 && g.two) this.crackSpread();
+        else if (g.stage === 1 && g.start) {
+          if (this.touchy) { if (Math.abs(p.x - g.start.x) > 50) this.twoHint('Both thumbs on the egg – and pull them apart'); break; }
           g.spread = Math.abs(p.x - g.start.x);
-          if (g.spread > 70) {
-            g.stage = 0; g.start = null; g.spread = 0; g.egg = { ...SIDE, y: SIDE.y - 40 };
-            this.hooks.sfx('plop'); this.splash(MAIN.x, MAIN.y - 80, '#ffd34d');
-            this.count();
-          }
+          if (g.spread > 70) this.cracked();
         }
         break;
       case 'wrap': this.wrapMove(p); break;
@@ -397,7 +491,7 @@ export class Station {
   }
 
   onUp(p) {
-    if (this.mode === 'store') { this.storeUp(p); return; }
+    if (this.mode === 'store') { this.storeUp(p, this.ptr.id); return; }
     const g = this.g;
     if (!g || this.done) return;
     switch (g.kind) {
@@ -428,7 +522,7 @@ export class Station {
         const ok = hand
           ? dist(p, g.start) > 90 && dist(g.start, { x: box.cx, y: box.cy }) < Math.max(box.w, box.h) * 0.7
           : g.start.y < box.cy && p.y - g.start.y > box.h * 0.55 && Math.abs(g.start.x - box.cx) < box.w * 0.7;
-        if (ok) {
+        if (ok && this.held()) {
           this.hooks.sfx(hand ? 'peel' : 'peeler');
           this.fx.push({ kind: 'strip', x: p.x, y: p.y, vx: (p.x - g.start.x) * 0.6 + 60, vy: -120, life: 0, max: 1.1, col: this.subjectColor() });
           this.count();
@@ -463,7 +557,7 @@ export class Station {
         g.start = null;
         break;
       }
-      case 'crack': if (g.drag) { g.drag = null; g.egg = { ...SIDE, y: SIDE.y - 40 }; } break;
+      case 'crack': if (g.drag) { g.drag = null; g.egg = { ...SIDE, y: SIDE.y - 40 }; } if (g.two) { g.two = null; g.spread = 0; } break;
       case 'wrap': this.wrapUp(p); break;
       case 'scoop': {
         if (!g.drag) break;
@@ -489,6 +583,7 @@ export class Station {
     if (p.y < top) g.armed = true;
     if (g.armed && p.y > board && over) {
       g.armed = false;
+      if (!this.held()) return;
       this.hooks.sfx(ph.flat ? 'thud' : 'chop');
       this.fx.push({ kind: 'thunk', x: p.x, y: board, life: 0, max: 0.25 });
       if (Math.random() < 0.7) this.burst(p.x, board - 10, this.subjectFlesh(), 4);
@@ -510,6 +605,7 @@ export class Station {
     g.last = p;
     if (!g.counted && g.run >= minLeg) {
       g.counted = true;
+      if (!this.held()) return;
       const tool = ph.tool;
       this.hooks.sfx(tool === 'shaker' ? 'shake' : tool === 'grater' ? 'grate' : tool === 'rollingPin' ? 'roll' : tool === 'knife' ? 'slit' : tool === 'masher' ? 'thud' : ph.axis === 'h' && this.c.def.do === 'wash' ? 'scrub' : 'squish');
       if (tool === 'shaker') this.powder(p.x, p.y + 30, this.c.def.item);
@@ -1393,39 +1489,78 @@ export class Station {
     }
   }
 
-  storeDown(p) {
+  // Hands free for the door or for taking something: two, less what they
+  // hold, the one on the door and the one(s) pulling something out.
+  freeHands() {
+    const S = this.store, { keys, two } = this.heldNow();
+    const busy = (S.door ? 1 : 0) + (S.drag && S.drag.from === 'shelf' ? (S.drag.two ? 2 : 1) : 0) + (S.lift ? 1 : 0);
+    return 2 - (two ? 2 : Math.min(2, keys.length)) - busy;
+  }
+  heavyKey(k) { return k[0] === 'v' && this.c.C.vessels[k.slice(2)] && twoHanded(this.c.C.vessels[k.slice(2)].kind); }
+
+  // Each finger is a hand (pid): one can hold the door while the other takes
+  // things; a heavy pot comes off the shelf with two fingers on it.
+  storeDown(p, pid) {
     const S = this.store, geo = this.storeGeo;
-    const { two } = this.heldNow();
-    if (dist(p, this.doorGrab(geo, S.v)) < 85) {
-      if (two) { this.storeSay('Both your hands are full – no hand free for the door'); this.hooks.sfx('clunk', 0.4); return; }
-      S.door = true; this.hooks.sfx('door'); return;
+    if (!S.door && dist(p, this.doorGrab(geo, S.v)) < 85) {
+      if (this.freeHands() < 1) { this.storeSay(this.heldNow().two ? 'Both your hands are full – no hand free for the door' : 'No hand free for the door'); this.hooks.sfx('clunk', 0.4); return; }
+      S.door = { pid }; this.hooks.sfx('door'); return;
     }
     if (S.v < 0.55) { this.reportStore(); return; }
+    // the second hand on a heavy pot: up it comes
+    if (S.lift && S.lift.pid !== pid && dist(p, S.lift.at) < 150) {
+      const L = S.lift, a = this.ptrOf(L.pid) || L.p;
+      const mid = { x: (a.x + p.x) / 2, y: (a.y + p.y) / 2 };
+      S.drag = { key: L.key, from: L.from, pos: mid, dx: L.at.x - mid.x, dy: L.at.y - mid.y, s: L.s, two: true, pids: [L.pid, pid] };
+      S.lift = null;
+      this.hooks.sfx('grab');
+      this.reportStore();
+      return;
+    }
+    if (S.drag || S.lift) return;
     // something on a shelf
     for (const [k, at] of this.storeLayout()) {
       if (at.fixed) continue;
       if (p.x > at.x - at.w / 2 - 10 && p.x < at.x + at.w / 2 + 10 && p.y > at.y - at.h - 10 && p.y < at.y + 12) {
-        S.drag = { key: k, from: 'shelf', pos: { ...p }, dx: at.x - p.x, dy: at.y - p.y, s: at.s };
+        const heavy = this.heavyKey(k);
+        if (this.freeHands() < (heavy ? 2 : 1)) {
+          this.storeSay(heavy ? 'That takes both hands – put down what you hold, or let go of the door (it stays open)' : 'No hand free – let go of the door (it stays open)');
+          this.hooks.sfx('clunk', 0.4);
+          return;
+        }
+        if (heavy && this.touchy) {
+          S.lift = { key: k, from: 'shelf', pid, at: { x: at.x, y: at.y - at.h / 2 }, p: { ...p }, s: at.s };
+          this.storeSay('It\'s heavy – a second finger on it, to lift it with both hands');
+          this.hooks.sfx('grab', 0.4);
+          return;
+        }
+        S.drag = { key: k, from: 'shelf', pos: { ...p }, dx: at.x - p.x, dy: at.y - p.y, s: at.s, pid, two: heavy };
         this.hooks.sfx('grab');
         return;
       }
     }
     // something in my hands (to put back)
     for (const h of this.handSpots(this.heldHere())) {
-      if (dist(p, { x: h.x, y: h.y - 30 }) < (h.two ? 110 : 65)) { S.drag = { key: h.k, from: 'hands', pos: { ...p }, dx: h.x - p.x, dy: h.y - p.y, s: h.s }; this.hooks.sfx('grab'); return; }
+      if (dist(p, { x: h.x, y: h.y - 30 }) < (h.two ? 110 : 65)) { S.drag = { key: h.k, from: 'hands', pos: { ...p }, dx: h.x - p.x, dy: h.y - p.y, s: h.s, pid }; this.hooks.sfx('grab'); return; }
     }
   }
-  storeMove(p) {
+  ptrOf(pid) { return this.ptr.id === pid ? this.ptr : this.ptr2 && this.ptr2.id === pid ? this.ptr2 : null; }
+  storeMove(p, pid) {
     const S = this.store;
-    if (S.door) {
+    if (S.door && S.door.pid === pid) {
       S.v = this.doorOpenAt(this.storeGeo, p);
       const now = performance.now();
       if (now - S.sent > 100) { S.sent = now; this.hooks.store({ t: 'door', fx: this.c.f.id, v: S.v }); }
-    } else if (S.drag) S.drag.pos = { ...p };
+    } else if (S.drag && S.drag.pids && S.drag.pids.includes(pid)) {
+      // both hands on it: it goes where they go
+      const a = this.ptrOf(S.drag.pids[0]), b = this.ptrOf(S.drag.pids[1]);
+      if (a && b) S.drag.pos = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    } else if (S.drag && S.drag.pid === pid) S.drag.pos = { ...p };
   }
-  storeUp(p) {
+  storeUp(p, pid) {
     const S = this.store, fx = this.c.f.id;
-    if (S.door) {
+    if (S.lift && S.lift.pid === pid) { S.lift = null; this.reportStore(); return; }
+    if (S.door && S.door.pid === pid) {
       S.door = false;
       S.v = S.v >= 0.5 ? 1 : 0;
       this.hooks.store({ t: 'door', fx, v: S.v, done: true });
@@ -1435,7 +1570,7 @@ export class Station {
       return;
     }
     const d = S.drag;
-    if (!d) return;
+    if (!d || !(d.pid === pid || (d.pids && d.pids.includes(pid)))) return;
     S.drag = null;
     const base = { x: d.pos.x + d.dx, y: d.pos.y + d.dy }; // where it would stand
     if (d.from === 'shelf' && !this.insideStore(base)) {
@@ -1452,17 +1587,28 @@ export class Station {
     }
     this.reportStore();
   }
+  // my free hand(s): on the door, at each finger, round what they pull out
   storeCursor(ctx) {
-    const p = this.ptr;
-    if (!p.seen) return;
-    if (this.heldNow().two) return; // no hand free: both are round the pot
-    const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
     const S = this.store;
-    const at = S.door ? this.doorGrab(this.storeGeo, S.v) : p;
-    // the free hand: if I'm holding something, the one on the other side
-    const free = this.heldShown().length ? -this.holdSide() : 1;
-    this.drawArm(ctx, look, { x: 500 + free * 300, y: SH + 90 }, { x: at.x - free * 14, y: at.y + 40 });
-    this.drawHand(ctx, look, at.x, at.y, S.door || S.drag || p.down ? 'fist' : 'open', 0, free < 0);
+    const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
+    const pts = [];
+    if (S.door) pts.push({ x: this.doorGrab(this.storeGeo, S.v).x, y: this.doorGrab(this.storeGeo, S.v).y, grip: true });
+    for (const q of [this.ptr, this.ptr2]) {
+      if (!q || !(q === this.ptr ? q.seen : q.down)) continue;
+      if (S.door && S.door.pid === q.id) continue;
+      if (q === this.ptr && !q.down && this.touchy) continue; // (a lifted finger isn't a hand in view)
+      pts.push({ x: q.x, y: q.y, grip: !!(S.drag || S.lift || q.down) });
+    }
+    const free = this.heldNow().two ? 0 : this.heldShown().length ? 1 : 2;
+    const draggingHeld = S.drag && S.drag.from === 'hands';
+    if (!free && !draggingHeld) return; // no hand free: both are round the pot
+    pts.sort((a, b) => a.x - b.x);
+    const shown = pts.slice(0, Math.max(1, free));
+    shown.forEach((q, i) => {
+      const side = shown.length === 2 ? (i === 0 ? -1 : 1) : this.heldShown().length ? -this.holdSide() : 1;
+      this.drawArm(ctx, look, { x: 500 + side * 300, y: SH + 90 }, { x: q.x - side * 14, y: q.y + 40 });
+      this.drawHand(ctx, look, q.x, q.y, q.grip ? 'fist' : 'open', 0, side < 0);
+    });
   }
 
   sceneBin(ctx) {
@@ -2203,10 +2349,20 @@ export class Station {
     // the steadying hand
     const holds = ['chop', 'peel'].includes(g.kind) || (g.kind === 'strokes' && ['knife', 'grater'].includes(ph.tool));
     if (holds && this.subjectItem()) {
-      const b = this.subjectBox();
-      const hx = ph.tool === 'grater' ? b.cx - 30 : b.x0 + Math.min(70, b.w * 0.18), hy = b.cy + 6;
-      this.drawArm(ctx, look, { x: 170, y: SH + 90 }, { x: hx - 20, y: hy + 30 });
-      this.drawHand(ctx, look, hx, hy, 'claw', -0.3, true);
+      const at = this.steadyAt();
+      if (at) {
+        this.drawArm(ctx, look, { x: 170, y: SH + 90 }, { x: at.x - 20, y: at.y + 30 });
+        this.drawHand(ctx, look, at.x, at.y, 'claw', -0.3, true);
+      } else {
+        // (a touch screen, nothing on the food yet) where your other hand goes
+        const b = this.subjectBox();
+        this.ghostHand(ctx, b.x0 + Math.min(70, b.w * 0.18), b.cy + 6, 0.6 + 0.4 * Math.sin(this.t * 5));
+      }
+    }
+    // the egg pulled apart: your other hand on its other half
+    if (g.kind === 'crack' && g.two && this.ptr2) {
+      this.drawArm(ctx, look, { x: 170, y: SH + 90 }, { x: this.ptr2.x - 14, y: this.ptr2.y + 40 });
+      this.drawHand(ctx, look, this.ptr2.x, this.ptr2.y, 'fist', 0, true);
     }
     if (!p.seen) { if (tool && !holds) { /* resting hand */ } return; }
     if (!tool) return;

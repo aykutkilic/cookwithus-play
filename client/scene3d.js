@@ -16,6 +16,8 @@ import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
 import { VESSELS, twoHanded } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook } from './cook3d.js';
+import { FpArms } from './fparms3d.js';
+import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
@@ -96,6 +98,10 @@ export class Scene3D {
     this.dt = 0;
     this.zoom = 1;
     this.firstPerson = false;
+    this.scene.add(this.camera); // (its children – my arms in first person – are drawn too)
+    this.fpArms = new FpArms(this.camera);
+    this.fpSlots = [null, null]; // what my left and right hands hold (first person)
+    this.fpHold = new Map();     // thing -> how it's held ('handle', 'palm', 'side')
     this.camTarget = new THREE.Vector3();
     this.camPos = new THREE.Vector3();
     this.camInit = false;
@@ -244,6 +250,7 @@ export class Scene3D {
     this.updateCamera(dt, view);
     this.updateFixtures(view);
     this.updateCooks(view, dt); // first: things in their hands follow them
+    this.updateArms(view, dt);
     this.updateStash(view);
     this.updateVessels(view, dt);
     this.updateItems(view);
@@ -262,7 +269,9 @@ export class Scene3D {
       // at my eyes, looking where I face (and up / down as I like)
       const pitch = view.pitch ?? -0.18;
       // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
-      const eye = new THREE.Vector3(me.x - Math.sin(me.yaw) * 0.14, 0.74, me.y - Math.cos(me.yaw) * 0.14);
+      // (leaning in a little while reaching for something)
+      const lean = this.fpArms.lean();
+      const eye = new THREE.Vector3(me.x - Math.sin(me.yaw) * (0.14 - lean), 0.74 - lean * 0.35, me.y - Math.cos(me.yaw) * (0.14 - lean));
       const dir = new THREE.Vector3(Math.sin(me.yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(me.yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
       this.camTarget.copy(eye).add(dir);
@@ -417,9 +426,25 @@ export class Scene3D {
         put(k, lv, slot >= 0 ? SLOTS[slot] : 0.5);
       }
     }
+    // in my own hands, in first person – and on their way into them or out
+    const meRec = this.fpOn ? this.cooks.get(this.fpMe) : null;
+    if (meRec) {
+      for (let i = 0; i < 2; i++) {
+        const r = this.fpArms.reaching(i);
+        const k = r && !r.take && !r.released ? r.key : this.fpSlots[i];
+        if (!k || out.has(k)) continue;
+        // (where it lay till the hand closes on it; then, if the hand only got
+        // within arm's length of it, it comes the rest of the way)
+        if (r && r.key === k && r.take && !r.grabbed) { out.set(k, { pos: r.src, yaw: r.srcYaw, sig: 'fp:lying', fp: true, size: 0.24 }); continue; }
+        // (food is drawn hand-sized in the hand, and grows back to its size on the
+        // counter as it goes there – on its way out of the hand, see updateItems)
+        const p = r && r.key === k && r.take ? r.p : 0;
+        out.set(k, { ...this.fpAttach(k, i, meRec), sig: 'fp', fp: true, size: 0.1 + 0.14 * p });
+      }
+    }
     // in someone's hands
     for (const rec of this.cooks.values()) {
-      if (!rec.holding || !rec.hands) continue;
+      if (!rec.holding || !rec.hands || (rec === meRec && rec.fig.visible === false)) continue;
       rec.holding.forEach((k, i) => {
         if (k[0] === 'v' && !GRIP3D[rec.holdKind] && !twoHanded(rec.holdKind)) {
           // a plate, a bowl: carried on one hand, out in front
@@ -451,7 +476,7 @@ export class Scene3D {
   glide(key, sig, target) {
     let g = this.glides.get(key);
     if (!g) { g = { sig, pos: target.clone(), from: null, t: 1 }; this.glides.set(key, g); return g.pos; }
-    if (g.sig !== sig) { g.sig = sig; g.from = g.pos.clone(); g.t = 0; }
+    if (g.sig !== sig) { g.fromHand = g.sig === 'fp'; g.sig = sig; g.from = g.pos.clone(); g.t = 0; }
     if (g.t < 1) {
       g.t = Math.min(1, g.t + this.dt / GLIDE_S);
       const e = g.t * g.t * (3 - 2 * g.t);
@@ -495,7 +520,7 @@ export class Scene3D {
         }
         rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
         rec.group.rotation.y = kept && kept.yaw != null ? kept.yaw : 0;
-        rec.group.scale.setScalar(kept && kept.held ? 0.85 : kept ? 0.8 : 1);
+        rec.group.scale.setScalar(kept && kept.fp ? 1 : kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         updateVessel(rec, v, this.t);
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');
         if (v.heat > 0 && (v.kind === 'pan' || v.kind === 'paellaPan') && v.contents && v.contents.length && Math.random() < dt * 12) this.puff(p.clone().setY(p.y + 0.05), 'sizzle');
@@ -559,7 +584,7 @@ export class Scene3D {
       const kept = this.stashAt && this.stashAt.get(`i:${id}`);
       if (kept) {
         // in the fridge / on the shelf, or in someone's hands
-        show(`item:${id}`, this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.held ? 0.2 : 0.17);
+        show(`item:${id}`, this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17);
         continue;
       }
       if (it.used && !it.at) continue;
@@ -575,7 +600,9 @@ export class Scene3D {
       if (!pos) continue;
       const done = it.cut && (it.k || 0) >= (it.n || 0);
       const tex = done && !active ? this.spriteFor(it.kind, null, it.cut) : this.spriteFor(it.kind, it);
-      show(`item:${id}`, tex, this.glide(`i:${id}`, `a:${fxId}`, pos), active ? 0.34 : 0.24);
+      const at = this.glide(`i:${id}`, `a:${fxId}`, pos), g = this.glides.get(`i:${id}`);
+      const size = active ? 0.34 : 0.24;
+      show(`item:${id}`, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size);
     }
     // food on trays and plates
     for (const [vid, rec] of this.vessels) {
@@ -663,6 +690,94 @@ export class Scene3D {
       fadeCook(rec.fig, this.blocksView(c, view) ? 0.28 : 1, dt);
     }
     for (const [id, rec] of this.cooks) if (!seen.has(id)) { this.scene.remove(rec.fig); disposeTree(rec.fig); this.cooks.delete(id); }
+  }
+
+  // First person: my own arms. Each thing stays in the hand that took it (a
+  // pot takes both); a new one is reached for where it lay, and one put down
+  // is carried to where it goes and let go there.
+  updateArms(view, dt) {
+    const me = view.cooks.find((c) => c.me);
+    const rec = me && this.cooks.get(me.id);
+    const D = view.D;
+    const on = this.firstPerson && !!rec && !view.working;
+    this.fpOn = on;
+    this.fpMe = me && me.id;
+    const holding = (rec && rec.holding) || [];
+    const vk = (k) => (k && k[0] === 'v' && D && D.vessels[k.slice(2)] ? D.vessels[k.slice(2)].kind : null);
+    const holdOf = (k) => { const kd = vk(k); return !kd ? 'palm' : twoHanded(kd) ? 'side' : GRIP3D[kd] ? 'handle' : 'palm'; };
+    const slots = this.fpSlots, came = [], gone = [];
+    for (let i = 0; i < 2; i++) if (slots[i] && !holding.includes(slots[i])) { gone.push([i, slots[i]]); slots[i] = null; }
+    for (const k of holding) {
+      if (slots.includes(k)) continue;
+      const h = holdOf(k);
+      this.fpHold.set(k, h);
+      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = slots[1] == null ? 1 : 0; slots[i] = k; came.push([i, k]); }
+    }
+    if (!on) { this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
+    this.fpArms.setLook(lookOf(me.avatar));
+    const right = new THREE.Vector3(-Math.cos(rec.yaw), 0, Math.sin(rec.yaw));
+    // where a hand takes hold of a thing lying at base (yaw: how it lies)
+    const gripAt = (k, i, base, yaw) => {
+      const h = this.fpHold.get(k) || 'palm', vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
+      if (h === 'handle') {
+        const g = GRIP3D[vk(k)], c = Math.cos(yaw), sn = Math.sin(yaw);
+        const off = new THREE.Vector3(g.x * c + g.z * sn, g.y, -g.x * sn + g.z * c);
+        return { world: base.clone().add(off), aimAt: off.clone().setY(0).negate().normalize() };
+      }
+      if (h === 'side') return { world: base.clone().add(right.clone().multiplyScalar((i ? 1 : -1) * ((vr ? vr.r : 0.13) + 0.035))).setY(base.y + (vr ? vr.h * 0.8 : 0.1)) };
+      return { world: base.clone().setY(base.y + (vr ? vr.h * 0.5 : 0.04)) };
+    };
+    for (const [i, k] of came) {
+      const g = this.glides.get(k);
+      if (!g) continue;
+      const vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
+      const yaw = vr ? vr.group.rotation.y : 0;
+      this.fpArms.reach(i, { key: k, take: true, hold: this.fpHold.get(k), src: g.pos.clone(), srcYaw: yaw, ...gripAt(k, i, g.pos, yaw) });
+    }
+    for (const [i, k] of gone) {
+      const dest = this.restPos(k, D);
+      if (dest) this.fpArms.reach(i, { key: k, take: false, hold: this.fpHold.get(k), ...gripAt(k, i, dest, 0) });
+    }
+    const holds = slots.map((k) => {
+      if (!k) return null;
+      const h = this.fpHold.get(k) || 'palm';
+      if (h !== 'side') return { kind: h };
+      const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
+      return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.17, -0.3 - r) };
+    });
+    this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t });
+  }
+
+  // Where a thing in my hands goes, now it's been put down (roughly: the
+  // place's spot for it) – null if it went nowhere to be seen.
+  restPos(k, D) {
+    const t = k[0] === 'v' ? D && D.vessels[k.slice(2)] : D && D.items[k.slice(2)];
+    const fx = t && (k[0] === 'v' ? t.at && t.at.fx : t.at);
+    const F = fx && this.k3.fx[fx];
+    if (!F || t.in) return null;
+    const A = F.anchors;
+    if (k[0] === 'v' && A.burners && (t.onHob || F.f.type === 'stove') && A.burners[t.at.slot]) return A.burners[t.at.slot];
+    return A.board || A.basin || (A.spots && A.spots[0]) || A.top || A.mouth || null;
+  }
+
+  // where a thing in my hand i is drawn: {pos, yaw}
+  fpAttach(k, i, me) {
+    const A = this.fpArms, h = this.fpHold.get(k) || 'palm';
+    if (h === 'side') {
+      const a = A.palm(0), b = A.palm(1);
+      const vr = this.vessels.get(k.slice(2));
+      const mid = a.clone().lerp(b, 0.5);
+      mid.y -= vr ? vr.h * 0.8 : 0.1;
+      return { pos: mid, yaw: Math.atan2(-(b.z - a.z), b.x - a.x) };
+    }
+    if (h === 'handle') {
+      const g = GRIP3D[this.vessels.get(k.slice(2)) ? this.vessels.get(k.slice(2)).kind : 'pan'] || GRIP3D.pan;
+      const d = A.handleDir(i);
+      const th = Math.atan2(d.z, -d.x);
+      const c = Math.cos(th), sn = Math.sin(th);
+      return { pos: A.fist(i).sub(new THREE.Vector3(g.x * c + g.z * sn, g.y, -g.x * sn + g.z * c)), yaw: th };
+    }
+    return { pos: A.onPalm(i), yaw: me.yaw };
   }
 
   // Is this cook standing between the camera and what I'm facing (or what's on it)?
