@@ -17,6 +17,7 @@ import { VESSELS, twoHanded } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook } from './cook3d.js';
 import { FpArms } from './fparms3d.js';
+import { MAIN, SIDE } from './station.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
@@ -26,6 +27,10 @@ const LIGHTS = 6;
 const GLIDE_S = 0.45;  // a thing taken / put down travels this long, in a little arc
 const REACH_S = 0.55;  // and the cook reaches out for it
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
+const UP = new THREE.Vector3(0, 1, 0);
+const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
+// how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
+const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05 };
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
 const GRIP3D = { saucepan: new THREE.Vector3(0.254, 0.093, 0.032), pan: new THREE.Vector3(0.294, 0.037, 0.032), cezve: new THREE.Vector3(0.194, 0.084, 0.032) };
 const mobile = matchMedia('(pointer: coarse)').matches;
@@ -386,12 +391,14 @@ export class Scene3D {
     this.t += dt;
     this.dt = dt;
     this.updateCamera(dt, view);
+    this.workScene(view);
     this.updateFixtures(view);
     this.updateCooks(view, dt); // first: things in their hands follow them
     this.updateArms(view, dt);
     this.updateStash(view);
     this.updateVessels(view, dt);
     this.updateItems(view);
+    this.updateWorkFx(dt);
     this.updateMarker(view);
     this.updateLights(view);
     this.updateSteam(dt);
@@ -417,7 +424,12 @@ export class Scene3D {
       const pitch = F.pitch, yaw = F.yaw;
       // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
       // (leaning in a little while reaching for something)
-      const lean = this.fpArms.lean();
+      // (and a little closer while working at something)
+      // (further in for something at the back – the back burner, the middle of the sink)
+      const wo = this.work && !this.work.idle && this.work.O;
+      const wantLean = wo ? Math.max(0.18, Math.min(0.42, Math.hypot(wo.x - me.x, wo.z - me.y) - 0.42)) : 0;
+      this.workLean = (this.workLean || 0) + (wantLean - (this.workLean || 0)) * (1 - Math.exp(-dt * 4));
+      const lean = Math.max(this.fpArms.lean(), this.workLean);
       const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), EYE_H + (view.eyeOff || 0) - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
@@ -499,6 +511,8 @@ export class Scene3D {
             fr.children.forEach((c, i) => { c.scale.y = 0.8 + Math.sin(this.t * 22 + i * 1.7) * 0.25; });
           }
           if (P.knobs && P.knobs[slot]) P.knobs[slot].rotation.z = -heat * 0.9;
+          // (turning it right now, in first person: it follows the hand)
+          if (P.knobs && P.knobs[slot] && this.work && this.work.knob && this.work.knob.fx === id && this.work.knob.slot === slot) P.knobs[slot].rotation.z = -this.work.knob.level * 0.9;
         });
       }
       // ovens glow when something bakes inside
@@ -642,7 +656,8 @@ export class Scene3D {
       // vessels resting on the same counter / table share its spots
       const spotUse = new Map();
       for (const [id, v] of Object.entries(D.vessels)) {
-        const kept = this.stashAt && this.stashAt.get(`v:${id}`);
+        const ov = this.work && this.work.ov.get(`v:${id}`);
+        const kept = ov || (this.stashAt && this.stashAt.get(`v:${id}`));
         if (!v.at && !kept) continue;
         const F = v.at && this.k3.fx[v.at.fx];
         if (!F && !kept) continue;
@@ -666,8 +681,11 @@ export class Scene3D {
           this.dynamic.add(rec.group);
         }
         rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
-        rec.group.rotation.y = kept && kept.yaw != null ? kept.yaw : 0;
-        rec.group.scale.setScalar(kept && kept.fp ? 1 : kept && kept.held ? 0.85 : kept ? 0.8 : 1);
+        rec.group.rotation.set(0, kept && kept.yaw != null ? kept.yaw : 0, 0);
+        rec.group.scale.setScalar(ov || (kept && kept.fp) ? 1 : kept && kept.held ? 0.85 : kept ? 0.8 : 1);
+        // (at work, first person: tipped to pour, tossed …)
+        if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
+        if (ov) rec.group.position.copy(ov.pos);
         updateVessel(rec, v, this.t);
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');
         if (v.heat > 0 && (v.kind === 'pan' || v.kind === 'paellaPan') && v.contents && v.contents.length && Math.random() < dt * 12) this.puff(p.clone().setY(p.y + 0.05), 'sizzle');
@@ -728,6 +746,8 @@ export class Scene3D {
     const perFx = new Map();
     for (const [id, it] of Object.entries(D.items)) {
       if (it.hidden || it.in) continue;
+      const ov = this.work && this.work.ov.get(`i:${id}`);
+      if (ov) { show(`item:${id}`, this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2); continue; }
       const kept = this.stashAt && this.stashAt.get(`i:${id}`);
       if (kept) {
         // in the fridge / on the shelf, or in someone's hands
@@ -751,6 +771,8 @@ export class Scene3D {
       const size = active ? 0.34 : 0.24;
       show(`item:${id}`, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size);
     }
+    // at work (first person): what's in my hand that isn't a thing of its own (an egg to crack, a topping, a spoonful)
+    if (this.work) this.work.sprites.forEach((q, i) => show(`work:${i}`, q.tex, q.pos, q.size));
     // food on trays and plates
     for (const [vid, rec] of this.vessels) {
       if (!rec.group.visible || !rec.items) continue;
@@ -846,7 +868,7 @@ export class Scene3D {
     const me = view.cooks.find((c) => c.me);
     const rec = me && this.cooks.get(me.id);
     const D = view.D;
-    const on = this.firstPerson && !!rec && !view.working;
+    const on = this.firstPerson && !!rec && (!view.working || !!this.work);
     this.fpOn = on;
     this.fpMe = me && me.id;
     const holding = (rec && rec.holding) || [];
@@ -896,6 +918,16 @@ export class Scene3D {
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
       return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.17, -0.3 - r) };
     });
+    // at work: what my hands are doing
+    if (this.work && !this.work.idle) {
+      this.work.hands.forEach((h, i) => {
+        if (!h) return;
+        // (a direction for the hand, in the right hand's camera space)
+        let dir = null;
+        if (h.dir) { dir = h.dir.clone().transformDirection(this.camera.matrixWorldInverse); if (!i) dir.x = -dir.x; }
+        holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
+      });
+    }
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {
       const i = holds[1] == null ? 1 : holds[0] == null ? 0 : -1;
@@ -939,6 +971,272 @@ export class Scene3D {
       return { pos: A.fist(i).sub(new THREE.Vector3(g.x * c + g.z * sn, g.y, -g.x * sn + g.z * c)), yaw: th };
     }
     return { pos: A.onPalm(i), yaw: me.yaw };
+  }
+
+  // ---------------------------------------------------------------- first person: work right there
+  // There's no close-up in first person: the close-up's gestures (station.js,
+  // run without drawing) happen on a plane standing on the work spot, facing
+  // you – a point of the close-up (logical px; MAIN is the spot itself) is a
+  // point on that plane, and back. Your hands, the tools, the food and the
+  // pans are drawn there, in the kitchen.
+  workFrame(fxId, kind, slot = 0) {
+    const F = this.k3.fx[fxId];
+    if (!F) return null;
+    const A = F.anchors;
+    const pick = (...ks) => { for (const k of ks) { const a = A[k]; if (a) return Array.isArray(a) ? a[Math.min(slot, a.length - 1)] : a; } return null; };
+    const O = kind === 'hob' ? pick('burners', 'top') : kind === 'sink' ? pick('basin', 'top') : ['oven', 'dome', 'tandoor'].includes(kind) ? pick('inside', 'mouth', 'top')
+      : kind === 'chill' ? pick('shelf', 'top') : pick('board', 'top', 'mouth', 'basin', 'inside', 'shelf');
+    if (!O) return null;
+    const N = F.front.clone();
+    return { fx: fxId, kind, slot, O: O.clone(), N, R: new THREE.Vector3().crossVectors(N.clone().negate(), UP).normalize(), U: UP.clone(), S: WORK_S };
+  }
+  workWorld(w, x, y) { return w.O.clone().addScaledVector(w.R, (x - MAIN.x) * w.S).addScaledVector(w.U, (MAIN.y - y) * w.S); }
+  // the close-up point under this point of the screen
+  workAt(w, cx, cy) {
+    const ray = this.rayAt(cx, cy);
+    const den = ray.direction.dot(w.N);
+    if (Math.abs(den) < 1e-4) return null;
+    const t = w.O.clone().sub(ray.origin).dot(w.N) / den;
+    if (t <= 0) return null;
+    const P = ray.at(t, new THREE.Vector3()).sub(w.O);
+    return { x: MAIN.x + P.dot(w.R) / w.S, y: MAIN.y - P.dot(w.U) / w.S };
+  }
+  // The real thing a gesture takes hold of, where the close-up has it somewhere
+  // else (the knob for this burner on the stove's front, the tap's lever): its
+  // world point and the close-up point – the pointer is shifted from one to the
+  // other on the screen, so you take the real one.
+  workReal(w, st) {
+    const g = st && st.g;
+    const F = g && this.k3.fx[w.fx];
+    if (!F) return null;
+    if (g.kind === 'knob' && F.parts.knobs && F.parts.knobs.length) {
+      const kn = F.parts.knobs[Math.min(w.slot || 0, F.parts.knobs.length - 1)];
+      return { w: kn.getWorldPosition(new THREE.Vector3()).addScaledVector(w.N, 0.02), at: st.knobPos() };
+    }
+    if ((g.kind === 'tap' && g.ph.hot === 'faucet') && F.parts.lever) {
+      return { w: F.parts.lever.localToWorld(new THREE.Vector3(0.1, 0.03, 0)), at: st.hotspot() };
+    }
+    return null;
+  }
+  // the screen shift (px) from the real thing to where the close-up has it
+  workOffset(w, st) {
+    const r = this.workReal(w, st);
+    if (!r) return { x: 0, y: 0 };
+    const a = this.screenOf(this.workWorld(w, r.at.x, r.at.y)), b = this.screenOf(r.w);
+    return { x: a.x - b.x, y: a.y - b.y };
+  }
+
+  // the mouth of the pan I'm working at, in close-up px (what the close-up's drawing would have set)
+  workGeo(w, vesselId) {
+    const rec = vesselId && this.vessels.get(vesselId);
+    if (!rec || !rec.group.visible) return null;
+    const p = rec.group.position.clone().sub(w.O);
+    const x = MAIN.x + p.dot(w.R) / w.S, base = MAIN.y - p.dot(w.U) / w.S, r = rec.r / w.S;
+    return { mouthX: x, mouthY: base - rec.h / w.S, mouthRx: r, mouthRy: r * 0.35, bottomY: base, top: base - rec.h / w.S };
+  }
+
+  // What my hands do at work this frame, and where the things they move are
+  // (from the close-up's state): this.work = {hands, ov, sprites, rings, stream, knob}.
+  workScene(view) {
+    this.work = null;
+    const W = view.work;
+    if (!W || !W.st || !W.st.on || !this.firstPerson || !W.frame) return;
+    const st = W.st, g = st.g, w = W.frame;
+    if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
+    const at = (p) => this.workWorld(w, p.x, p.y);
+    const D = view.D, ph = g.ph, p = st.ptr;
+    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O };
+    // the food worked on stands right on the work spot (under the tap, on the board), as big as the gesture has it
+    if (g.subject && g.subject.type === 'item' && D && D.items[g.subject.id] && !['drag', 'dip'].includes(g.kind)) {
+      const b = st.subjectBox();
+      out.ov.set(`i:${g.subject.id}`, { pos: at({ x: b.cx, y: b.y1 }).addScaledVector(UP, -0.1 * b.h * w.S), size: Math.max(0.12, Math.min(0.32, Math.max(b.w, b.h) * w.S * 1.15)) });
+      // washing: the tap runs on it
+      const F = this.k3.fx[w.fx];
+      if (w.kind === 'sink' && g.kind === 'strokes' && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: at({ x: b.cx, y: b.y0 }), color: '#cfe8f8' };
+    }
+    // the tool, as the close-up has it
+    let tool = ph.tool || { chop: 'knife', peel: 'peeler', circle: 'spoon', paint: 'spoon' }[g.kind] || 'hand';
+    if (['drag', 'scoop', 'dip', 'crack', 'knob', 'tap', 'pour', 'fill', 'place', 'flick', 'door'].includes(g.kind) || (g.kind === 'wrap' && g.stage === 0)) {
+      if (!['tongs', 'ladle', 'spoon', 'pizzaPeel', 'spatula'].includes(tool)) tool = 'hand';
+    }
+    if (tool === 'grab') tool = 'hand';
+    const wi = this.fpSlots[1] && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
+    const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
+    const len = TOOL_LEN[tool] || 0;
+    const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
+    const toolHand = (pos) => (tool === 'hand' ? hand(wi, pos.clone().addScaledVector(UP, 0.02), 'hand', { curl: p.down ? 0.8 : 0.3 }) : hand(wi, pos.clone().addScaledVector(UP, len), 'tool', { tool }));
+    const vKey = (q) => (q && q.type === 'vessel' && q.id ? `v:${q.id}` : q && q.type === 'item' && q.id ? `i:${q.id}` : null);
+    const ring = (q, r = 60) => { if (q) out.rings.push({ w: at(q), r: (q.r || r) * w.S }); };
+    switch (g.kind) {
+      case 'drag': {
+        const k = vKey(g.source);
+        const pos = at(g.pos);
+        if (k) out.ov.set(k, { pos: k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z) });
+        hand(wi, at(st.grabPoint()), g.grip ? 'grab' : 'hand', { curl: g.drag ? 0.85 : 0.35 });
+        if (!g.drag) ring(g.pos, 50);
+        ring(g.target);
+        break;
+      }
+      case 'dip': {
+        const k = vKey(g.source);
+        if (k) out.ov.set(k, { pos: at(g.pos).addScaledVector(UP, -0.04), size: 0.2 });
+        toolHand(at(g.pos));
+        if (!g.drag) ring(g.pos, 50);
+        ring({ x: MAIN.x, y: MAIN.y - 80, r: 100 });
+        break;
+      }
+      case 'crack': {
+        const tex = this.spriteFor('egg', { qty: 1 });
+        if (g.stage === 0) {
+          out.sprites.push({ tex, pos: at(g.egg).addScaledVector(UP, -0.03), size: 0.12 });
+          hand(wi, at(g.egg).addScaledVector(UP, 0.02), 'hand', { curl: 0.7 });
+          ring(st.rimPoint(), 40);
+        } else {
+          const sp = (g.spread || 0) * 0.5;
+          out.sprites.push({ tex, pos: at({ x: g.egg.x - sp, y: g.egg.y }).addScaledVector(UP, -0.03), size: 0.11 });
+          hand(wi, at({ x: g.egg.x + 30 + sp, y: g.egg.y }), 'hand', { curl: 0.8 });
+          hand(oi, at({ x: g.egg.x - 30 - sp, y: g.egg.y }), 'hand', { curl: 0.8 });
+        }
+        break;
+      }
+      case 'pour': case 'fill': {
+        if (g.kind === 'pour') {
+          // the jug / pan / bag in my hand, tipped over the pot
+          // (held on my right – a pan by its handle, the handle away from the pour – tipped left into the pot)
+          const k = vKey(g.source);
+          const lip = at({ x: MAIN.x + 80, y: MAIN.y - 165 });
+          const tilt = g.pouring ? 1.15 : 0.25;
+          const pos = lip.clone().addScaledVector(w.R, 0.06).addScaledVector(UP, -0.08);
+          const yaw = Math.atan2(w.N.x, w.N.z);
+          if (k) out.ov.set(k, { pos, size: 0.2, yaw, tilt, axis: w.N });
+          const vr = k && k[0] === 'v' && this.vessels.get(k.slice(2));
+          const grip = vr && GRIP3D[vr.kind];
+          if (grip) {
+            const q = new THREE.Quaternion().setFromAxisAngle(w.N, tilt).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
+            // (the fist along the handle, toward the pan)
+            hand(wi, pos.clone().add(grip.clone().applyQuaternion(q)), 'handle', { curl: 1, dir: new THREE.Vector3(-1, 0, 0).applyQuaternion(q) });
+          } else hand(wi, pos.clone().addScaledVector(w.R, 0.08).addScaledVector(UP, 0.04), 'grab', { curl: 0.9 });
+          if (g.pouring) out.stream = { from: lip.clone().addScaledVector(w.R, -0.03), to: at({ x: MAIN.x, y: MAIN.y - 60 }), color: (st.pourColor && st.pourColor()) || '#c8e4f4' };
+        } else {
+          // the tap: my hand on its lever, the water running while I hold it
+          const F = this.k3.fx[w.fx];
+          const lever = F && F.parts.lever ? F.parts.lever.getWorldPosition(new THREE.Vector3()).addScaledVector(w.R, 0.08) : at({ x: 580, y: 200 });
+          hand(wi, lever, 'hand', { curl: g.pouring ? 0.8 : 0.35 });
+          if (g.pouring && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: w.O.clone().addScaledVector(UP, 0.03), color: '#cfe8f8' };
+        }
+        break;
+      }
+      case 'knob': {
+        // the real knob on the stove's front (or the oven's panel)
+        const F = this.k3.fx[w.fx];
+        const kn = F && F.parts.knobs && F.parts.knobs[Math.min(w.slot || 0, F.parts.knobs.length - 1)];
+        const kp = kn ? kn.getWorldPosition(new THREE.Vector3()) : at(st.knobPos());
+        hand(wi, kp.clone().addScaledVector(w.N, 0.05), 'hand', { curl: g.turning ? 0.85 : 0.4 });
+        out.knob = { fx: w.fx, slot: w.slot || 0, level: (g.ang + 2.4) / 4.8 * 3 };
+        if (!g.turning) out.rings.push({ w: kp.clone().addScaledVector(w.N, 0.03), r: 0.045 });
+        break;
+      }
+      case 'tap': {
+        // the tap's lever (or the bell, the bin's pedal …): the hand on the real one
+        const real = this.workReal(w, st);
+        const h = st.hotspot();
+        if (real) {
+          const off = this.workOffset(w, st), s0 = this.screenOf(at(pt));
+          const r2 = this.rayAt(s0.x - off.x, s0.y - off.y);
+          hand(wi, r2.at(real.w.distanceTo(this.camera.position), new THREE.Vector3()), 'hand', { curl: p.down ? 0.8 : 0.3 });
+          out.rings.push({ w: real.w, r: 0.04 });
+        } else {
+          toolHand(at(pt));
+          if (h) ring(h);
+        }
+        break;
+      }
+      case 'door': {
+        hand(wi, at(st.doorGrab(g.geo, g.v)), 'grab', { curl: g.drag ? 0.9 : 0.4 });
+        if (!g.drag) ring({ ...st.doorGrab(g.geo, g.v), r: 45 });
+        break;
+      }
+      case 'scoop': {
+        toolHand(at(g.drag && g.pos ? g.pos : pt));
+        if (g.drag && g.pos) out.sprites.push({ tex: this.blobTex(st.scoopColor()), pos: at(g.pos).addScaledVector(UP, -0.02), size: 0.06 });
+        else ring(st.scoopSource(), 60);
+        for (const q of st.scoopTargets()) ring(q, 45);
+        break;
+      }
+      case 'place': {
+        toolHand(at(pt));
+        if (ph.piece) out.sprites.push({ tex: this.spriteFor(ph.piece, null, 'slice'), pos: at(pt).addScaledVector(UP, -0.03), size: 0.08 });
+        break;
+      }
+      default: {
+        // knife, peeler, grater, spoon, whisk, brush … – and the other hand on the food
+        toolHand(at(pt));
+        const s2 = st.steadies && st.steadies() && st.steadyAt();
+        if (s2) hand(oi, at(s2).addScaledVector(UP, 0.01), 'claw');
+        // the pan jumps when you toss it
+        if (g.kind === 'flick' && g.toss) {
+          const k = vKey(g.subject);
+          const rec = k && k[0] === 'v' && this.vessels.get(k.slice(2));
+          if (rec) out.ov.set(k, { pos: rec.group.position.clone().setY(w.O.y + Math.sin(Math.min(1, g.toss) * Math.PI) * 0.12), yaw: rec.group.rotation.y });
+        }
+        break;
+      }
+    }
+    // a second finger on a touch screen is my other hand
+    if (st.ptr2 && !out.hands[oi]) hand(oi, at(st.ptr2), 'hand', { curl: 0.7 });
+    this.work = out;
+  }
+
+  // a little round spoonful (scooping)
+  blobTex(color) {
+    const key = `blob|${color}`;
+    let tex = this.texCache && this.texCache.get(key);
+    if (tex) return tex;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d');
+    x.fillStyle = color; x.strokeStyle = '#3a2a24'; x.lineWidth = 4;
+    x.beginPath(); x.ellipse(32, 40, 24, 16, 0, 0, Math.PI * 2); x.fill(); x.stroke();
+    tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    (this.texCache || (this.texCache = new Map())).set(key, tex);
+    return tex;
+  }
+
+  // the rings showing where to put things / take hold, and the water / a pour running
+  updateWorkFx(dt) {
+    const W = this.work;
+    if (!this.workFx) {
+      this.workFx = { rings: [], stream: null };
+      const sm = new THREE.MeshBasicMaterial({ color: '#cfe8f8', transparent: true, opacity: 0.75, depthWrite: false });
+      this.workFx.stream = new THREE.Mesh(new THREE.CylinderGeometry(1, 0.7, 1, 10, 1, true), sm);
+      this.workFx.stream.visible = false;
+      this.scene.add(this.workFx.stream);
+    }
+    const fx = this.workFx;
+    const rings = (W && W.rings) || [];
+    while (fx.rings.length < rings.length) {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 40), new THREE.MeshBasicMaterial({ color: '#ffd34d', transparent: true, opacity: 0.8, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+      m.renderOrder = 10;
+      this.scene.add(m);
+      fx.rings.push(m);
+    }
+    fx.rings.forEach((m, i) => {
+      const r = rings[i];
+      m.visible = !!r;
+      if (!r) return;
+      m.position.copy(r.w);
+      m.lookAt(this.camera.position);
+      m.scale.setScalar(Math.max(0.02, r.r) * (1 + Math.sin(this.t * 6) * 0.06));
+    });
+    const S = W && W.stream;
+    fx.stream.visible = !!S;
+    if (S) {
+      const len = S.from.distanceTo(S.to);
+      fx.stream.position.copy(S.from).lerp(S.to, 0.5);
+      fx.stream.quaternion.setFromUnitVectors(UP, S.from.clone().sub(S.to).normalize());
+      fx.stream.scale.set(0.012, len, 0.012);
+      fx.stream.material.color.set(S.color);
+      if (Math.random() < dt * 20) this.puff(S.to.clone(), 'drop');
+    }
   }
 
   // Is this cook standing between the camera and what I'm facing (or what's on it)?

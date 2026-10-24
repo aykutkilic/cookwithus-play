@@ -13,9 +13,10 @@
 // kitchen's scale: a counter is about half a unit high).
 import * as THREE from 'three';
 import { mat } from './parts3d.js';
+import { toolMesh } from './cook3d.js';
 
 const HS = 0.5;
-const UPPER = 0.17, FORE = 0.155, SLIDE = 0.22; // arm bones; how far the (unseen) shoulder may come forward
+const UPPER = 0.17, FORE = 0.155, SLIDE = 0.3; // arm bones; how far the (unseen) shoulder may come forward
 const REACH = (UPPER + FORE) * 0.985 + SLIDE;  // further than that, the hand stops (and the thing comes to it)
 const LEAN = 0.16; // how far you lean in toward something out of reach
 const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05);
@@ -30,6 +31,7 @@ const FIST = v(-0.03, 0, -0.1);          // the axis a closed fist holds
 const PALM = v(-0.026, 0, -0.058);       // the middle of the palm's face
 const ON_PALM = v(-0.034, 0, -0.06);     // where something sits on it
 const IN_FIST = v(0, 0.87, -0.5);        // a handle through the fist (a hammer grip: tilted toward the fingers)
+const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
 const FINGERS = [[0.029, 0.044, 0.026, 0.02], [0.01, 0.048, 0.028, 0.022], [-0.009, 0.045, 0.026, 0.02], [-0.028, 0.036, 0.02, 0.016]];
 const BEND = [0.6, 1.66, 1.22]; // a fist: how far each knuckle bends
@@ -43,6 +45,10 @@ const HOLDS = {
   palm: { at: v(0.1, -0.13, -0.26), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
   side: { at: v(0.16, -0.17, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-1, 0.35, 0), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.55 },
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85 }, // a door's handle
+  // at work (first person): a tool upright in the fist, or the open hand palm down
+  tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
+  hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
+  claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
 
@@ -115,11 +121,14 @@ export class FpArms {
     }
   }
 
-  // A hold's pose for the hand on side s: {wrist, q, curl} (camera space).
-  pose(s, kind, at = null) {
+  // A hold's pose for the hand on side s: {wrist, q, curl} (camera space);
+  // dir (the right hand's camera space) turns the hold's own direction that way
+  // (a fist along the handle it holds).
+  pose(s, kind, at = null, dir = null) {
     const H = HOLDS[kind] || HOLDS.away;
     let base = this.poseCache.get(kind);
     if (!base) { base = aim(H.a, H.b, H.c, H.pref); this.poseCache.set(kind, base); }
+    if (dir) base = aim(H.a, dir, H.c, H.pref);
     const grip = at ? at.clone() : H.at.clone(); // (in the right hand's space)
     // (no further than an arm reaches)
     const toG = grip.clone().sub(SHOULDER), gl = H.grip.clone().multiplyScalar(HS).length();
@@ -173,7 +182,9 @@ export class FpArms {
       const h = this.hands[i];
       const hold = holds[i];
       const kind = hold ? hold.kind : 'away';
-      const want = this.pose(h.s, kind, hold && hold.at);
+      const want = this.pose(h.s, kind, hold && hold.at, hold && hold.dir);
+      if (hold && hold.curl != null) want.curl = hold.curl;
+      h.toolKind = hold && hold.tool || null;
       // a little sway as you walk
       if (walk > 0 && kind !== 'away') want.wrist.add(v(Math.sin(t * 9 + i) * 0.004, Math.abs(Math.sin(t * 9)) * 0.006, 0).multiplyScalar(Math.min(1, walk)));
       const r = h.reach;
@@ -202,6 +213,7 @@ export class FpArms {
         h.curl += (want.curl - h.curl) * k;
       }
       h.hold = kind;
+      if (h.limb) this.drawTool(h, visible);
       if (visible && h.limb) this.draw(h);
     }
     this.camera.updateMatrixWorld(true);
@@ -223,6 +235,21 @@ export class FpArms {
   onPalm(i) { return this.handPoint(i, ON_PALM); }
   palm(i) { return this.handPoint(i, PALM); }
   handleDir(i) { return this.handDir(i, IN_FIST); }
+
+  // a tool in the fist (the cooks' own: a knife, a whisk …), hanging from it
+  drawTool(h, visible) {
+    const L = h.limb;
+    if (L.toolKind !== h.toolKind) {
+      if (L.tool) L.root.remove(L.tool);
+      L.tool = h.toolKind ? toolMesh(h.toolKind) : null;
+      L.toolKind = h.toolKind;
+      if (L.tool) { L.tool.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = false; } }); L.root.add(L.tool); }
+    }
+    if (!L.tool) return;
+    L.tool.visible = visible;
+    L.tool.position.copy(v(h.s * FIST.x * HS, FIST.y * HS, FIST.z * HS).applyQuaternion(h.q).add(h.wrist));
+    L.tool.quaternion.copy(h.q).multiply(ALONG_FIST);
+  }
 
   // the arm and hand, posed
   draw(h) {

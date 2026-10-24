@@ -50,6 +50,7 @@ export class Station {
     this.fx = [];      // transient effects
     this.ptr = { x: SIDE.x + 300, y: 300, down: false, seen: false };
     this.ptr2 = null;     // a second finger on a touch screen: your other hand
+    this.headless = false; // first person: the work goes on in the 3D kitchen (nothing drawn here)
     this.touchy = false;  // fingers, not a mouse (work for two hands then takes two fingers)
     this.paint = document.createElement('canvas');
     this.paint.width = 320; this.paint.height = 320;
@@ -268,29 +269,39 @@ export class Station {
       const ox = (r.width - SW * sc) / 2, oy = (r.height - SH * sc) / 2;
       return { x: (e.clientX - r.left - ox) / sc, y: (e.clientY - r.top - oy) / sc };
     };
-    // Each finger is a hand: the first does the work, a second one is your
-    // other hand (holding the food steady, the other half of an egg, the door).
     el.addEventListener('pointerdown', (e) => {
       if (!this.on) return;
       e.preventDefault();
       try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-      const p = toLocal(e);
-      if (e.pointerType === 'touch') this.touchy = true;
+      this.pointer('down', toLocal(e), e.pointerId, e.pointerType);
+    });
+    el.addEventListener('pointermove', (e) => { if (this.on) this.pointer('move', toLocal(e), e.pointerId, e.pointerType); });
+    const up = (e) => { if (this.on) this.pointer('up', toLocal(e), e.pointerId, e.pointerType); };
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') this.ptr.seen = false; });
+  }
+
+  // A pointer (the mouse, a finger) at scene point p – from this canvas, or,
+  // in first person, from the 3D kitchen (the hand on the real counter).
+  // Each finger is a hand: the first does the work, a second one is your
+  // other hand (holding the food steady, the other half of an egg, the door).
+  pointer(type, p, id, pointerType) {
+    if (!this.on) return;
+    if (type === 'down') {
+      if (pointerType === 'touch') this.touchy = true;
       this.idle = 0;
-      if (this.ptr.down && e.pointerId !== this.ptr.id) {
+      if (this.ptr.down && id !== this.ptr.id) {
         if (this.ptr2) return; // (two hands is all you have)
-        this.ptr2 = { ...p, id: e.pointerId, down: true };
+        this.ptr2 = { ...p, id, down: true };
         this.onDown2(p);
         return;
       }
-      Object.assign(this.ptr, p, { id: e.pointerId, down: true, seen: true, vx: 0, vy: 0, t: performance.now() });
+      Object.assign(this.ptr, p, { id, down: true, seen: true, vx: 0, vy: 0, t: performance.now() });
       this.onDown(p);
-    });
-    el.addEventListener('pointermove', (e) => {
-      if (!this.on) return;
-      const p = toLocal(e);
-      if (this.ptr2 && e.pointerId === this.ptr2.id) { Object.assign(this.ptr2, p); this.idle = 0; this.onMove2(p); return; }
-      if (this.ptr.down && this.ptr.id !== undefined && e.pointerId !== this.ptr.id) return;
+    } else if (type === 'move') {
+      if (this.ptr2 && id === this.ptr2.id) { Object.assign(this.ptr2, p); this.idle = 0; this.onMove2(p); return; }
+      if (this.ptr.down && this.ptr.id !== undefined && id !== this.ptr.id) return;
       const now = performance.now();
       const dt = Math.max(1, now - (this.ptr.t || now));
       this.ptr.vx = (p.x - this.ptr.x) / dt * 1000;
@@ -298,17 +309,12 @@ export class Station {
       const prev = { x: this.ptr.x, y: this.ptr.y };
       Object.assign(this.ptr, p, { seen: true, t: now });
       if (this.ptr.down) { this.idle = 0; this.onMove(p, prev); }
-    });
-    const up = (e) => {
-      if (!this.on) return;
-      if (this.ptr2 && e.pointerId === this.ptr2.id) { const id = this.ptr2.id; this.ptr2 = null; this.onUp2(toLocal(e), id); return; }
-      if (!this.ptr.down || (this.ptr.id !== undefined && e.pointerId !== this.ptr.id)) return;
+    } else {
+      if (this.ptr2 && id === this.ptr2.id) { this.ptr2 = null; this.onUp2(p, id); return; }
+      if (!this.ptr.down || (this.ptr.id !== undefined && id !== this.ptr.id)) return;
       this.ptr.down = false;
-      this.onUp(toLocal(e));
-    };
-    el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', up);
-    el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') this.ptr.seen = false; });
+      this.onUp(p);
+    }
   }
 
   // (tests) where a point of the scene is on the screen
@@ -940,7 +946,7 @@ export class Station {
       this.t += dt;
       this.idle = (this.idle || 0) + dt;
       this.storeTick(dt);
-      if (this.on) this.draw(dt); // (shutting the door may have ended the visit)
+      if (this.on && !this.headless) this.draw(dt); // (shutting the door may have ended the visit)
       return;
     }
     this.t += dt;
@@ -959,7 +965,27 @@ export class Station {
     }
     // the cook's hands, for everyone else to see
     this.sendPose();
-    this.draw(dt);
+    if (!this.headless) this.draw(dt);
+    else {
+      // first person: the 3D kitchen shows it (and sets where the pan's mouth is, this.geo)
+      this.prepare();
+      if (g && g.kind === 'flick' && g.toss) { g.toss = Math.max(0, g.toss - dt * 2.4); if (g.toss < 0.02) g.toss = 0; }
+    }
+  }
+
+  // the dish as I see it, with my own moves applied at once (worked out again
+  // only when something changed)
+  prepare() {
+    const C = this.c.C;
+    const g = this.g;
+    const key = this.mode === 'store' ? 'store' : `${this.ph}|${this.k}|${g ? g.v || 0 : 0}|${this.done}`;
+    if (this.preparedFor === C && this.preparedKey === key && this.D) return;
+    this.preparedFor = C; this.preparedKey = key;
+    if (this.mode === 'store') { this.D = displayState(C, this.c.x, this.c.K); return; }
+    const st = C.steps[this.sid];
+    const patched = { ...C, steps: { ...C.steps, [this.sid]: { ...st, s: this.done ? 'done' : 'active', ph: Math.min(this.ph, this.c.phases.length - 1), k: this.k, v: g ? g.v || 0 : 0 } } };
+    if (this.done) patched.steps[this.sid] = st;
+    this.D = displayState(patched, this.c.x, this.c.K);
   }
 
   sendPose() {
@@ -991,14 +1017,7 @@ export class Station {
     ctx.beginPath(); ctx.roundRect(0, 0, SW, SH, 26); ctx.clip();
 
     // the display state with my own (optimistic) progress in it
-    const C = this.c.C;
-    if (this.mode === 'store') this.D = displayState(C, this.c.x, this.c.K);
-    else {
-      const st = C.steps[this.sid];
-      const patched = { ...C, steps: { ...C.steps, [this.sid]: { ...st, s: this.done ? 'done' : 'active', ph: Math.min(this.ph, this.c.phases.length - 1), k: this.k, v: this.g ? this.g.v || 0 : 0 } } };
-      if (this.done) patched.steps[this.sid] = st;
-      this.D = displayState(patched, this.c.x, this.c.K);
-    }
+    this.prepare();
 
     const cap = this.sceneKind();
     this.drawBackdrop(ctx, cap);

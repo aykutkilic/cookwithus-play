@@ -246,7 +246,7 @@ function hat(head, L) {
 // ------------------------------------------------------------------ tools in hand
 
 const TOOL_CACHE = new Map();
-function toolMesh(kind) {
+export function toolMesh(kind) {
   let g = TOOL_CACHE.get(kind);
   if (g) return g.clone();
   g = new THREE.Group();

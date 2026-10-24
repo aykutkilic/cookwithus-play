@@ -519,6 +519,12 @@ function moveMe(dt) {
       me.yaw = Math.atan2(u, w);
     }
   }
+  // first person, starting work: I step up to the counter
+  if (S.workGo && S.working) {
+    const k2 = 1 - Math.exp(-dt * 7);
+    me.x += (S.workGo.x - me.x) * k2; me.y += (S.workGo.y - me.y) * k2;
+    if (Math.hypot(S.workGo.x - me.x, S.workGo.y - me.y) < 0.005) S.workGo = null;
+  } else S.workGo = null;
   // first person: how high I stand – crouching (Ctrl / C), up on my toes (Space) – eases there
   const stance = controls.stance();
   const wantOff = stance < 0 ? CROUCH : stance > 0 ? TIPTOE : 0;
@@ -754,7 +760,7 @@ function openStore(fx) {
   const C = S.M.cook, x = S.x, K = S.K;
   const f = fixtureById(K, fx);
   if (!f || !C || !x) return;
-  if (S.fp) { fpStoreLook(f).run(); return; } // (first person: right there in the kitchen)
+  if (S.fp) { S.me.yaw = yawTo(f); fpStoreLook(f).run(); return; } // (first person: right there in the kitchen)
   closeMenu();
   if (S.working) closeStation(true);
   S.me.yaw = yawTo(f);
@@ -772,6 +778,7 @@ function openStore(fx) {
 
 function openStation(sid, fx) {
   const C = S.M.cook, x = S.x, K = S.K;
+  if (S.fp) { openWork(sid, fx); return; }
   const s = stepDef(x, sid);
   // a chore's state only exists once the host has opened it
   const st = C.steps[sid] || { s: 'active', ph: 0, k: 0, v: 0, by: S.myId, fx, slot: 0, claim: [], extra: [], who: [] };
@@ -789,7 +796,52 @@ function openStation(sid, fx) {
   sfx.play('whoosh', 0.5);
 }
 
+// First person: the step is done right there in the kitchen – the close-up's
+// gestures run without drawing, your pointer on the real counter / stove /
+// sink (the scene maps it), your arms and the tools in 3D; a little bar says
+// what to do.
+function openWork(sid, fx) {
+  const C = S.M.cook, x = S.x, K = S.K;
+  const s = stepDef(x, sid);
+  const st = C.steps[sid] || { s: 'active', ph: 0, k: 0, v: 0, by: S.myId, fx, slot: 0, claim: [], extra: [], who: [] };
+  if (!C.steps[sid]) C.steps[sid] = st;
+  if (!s) return;
+  const f = fixtureById(K, fx || st.fx);
+  if (!f) return;
+  S.pending = null;
+  S.working = { sid, fx: f.id, fp: true };
+  station.headless = true;
+  $('cross').hidden = true;
+  $('fwIcon').textContent = (ACTIONS[s.do] && ACTIONS[s.do].icon) || '🍳';
+  $('fwName').textContent = s.name;
+  $('fpWork').hidden = false;
+  document.body.classList.add('fpwork');
+  station.open({ sid, def: s, st, phases: phasesOf(s, bakeKind(f)), f, bk: bakeKind(f), pal: K.palette, C, x, K, me: S.myId, look: lookOf(S.profile.avatar) });
+  // step right up to it (a counter is a square deep: from the middle of the
+  // square in front you couldn't reach the board) and look at the work
+  const w = workFrame();
+  if (w) {
+    let gx = S.me.x, gy = S.me.y;
+    if (Math.abs(w.N.z) > 0.5) { gy = f.y + (w.N.z > 0 ? f.h + RADIUS + 0.03 : -RADIUS - 0.03); gx = Math.max(f.x + 0.25, Math.min(f.x + f.w - 0.25, w.O.x)); } else { gx = f.x + (w.N.x > 0 ? f.w + RADIUS + 0.03 : -RADIUS - 0.03); gy = Math.max(f.y + 0.25, Math.min(f.y + f.h - 0.25, w.O.z)); }
+    if (!blocked(K, gx, gy) && Math.hypot(gx - S.me.x, gy - S.me.y) < 1.2) S.workGo = { x: gx, y: gy };
+    S.me.yaw = Math.atan2(w.O.x - gx, w.O.z - gy);
+    const ex = gx - Math.sin(S.me.yaw) * (0.14 - 0.18), ez = gy - Math.cos(S.me.yaw) * (0.14 - 0.18);
+    S.pitch = Math.max(-1.1, Math.atan2(w.O.y + 0.06 - 0.84, Math.hypot(w.O.x - ex, w.O.z - ez)));
+  }
+  sfx.play('whoosh', 0.4);
+}
+// the plane the work is done on, now (the slot: which burner)
+function workFrame() {
+  if (!S.working || !S.working.fp || !station.on || station.mode !== 'step') return null;
+  const st = S.M.cook && S.M.cook.steps[S.working.sid];
+  return scene.workFrame(S.working.fx, station.sceneKind(), st ? st.slot || 0 : 0);
+}
+
 function closeStation(silent = false) {
+  S.workPh = null;
+  $('fpWork').hidden = true;
+  document.body.classList.remove('fpwork');
+  station.headless = false;
   if (!S.working) { $('station').hidden = true; return; }
   const sid = S.working.sid;
   const st = sid && S.M.cook && S.M.cook.steps[sid];
@@ -801,6 +853,7 @@ function closeStation(silent = false) {
   if (!silent) sfx.play('ui');
 }
 $('stClose').onclick = () => closeStation();
+$('fwClose').onclick = () => closeStation();
 
 function stationProgress(info) {
   const dots = [];
@@ -813,6 +866,8 @@ function stationProgress(info) {
   let hint = info.done ? '✅ Done! Nicely done, chef.' : info.hint;
   if (!info.done && info.n > 1) hint += `  (${info.k}/${info.n})`;
   $('stHint').textContent = hint;
+  $('fwDots').innerHTML = dots.join('');
+  $('fwHint').textContent = hint;
 }
 
 // ------------------------------------------------------------------ the kitchen view
@@ -821,13 +876,24 @@ const canvas = $('world');
 // two fingers pinch-zoom the kitchen; the mouse wheel too
 const touches = new Map();
 let pinch = 0;
+// first person at work: the pointer is my hand on the work (the close-up's gestures, in 3D)
+const workPtr = (type, e) => {
+  const w = workFrame();
+  // (the knob / the tap's lever: the real one is what you take hold of)
+  const off = w ? scene.workOffset(w, station) : { x: 0, y: 0 };
+  const p = w && scene.workAt(w, e.clientX + off.x, e.clientY + off.y);
+  if (p) station.pointer(type, p, e.pointerId, e.pointerType);
+  else if (type === 'up') station.pointer('up', { x: station.ptr.x, y: station.ptr.y }, e.pointerId, e.pointerType);
+};
 canvas.addEventListener('pointerdown', (e) => {
   sfx.unlock(); closeMenu();
+  if (S.working && S.working.fp) { e.preventDefault(); try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ } workPtr('down', e); return; }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   // first person: a hand takes hold of what's under the pointer (else you look round)
   if (S.fp && touches.size === 1 && !S.working) fpGrab(e);
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (S.working && S.working.fp) { workPtr('move', e); return; }
   if (S.fpDrag && S.fpDrag.pid === e.pointerId) { fpDragTo(e.clientX, e.clientY); return; }
   if (!touches.has(e.pointerId)) {
     // (the mouse over something a hand could take)
@@ -849,6 +915,7 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 const lift = (e) => {
+  if (S.working && S.working.fp) workPtr('up', e);
   touches.delete(e.pointerId); if (touches.size < 2) pinch = 0;
   if (S.fpDrag && S.fpDrag.pid === e.pointerId) fpLetGo(e.clientX, e.clientY, e.type === 'pointercancel');
 };
@@ -873,6 +940,7 @@ const touchUI = isTouchDevice() || params.has('touch');
 
 // F2 / 👁: through my own eyes, or the whole room
 function toggleView() {
+  if (S.working) closeStation(true); // (the close-up and the 3D work are each their view's)
   S.fp = !S.fp;
   scene.setFirstPerson(S.fp);
   controls.setFirstPerson(S.fp);
@@ -1571,7 +1639,24 @@ function buildView(now, dt) {
   if (fd && fd.kind === 'door') { doors.set(fd.fx, fd.v); fpGrab = { w: scene.handleWorld(fd.fx) }; }
   if (fd && fd.kind === 'held' && fd.cx != null) fpGrab = { key: fd.key, w: fd.spot ? fd.spot.w.clone().setY(fd.spot.w.y + 0.06) : scene.rayPoint(fd.cx, fd.cy, 0.42) };
   if (fpGrab && !fpGrab.w) fpGrab = null;
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab };
+  // first person at work: the close-up's state, on its plane in the kitchen (and the pan's real mouth for it)
+  let work = null;
+  const wf = workFrame();
+  if (wf) {
+    work = { st: station, frame: wf };
+    // a new phase: look at what it's done with (the knob on the stove's front, the tap's lever – and the work)
+    const phKey = `${station.ph}|${station.g && station.g.kind}`;
+    if (S.workPh !== phKey) {
+      S.workPh = phKey;
+      const real = scene.workReal(wf, station);
+      const look = real ? wf.O.clone().lerp(real.w, 0.55) : wf.O.clone().setY(wf.O.y + 0.06);
+      const e = scene.camera.position;
+      S.pitch = Math.max(-1.1, Math.min(0.3, Math.atan2(look.y - e.y, Math.hypot(look.x - e.x, look.z - e.z))));
+    }
+    const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
+    station.geo = scene.workGeo(wf, subj);
+  }
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:
@@ -1658,4 +1743,11 @@ function goStore(fx) {
   Object.assign(S.me, { x: f.stand.x + 0.5, y: f.stand.y + 0.5, walk: -1, v: { x: 0, y: 0 } });
   openStore(fx);
 }
-window.cookwithus = { S, scene, station, sfx, goDo, goAct, goStore, closeStation, send, useNow };
+// (tests) a point of the close-up, on the screen – in first person, where it is on the work plane in the kitchen
+function workScreen(x, y) {
+  const w = workFrame();
+  if (!w) return station.toClient(x, y);
+  const s = scene.screenOf(scene.workWorld(w, x, y)), off = scene.workOffset(w, station);
+  return { x: s.x - off.x, y: s.y - off.y };
+}
+window.cookwithus = { S, scene, station, sfx, goDo, goAct, goStore, closeStation, send, useNow, workScreen, toggleView };

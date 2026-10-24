@@ -249,8 +249,9 @@ function counter(g, ctx, w, d, withBoard) {
   carcass(g, ctx, w, d);
   worktop(g, ctx, w);
   if (withBoard) {
-    g.add(rbox(0.52, 0.024, 0.36, mat('#c9955a', { rough: 0.65 }), 0, COUNTER_H, 0.04, 0.01));
-    d.anchors.board = v3(0, COUNTER_H + 0.025, 0.04);
+    // (towards the front: in first person it's within a hand's reach)
+    g.add(rbox(0.52, 0.024, 0.36, mat('#c9955a', { rough: 0.65 }), 0, COUNTER_H, 0.2, 0.01));
+    d.anchors.board = v3(0, COUNTER_H + 0.025, 0.2);
   }
   d.anchors.top = v3(0, COUNTER_H, 0.1);
   d.anchors.spots = [v3(-0.3, COUNTER_H, -0.22), v3(0.3, COUNTER_H, -0.22), v3(-0.3, COUNTER_H, 0.3), v3(0.32, COUNTER_H, 0.3)];
@@ -300,6 +301,7 @@ function sink(g, ctx, d) {
   g.add(water);
   d.parts.water = water;
   d.anchors.basin = v3(0, COUNTER_H - 0.05, 0);
+  d.anchors.spout = v3(0, COUNTER_H + 0.24, -0.12); // where the water comes out
   d.anchors.spout = v3(0, COUNTER_H + 0.24, -0.12);
   d.anchors.top = v3(0, COUNTER_H, 0.1);
   d.anchors.spots = [v3(-0.3, COUNTER_H, 0.36), v3(0.3, COUNTER_H, 0.36)];
