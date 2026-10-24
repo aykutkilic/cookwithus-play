@@ -67,8 +67,8 @@ export class Scene3D {
         const composer = new EffectComposer(r, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
         composer.addPass(new RenderPass(this.scene, this.camera));
         const ao = new GTAOPass(this.scene, this.camera, 1, 1);
-        ao.updateGtaoMaterial({ radius: 0.25, distanceExponent: 2, thickness: 1, scale: 1, samples: 12 });
-        ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+        ao.updateGtaoMaterial({ radius: 0.25, distanceExponent: 2, thickness: 1, scale: 1, samples: 8 });
+        ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 8 });
         ao.blendIntensity = 0.8;
         // the food standees (sprites) are flat cut-outs: keep them out of the occlusion
         // (it would see each as a solid card and darken a box round it)
@@ -91,6 +91,7 @@ export class Scene3D {
     this.spriteTex = new Map();
     this.particles = [];
     this.glides = new Map(); // thing -> where it's drawn while it travels
+    this.lookKeys = new WeakMap();
     this.t = 0;
     this.dt = 0;
     this.zoom = 1;
@@ -168,20 +169,25 @@ export class Scene3D {
     this.resize();
   }
 
-  get quality() { return this.q.steps.slice(0, this.q.level).map((s) => s[0]).join(', ') || 'full'; }
+  get quality() { return `${this.q.steps.slice(0, this.q.level).map((s) => s[0]).join(', ') || 'full'}${this.hz ? ` · display ${this.hz} Hz` : ''}`; }
 
-  // Called every frame with the time since the last one. Averaged over ~1.5 s:
-  // under ~50 fps, drop the next extra and look again.
+  // Called every frame with the time since the last one. It learns how fast
+  // the display refreshes (60, 120 Hz …) from the quickest frames, and when the
+  // frames come clearly slower than that for a while (averaged over ~1 s), it
+  // drops the next extra and looks again.
   govern(ms) {
     const q = this.q;
-    if (q.skip > 0) { q.skip--; return; }
     if (ms > 250) return; // a hidden tab, a dialog: not the renderer's fault
+    if (ms > 2) { q.fast = q.fast ? Math.min(q.fast * 1.002, ms) : ms; } // ~ the refresh interval (slowly forgiving)
+    if (q.skip > 0) { q.skip--; return; }
     q.n++; q.sum += ms;
     if (q.n < 90) return;
     const avg = q.sum / q.n;
     q.n = 0; q.sum = 0;
     this.fps = Math.round(1000 / avg);
-    if (avg > 19.5 && q.level < q.steps.length) {
+    const refresh = Math.max(4, Math.min(17, q.fast || 16.7));
+    this.hz = Math.round(1000 / refresh);
+    if (avg > refresh * 1.18 && q.level < q.steps.length) {
       const [name, apply] = q.steps[q.level++];
       apply();
       console.info(`cookwithus: ${this.fps} fps, now ${name}`);
@@ -203,7 +209,7 @@ export class Scene3D {
   // F2: looking through my cook's eyes, or at the whole room
   setFirstPerson(on) {
     this.firstPerson = on;
-    this.camera.fov = on ? 72 : 32;
+    this.camera.fov = on ? 80 : 32;
     this.camera.near = on ? 0.03 : 0.1;
     this.camera.updateProjectionMatrix();
     this.camInit = false;
@@ -255,7 +261,8 @@ export class Scene3D {
     if (this.firstPerson && me) {
       // at my eyes, looking where I face (and up / down as I like)
       const pitch = view.pitch ?? -0.18;
-      const eye = new THREE.Vector3(me.x, 0.62, me.y);
+      // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
+      const eye = new THREE.Vector3(me.x - Math.sin(me.yaw) * 0.14, 0.74, me.y - Math.cos(me.yaw) * 0.14);
       const dir = new THREE.Vector3(Math.sin(me.yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(me.yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
       this.camTarget.copy(eye).add(dir);
@@ -502,7 +509,12 @@ export class Scene3D {
   // ------------------------------------------------------------------ food on the boards (2D drawings as standees)
 
   spriteFor(kind, st, cut) {
-    const key = cut ? `p|${kind}|${cut}` : `i|${kind}|${JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'form'])}`;
+    // (the key of an item's look is worked out once per state object)
+    let key = cut ? `p|${kind}|${cut}` : st && this.lookKeys.get(st);
+    if (!key) {
+      key = `i|${kind}|${JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'form'])}`;
+      if (st && typeof st === 'object') this.lookKeys.set(st, key);
+    }
     let tex = this.spriteTex.get(key);
     if (!tex) {
       if (this.spriteTex.size > 300) { for (const t of this.spriteTex.values()) t.dispose(); this.spriteTex.clear(); }

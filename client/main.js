@@ -752,6 +752,14 @@ controls.setTouch(touchUI);
 if (touchUI) lockZoom();
 
 function jobsAt(f) {
+  // (worked out again only when the kitchen, my pick or what I hold changed)
+  const key = `${f.id}|${S.M.ver}|${S.sel}|${S.myId}`;
+  if (S.jobsCache && S.jobsCache.key === key) return S.jobsCache.out;
+  const out = jobsAtNow(f);
+  S.jobsCache = { key, out };
+  return out;
+}
+function jobsAtNow(f) {
   const C = S.M.cook, x = S.x, K = S.K;
   const out = [];
   if (C && x) {
@@ -1342,9 +1350,14 @@ function frame(now) {
 
 function buildView(now, dt) {
   const C = S.M.cook, x = S.x, K = S.K;
+  // the display copy of the dish is only rebuilt when something in the kitchen changed
   let D = null;
   if (C && x) {
-    try { D = displayState(C, x, K); } catch (e) { console.warn(e); }
+    if (S.dCache && S.dCache.ver === S.M.ver && S.dCache.C === C) D = S.dCache.D;
+    else {
+      try { D = displayState(C, x, K); } catch (e) { console.warn(e); }
+      S.dCache = { ver: S.M.ver, C, D };
+    }
   }
   const cooks = [];
   const room = S.M.room;

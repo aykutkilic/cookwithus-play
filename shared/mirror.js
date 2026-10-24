@@ -10,11 +10,13 @@ export function newMirror() {
     pos: new Map(),   // member id -> {x, y, d, w, p, at}
     clockAt: 0,       // local time (ms) the last clock arrived
     boil: {},
+    ver: 0,           // goes up whenever the room or the cook changes (positions don't count)
   };
 }
 
 // Returns the list of events in the message (for sounds / effects).
 export function applyMsg(M, msg, nowMs = 0) {
+  if (msg.t !== 'pos') M.ver = (M.ver || 0) + 1;
   switch (msg.t) {
     case 'room':
       M.room = msg;
