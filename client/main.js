@@ -820,29 +820,68 @@ function closeMenu() { $('menu').hidden = true; controls.menuOpen = false; }
 
 // ------------------------------------------------------------------ timers
 
+// The timers: little analog kitchen timers in a row – a red wedge for the time
+// left, the hand sweeping it down; a finished one rings. Tap one for its name
+// and ⏭ Skip; the chip next to them sets the speed (1× … 16×).
 function renderTimers() {
   const C = S.M.cook, x = S.x;
   const el = $('timers');
   if (!C || !x || C.finished) { el.hidden = true; return; }
-  const rows = [];
+  const dials = [];
+  let popOk = false;
   for (const s of x.steps) {
     const st = C.steps[s.id];
     if (st.s !== 'running' && st.s !== 'ready') continue;
     const dur = stepDuration(C, x, S.K, s);
     const left = Math.max(0, dur - st.t);
-    rows.push(`<div class="timer ${st.s}"><span>${st.s === 'ready' ? '⏰' : '⏳'} ${esc(s.name)}</span><span class="tb"><i style="width:${Math.min(100, st.t / dur * 100)}%"></i></span><span class="tt">${st.s === 'ready' ? 'ready!' : fmtTime(left)}</span>${st.s === 'running' ? `<button class="btn small" data-skip="${s.id}" title="Skip to the end">⏭ Skip</button>` : ''}</div>`);
+    const ready = st.s === 'ready';
+    const frac = ready ? 0 : Math.min(1, left / Math.max(1, dur));
+    if (S.timerPop === s.id) popOk = true;
+    dials.push(`<button class="dial ${ready ? 'ready' : ''} ${S.timerPop === s.id ? 'on' : ''}" data-tsid="${s.id}" title="${esc(s.name)} – ${ready ? 'ready!' : `${fmtTime(left)} left`}">${dialSvg(frac)}<small>${ready ? '⏰' : fmtTime(left)}</small></button>`);
   }
-  if (!rows.length) { el.hidden = true; return; }
+  if (!dials.length) { el.hidden = true; S.timerPop = null; return; }
   el.hidden = false;
-  $('timerList').innerHTML = rows.join('');
-  const sp = SPEEDS.map((v) => `<button data-speed="${v}" class="${C.speed === v ? 'on' : ''}">${v}×</button>`).join('');
-  if ($('speeds').dataset.k !== String(C.speed)) { $('speeds').innerHTML = `<span class="muted">Speed</span> ${sp}`; $('speeds').dataset.k = String(C.speed); }
+  const html = dials.join('');
+  if ($('timerList').dataset.h !== html) { $('timerList').innerHTML = html; $('timerList').dataset.h = html; }
+  $('speedChip').textContent = `⏩ ${C.speed}×`;
+  $('speedChip').classList.toggle('on', C.speed > 1);
+  // the little card for the dial I tapped
+  const pop = $('timerPop');
+  if (!popOk) S.timerPop = null;
+  if (S.timerPop) {
+    const s = stepDef(x, S.timerPop), st = C.steps[S.timerPop];
+    const left = Math.max(0, stepDuration(C, x, S.K, s) - st.t);
+    const card = `<b>${esc(s.name)}</b><span>${st.s === 'ready' ? 'ready!' : `${fmtTime(left)} left`}</span>${st.s === 'running' ? `<button class="btn small" data-skip="${s.id}">⏭ Skip</button>` : ''}`;
+    if (pop.dataset.h !== card) { pop.innerHTML = card; pop.dataset.h = card; }
+    pop.hidden = false;
+  } else pop.hidden = true;
 }
+
+// an analog kitchen timer face: the red wedge is the time left (frac 0…1)
+function dialSvg(frac) {
+  const a = frac * Math.PI * 2, cx = 20, cy = 21, r = 15;
+  const ex = cx + Math.sin(a) * r, ey = cy - Math.cos(a) * r;
+  const wedge = frac >= 0.999 ? `<circle cx="${cx}" cy="${cy}" r="${r}" class="w"/>`
+    : frac > 0.001 ? `<path class="w" d="M${cx} ${cy}L${cx} ${cy - r}A${r} ${r} 0 ${frac > 0.5 ? 1 : 0} 1 ${ex.toFixed(2)} ${ey.toFixed(2)}Z"/>` : '';
+  let ticks = '';
+  for (let i = 0; i < 12; i++) { const t = i / 12 * Math.PI * 2; ticks += `<line x1="${(cx + Math.sin(t) * 16.5).toFixed(1)}" y1="${(cy - Math.cos(t) * 16.5).toFixed(1)}" x2="${(cx + Math.sin(t) * (i % 3 ? 15 : 13.5)).toFixed(1)}" y2="${(cy - Math.cos(t) * (i % 3 ? 15 : 13.5)).toFixed(1)}"/>`; }
+  return `<svg viewBox="0 0 40 40" aria-hidden="true"><rect class="k" x="16" y="0.5" width="8" height="4" rx="1.5"/><circle class="f" cx="${cx}" cy="${cy}" r="18"/>${wedge}<g class="t">${ticks}</g><line class="h" x1="${cx}" y1="${cy}" x2="${ex.toFixed(2)}" y2="${ey.toFixed(2)}"/><circle class="c" cx="${cx}" cy="${cy}" r="2.4"/></svg>`;
+}
+
 $('timers').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
-  if (b.dataset.skip) { send({ t: 'skip', sid: b.dataset.skip }); sfx.play('whoosh'); }
-  if (b.dataset.speed) { send({ t: 'speed', x: Number(b.dataset.speed) }); sfx.play('ui'); }
+  sfx.unlock();
+  if (b.dataset.skip) { send({ t: 'skip', sid: b.dataset.skip }); sfx.play('whoosh'); S.timerPop = null; }
+  else if (b.dataset.tsid) { S.timerPop = S.timerPop === b.dataset.tsid ? null : b.dataset.tsid; sfx.play('click', 0.6); }
+  else if (b.id === 'speedChip') {
+    const C = S.M.cook;
+    if (!C) return;
+    const next = SPEEDS[(SPEEDS.indexOf(C.speed) + 1) % SPEEDS.length];
+    send({ t: 'speed', x: next });
+    sfx.play('ui');
+  }
+  renderTimers();
 });
 
 // local timer ticking between clock messages

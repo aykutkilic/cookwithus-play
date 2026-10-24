@@ -104,17 +104,31 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* ------------------------------------------------ timers */
 #timers {
-  position: fixed; top: 74px; left: 50%; transform: translateX(-50%); z-index: 4; min-width: 280px; max-width: 92vw;
-  background: #e6f4fb; border: 3px solid var(--ink); border-radius: var(--r); box-shadow: var(--shadow); padding: 8px 10px;
+  position: fixed; top: 74px; left: 50%; transform: translateX(-50%); z-index: 4; max-width: 92vw;
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 8px;
+  background: var(--paper); border: 3px solid var(--ink); border-radius: 999px; box-shadow: var(--shadow);
 }
-.timer { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; font-size: 14px; font-weight: 600; }
-.timer .tb { flex: 1; height: 12px; border: 2px solid var(--ink); background: #fff; border-radius: 8px; overflow: hidden; min-width: 80px; }
-.timer .tb i { display: block; height: 100%; background: linear-gradient(90deg, #5aa0c8, #8fd0f0); }
-.timer.ready .tb i { background: var(--sun); }
-.timer .tt { font-family: ui-monospace, monospace; min-width: 52px; text-align: right; }
-.speeds { display: flex; gap: 4px; justify-content: center; align-items: center; font-size: 13px; }
-.speeds button { border: 2.5px solid var(--ink); background: var(--paper); border-radius: 9px; padding: 1px 8px; font-weight: 700; box-shadow: 0 2px 0 var(--ink); }
-.speeds button.on { background: var(--sun); }
+#timerList { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.dial { width: 46px; padding: 0; border: 0; background: none; display: grid; justify-items: center; cursor: pointer; }
+.dial svg { width: 38px; height: 38px; display: block; }
+.dial small { font: 700 10.5px/1 ui-monospace, monospace; margin-top: 1px; color: var(--ink); }
+.dial .f { fill: #fffaf0; stroke: var(--ink); stroke-width: 2.5; }
+.dial .w { fill: #e8573a; opacity: .9; }
+.dial .t line { stroke: var(--ink); stroke-width: 1.4; stroke-linecap: round; }
+.dial .h { stroke: var(--ink); stroke-width: 2.2; stroke-linecap: round; }
+.dial .c { fill: var(--ink); }
+.dial .k { fill: var(--ink); }
+.dial.on svg { filter: drop-shadow(0 0 3px var(--sun)); }
+.dial.ready .f { fill: var(--sun); }
+.dial.ready svg { animation: ring .5s ease-in-out infinite; }
+@keyframes ring { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-10deg); } 75% { transform: rotate(10deg); } }
+.spd { border: 2.5px solid var(--ink); background: var(--cream); border-radius: 999px; padding: 2px 8px; font-weight: 700; font-size: 13px; box-shadow: 0 2px 0 var(--ink); white-space: nowrap; }
+.spd.on { background: var(--sun); }
+#timerPop {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; box-shadow: var(--shadow); padding: 5px 6px 5px 10px; white-space: nowrap; font-size: 13px;
+}
+#timerPop span { font-family: ui-monospace, monospace; color: var(--muted); }
 
 #nudge {
   position: fixed; bottom: 86px; left: 50%; transform: translateX(-50%); z-index: 6; background: var(--butter);

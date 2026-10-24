@@ -28,7 +28,8 @@ const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 795, y: 470, r: 52 };
 const ASIDE = { x: 820, y: 520 };
 const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
-const EYE = { x: 500, y: 330, f: 1400 };    // where you look from (for doors swinging towards you)
+const EYE = { x: 500, y: 330, f: 1400 };
+const KNOB_TURN = 0.03;                     // knob radians per pixel dragged up    // where you look from (for doors swinging towards you)
 
 export { MAIN, SIDE, KNOB, OVEN_KNOB, LEVER, BELL, HANDS };
 
@@ -321,7 +322,7 @@ export class Station {
       case 'strokes': g.last = p; g.dir = 0; g.run = 0; break;
       case 'peel': g.start = p; break;
       case 'circle': g.lastAng = this.angleAt(p); break;
-      case 'knob': { const K = this.knobPos(); if (Math.hypot(p.x - K.x, p.y - K.y) < K.r + 40) g.turning = true; break; }
+      case 'knob': { const K = this.knobPos(); if (Math.hypot(p.x - K.x, p.y - K.y) < K.r + 40) { g.turning = true; g.y0 = p.y; g.ang0 = g.ang; } break; }
       case 'pour': case 'fill': g.pouring = true; this.hooks.sfx(g.kind === 'fill' ? 'tap' : 'pour'); break;
       case 'paint': this.paintAt(p); break;
       case 'place': this.placeAt(p); break;
@@ -363,9 +364,8 @@ export class Station {
       case 'circle': this.circleMove(p); break;
       case 'knob':
         if (g.turning) {
-          const K = this.knobPos();
-          const a = Math.atan2(p.y - K.y, p.x - K.x);
-          g.ang = clamp(normAng(a + Math.PI / 2), -2.4, 2.4);
+          // drag up to turn it up, down to turn it down: the wrist does the turning
+          g.ang = clamp(g.ang0 + (g.y0 - p.y) * KNOB_TURN, -2.4, 2.4);
           const lvl = Math.round((g.ang + 2.4) / 4.8 * 3);
           if (lvl !== g.level) { g.level = lvl; this.hooks.sfx('click'); }
         }
@@ -2089,7 +2089,11 @@ export class Station {
         const a = levelAngle(g.ph.to) - Math.PI / 2;
         ctx.fillStyle = 'rgba(255,190,40,0.9)';
         ctx.beginPath(); ctx.arc(at.x + Math.cos(a) * (at.r + 26), at.y + Math.sin(a) * (at.r + 26), 22, 0, TAU); ctx.globalAlpha = 0.35 + 0.25 * Math.sin(this.t * 6); ctx.fill(); ctx.globalAlpha = 1;
-        if (show) this.ghostHand(ctx, at.x + Math.cos(a) * at.r * 0.6, at.y + Math.sin(a) * at.r * 0.6, 1);
+        if (show && !g.turning) {
+          // take the knob and drag up (or down)
+          const up = g.ph.to > g.level;
+          this.arrowV(ctx, at.x - at.r - 34, up ? at.y + 40 : at.y - 40, up ? at.y - 60 : at.y + 60, t, up);
+        }
         break;
       }
       case 'pour': case 'fill': this.drawGauge(ctx); if (show) this.ghostHand(ctx, g.kind === 'fill' ? LEVER.x : SIDE.x + 20, g.kind === 'fill' ? LEVER.y : SIDE.y - 60, 1 - t); break;
@@ -2215,6 +2219,13 @@ export class Station {
       return;
     }
     if (g.kind === 'pour' && p.down) return; // the container itself is drawn tipping
+    if (g.kind === 'knob' && g.turning) {
+      // fingers round the knob, the wrist turning it
+      const K = this.knobPos();
+      this.drawArm(ctx, look, { x: 820, y: SH + 90 }, { x: K.x + 18, y: K.y + 46 });
+      this.drawHand(ctx, look, K.x, K.y + 6, 'fist', g.ang * 0.85);
+      return;
+    }
     if (tool === 'hand' || tool === 'grab') {
       const mode = tool === 'grab' || p.down ? 'fist' : 'open';
       this.drawArm(ctx, look, { x: 800, y: SH + 90 }, { x: p.x + 14, y: p.y + 40 });
