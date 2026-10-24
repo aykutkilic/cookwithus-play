@@ -1325,14 +1325,21 @@ export class Station {
     const t = (k) => (k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)]);
     const heavy = keys.find((k) => k[0] === 'v' && twoHanded(t(k).kind));
     if (heavy) return [{ k: heavy, x: 500, y: 548, s: Math.min(0.75, this.vesselScale(t(heavy).kind) * 0.6), two: true }];
+    const first = this.holdSide(); // the first thing goes in the hand away from the work
     return keys.slice(0, 2).map((k, i) => {
-      const side = i === 0 ? -1 : 1;
-      if (k[0] === 'v') {
+      const side = i === 0 ? first : -first;
+      if (k[0] === 'v' && vesselGrip(t(k).kind)) {
+        // a saucepan, a pan, a cezve: by its handle
         const kind = t(k).kind;
         const s = Math.min(0.62, this.vesselScale(kind) * 0.5);
-        const gr = vesselGrip(kind) || { x: 60, y: -60 };
+        const gr = vesselGrip(kind);
         const hand = { x: 500 + side * 170, y: 470 };
         return { k, x: hand.x - gr.x * s, y: hand.y - gr.y * s, s, hand, side };
+      }
+      if (k[0] === 'v') {
+        // a plate, a bowl, a cup: resting on the palm
+        const s = Math.min(0.55, this.vesselScale(t(k).kind) * 0.42);
+        return { k, x: 500 + side * 280, y: 520, s, palm: { x: 500 + side * 280, y: 548 }, side };
       }
       return { k, x: 500 + side * 300, y: 500, s: Math.min(0.58, this.itemScale(t(k).kind) * 0.42), palm: { x: 500 + side * 300, y: 530 }, side };
     });
@@ -1354,6 +1361,17 @@ export class Station {
       }
     }
   }
+  // Which hand holds things (-1 left, 1 right): the other one does the work.
+  // At the fridge / pantry that's the hand on the door handle's side – the
+  // handle is on the right while the door is shut, on the left once it's open
+  // (hands swap over between swings, not during one).
+  holdSide() {
+    if (this.mode !== 'store' || !this.store) return -1;
+    const S = this.store;
+    if (!S.door || S.side == null) S.side = this.doorGrab(this.storeGeo, S.v).x < 500 ? 1 : -1;
+    return S.side;
+  }
+
   // (store) what's in my hands, less what I'm moving across right now
   heldShown() {
     const drag = this.store && this.store.drag;
@@ -1441,8 +1459,10 @@ export class Station {
     const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
     const S = this.store;
     const at = S.door ? this.doorGrab(this.storeGeo, S.v) : p;
-    this.drawArm(ctx, look, { x: 800, y: SH + 90 }, { x: at.x + 14, y: at.y + 40 });
-    this.drawHand(ctx, look, at.x, at.y, S.door || S.drag || p.down ? 'fist' : 'open', 0);
+    // the free hand: if I'm holding something, the one on the other side
+    const free = this.heldShown().length ? -this.holdSide() : 1;
+    this.drawArm(ctx, look, { x: 500 + free * 300, y: SH + 90 }, { x: at.x - free * 14, y: at.y + 40 });
+    this.drawHand(ctx, look, at.x, at.y, S.door || S.drag || p.down ? 'fist' : 'open', 0, free < 0);
   }
 
   sceneBin(ctx) {

@@ -13,7 +13,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
-import { VESSELS } from '../shared/ingredients.js';
+import { VESSELS, twoHanded } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook } from './cook3d.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
@@ -386,6 +386,13 @@ export class Scene3D {
     for (const rec of this.cooks.values()) {
       if (!rec.holding || !rec.hands) continue;
       rec.holding.forEach((k, i) => {
+        if (k[0] === 'v' && !GRIP3D[rec.holdKind] && !twoHanded(rec.holdKind)) {
+          // a plate, a bowl: carried on one hand, out in front
+          const p = rec.rightHand.clone();
+          p.x += Math.sin(rec.yaw) * 0.06; p.z += Math.cos(rec.yaw) * 0.06; p.y -= 0.02;
+          out.set(k, { pos: p, yaw: rec.yaw, held: true, sig: `h:${rec.id}` });
+          return;
+        }
         const g = k[0] === 'v' && GRIP3D[rec.holdKind];
         if (g) {
           // a pan by its handle, in the right hand, the pan out in front
@@ -603,7 +610,7 @@ export class Scene3D {
       const reach = rec.reachT !== undefined && rec.reachT < REACH_S ? Math.sin(Math.PI * rec.reachT / REACH_S) : 0;
       const vk = holding.find((k) => k[0] === 'v');
       const vkind = vk && view.D && view.D.vessels[vk.slice(2)] ? view.D.vessels[vk.slice(2)].kind : null;
-      const hold = vk ? (GRIP3D[vkind] ? 'handle' : 'both') : holding.length ? 'items' : null;
+      const hold = vk ? (GRIP3D[vkind] || !twoHanded(vkind) ? 'handle' : 'both') : holding.length ? 'items' : null;
       poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry || holding.length > 0, hold, reach, scraps: !!c.carry, t: this.t + c.id * 1.7 }, dt);
       rec.fig.updateMatrixWorld(true);
       rec.hands = rec.fig.userData.carry.getWorldPosition(rec.hands || new THREE.Vector3());
