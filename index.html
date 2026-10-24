@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#f6e2c4">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="cookwithus">
+  <meta name="description" content="Cozy isometric multiplayer cooking. Cook real recipes together with friends, peer-to-peer, right in the browser.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="client/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="client/icons/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <title>cookwithus · cook together</title>
+  <link rel="stylesheet" href="client/style.css">
+  <script type="importmap">{ "imports": { "three": "./client/vendor/three/three.module.js", "three/addons/": "./client/vendor/three/addons/" } }</script>
+</head>
+<body>
+  <canvas id="world"></canvas>
+  <div id="tags"></div>
+  <div id="prompt" hidden></div>
+
+  <!-- top bar -->
+  <header id="top">
+    <div class="brand"><span class="logo">cook<b>with</b>us</span></div>
+    <button id="kitchenChip" class="chip" title="Kitchen &amp; invite">
+      <span id="kFlag">🇹🇷</span> <span id="kName">Cozy Small</span> <span id="kCode" class="code">····</span>
+    </button>
+    <div class="spacer"></div>
+    <button id="inviteBtn" class="btn sun" title="Invite friends">👋 <span class="lbl">Invite</span></button>
+    <button id="kitchenBtn" class="btn" title="Create a kitchen">🏠 <span class="lbl">Kitchen</span></button>
+    <button id="joinBtn" class="btn" title="Join a kitchen with a code">🔑 <span class="lbl">Join</span></button>
+    <button id="soundBtn" class="btn icon" title="Sound">🔊</button>
+    <button id="meBtn" class="me" title="Your cook"><canvas id="meFace" width="80" height="80"></canvas><span id="meName">Chef</span></button>
+  </header>
+
+  <!-- the recipe sheet -->
+  <aside id="sheet">
+    <div class="sheetHead">
+      <canvas id="dishMini" width="112" height="84"></canvas>
+      <div class="sheetTitle">
+        <div class="kicker">Today we're cooking</div>
+        <h2 id="rName">—</h2>
+        <div id="rMeta" class="muted"></div>
+      </div>
+      <button id="sheetMin" class="btn icon small" title="Fold the recipe">▾</button>
+    </div>
+    <div class="progress"><i id="rProg"></i><span id="rProgTxt"></span></div>
+    <div class="sheetBtns">
+      <button id="bookBtn" class="btn small">📖 Change recipe</button>
+      <span id="headNote" class="muted"></span>
+    </div>
+    <ol id="steps"></ol>
+  </aside>
+  <button id="sheetPill" class="btn sun" hidden>📋 Recipe</button>
+
+  <!-- timers -->
+  <section id="timers" hidden>
+    <div id="timerList"></div>
+    <div class="speeds" id="speeds"></div>
+  </section>
+
+  <!-- hands-full / messy hints -->
+  <div id="nudge" hidden></div>
+
+  <!-- chat -->
+  <section id="chat">
+    <div id="chatLog"></div>
+    <div id="quick" hidden></div>
+    <button id="chatBtn" class="btn round" title="Say something (1–9)">💬</button>
+  </section>
+
+  <!-- the work station (first person close-up) -->
+  <section id="station" hidden>
+    <div class="stHead">
+      <div class="stTitle"><span id="stIcon">🔪</span> <b id="stName"></b></div>
+      <div id="stDots"></div>
+      <button id="stClose" class="btn small" title="Step away (Esc)">✕ Step away</button>
+    </div>
+    <canvas id="stCanvas"></canvas>
+    <div id="stHint"></div>
+  </section>
+
+  <!-- fixture menu -->
+  <div id="menu" hidden></div>
+
+  <!-- dialogs -->
+  <div id="modal" hidden><div class="card" id="modalCard"></div></div>
+  <div id="toast"></div>
+
+  <script type="module" src="client/main.js"></script>
+</body>
+</html>

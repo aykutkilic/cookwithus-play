@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "cookwithus – cozy cooking together",
+  "short_name": "cookwithus",
+  "description": "Cozy isometric multiplayer cooking. Cook real recipes together with friends, peer-to-peer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6e2c4",
+  "theme_color": "#f6e2c4",
+  "categories": ["games", "food"],
+  "icons": [
+    { "src": "client/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

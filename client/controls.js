@@ -1,0 +1,134 @@
+// Moving the cook, as in the football game: arrow keys / WASD (E or Space to
+// use what's in front of you), or on phones and tablets a floating thumb
+// stick on the left and a big Use button on the right. Directions are in
+// screen space ("up" is away from the camera); the scene turns them into
+// kitchen directions.
+
+export class Controls {
+  constructor({ onUse, onFirst, onMenuMove }) {
+    this.onUse = onUse;
+    this.onFirst = onFirst;
+    this.onMenuMove = onMenuMove;
+    this.keys = new Set();
+    this.stick = null;
+    this.sx = 0; this.sy = 0; this.mag = 0;
+    this.enabled = true;
+    this.menuOpen = false;
+
+    addEventListener('keydown', (e) => {
+      if (isTyping(e)) return;
+      const k = e.key.toLowerCase();
+      if (this.menuOpen && ['arrowup', 'w', 'arrowdown', 's'].includes(k)) { this.onMenuMove(k === 'arrowup' || k === 'w' ? -1 : 1); e.preventDefault(); return; }
+      if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); }
+      if ((k === 'e' || k === ' ' || k === 'enter') && !e.repeat) { e.preventDefault(); this.first(); this.onUse(); }
+    });
+    addEventListener('keyup', (e) => { this.keys.delete(e.key.toLowerCase()); });
+    addEventListener('blur', () => this.keys.clear());
+
+    // the touch layer
+    const root = document.createElement('div');
+    root.id = 'touch';
+    root.hidden = true;
+    root.innerHTML = '<div class="tzone"></div><div class="tstick" hidden><div class="tknob"></div></div><button class="tuse" id="tuse"><b>✋</b><span>Use</span></button>';
+    document.body.appendChild(root);
+    this.root = root;
+    this.zone = root.querySelector('.tzone');
+    this.stickEl = root.querySelector('.tstick');
+    this.knob = root.querySelector('.tknob');
+    this.useBtn = root.querySelector('.tuse');
+    this.useBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.first(); this.useBtn.classList.add('on'); this.onUse(); });
+    const offUse = () => this.useBtn.classList.remove('on');
+    this.useBtn.addEventListener('pointerup', offUse);
+    this.useBtn.addEventListener('pointercancel', offUse);
+    this.zone.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.first();
+      if (this.stick) return;
+      try { this.zone.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      this.stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY };
+      this.stickEl.style.left = `${e.clientX}px`;
+      this.stickEl.style.top = `${e.clientY}px`;
+      this.stickEl.hidden = false;
+      this.moveStick(e);
+    });
+    this.zone.addEventListener('pointermove', (e) => { if (this.stick && e.pointerId === this.stick.id) this.moveStick(e); });
+    const release = (e) => {
+      if (!this.stick || e.pointerId !== this.stick.id) return;
+      this.stick = null;
+      this.stickEl.hidden = true;
+      this.sx = this.sy = this.mag = 0;
+      this.knob.style.transform = 'translate(-50%, -50%)';
+    };
+    this.zone.addEventListener('pointerup', release);
+    this.zone.addEventListener('pointercancel', release);
+  }
+
+  first() { if (this.onFirst) { const f = this.onFirst; this.onFirst = null; f(); } }
+
+  moveStick(e) {
+    const R = this.stickEl.offsetWidth / 2 || 55;
+    let dx = e.clientX - this.stick.x0, dy = e.clientY - this.stick.y0;
+    const d = Math.hypot(dx, dy);
+    // drag far and the base follows the thumb, so turning stays quick
+    if (d > R * 1.35) {
+      const k = (d - R * 1.35) / d;
+      this.stick.x0 += dx * k; this.stick.y0 += dy * k;
+      this.stickEl.style.left = `${this.stick.x0}px`; this.stickEl.style.top = `${this.stick.y0}px`;
+      dx = e.clientX - this.stick.x0; dy = e.clientY - this.stick.y0;
+    }
+    const dd = Math.hypot(dx, dy);
+    const dead = R * 0.12;
+    this.mag = dd < dead ? 0 : Math.min(1, (dd - dead) / (R * 0.75));
+    this.sx = dd > 0 ? dx / dd : 0; this.sy = dd > 0 ? dy / dd : 0;
+    const kd = Math.min(dd, R);
+    this.knob.style.transform = `translate(calc(-50% + ${this.sx * kd}px), calc(-50% + ${this.sy * kd}px))`;
+  }
+
+  // screen-space direction {x, y, mag}; y down is towards the camera
+  dir() {
+    if (!this.enabled) return { x: 0, y: 0, mag: 0 };
+    if (this.stick && this.mag > 0) return { x: this.sx, y: this.sy, mag: this.mag };
+    let x = 0, y = 0;
+    for (const k of this.keys) { const m = MOVE[k]; if (m) { x += m[0]; y += m[1]; } }
+    const d = Math.hypot(x, y);
+    return d ? { x: x / d, y: y / d, mag: 1 } : { x: 0, y: 0, mag: 0 };
+  }
+
+  setTouch(on) {
+    this.root.hidden = !on;
+    document.body.classList.toggle('touchui', on);
+  }
+
+  // the Use button says what it will do
+  setUseLabel(text, enabled) {
+    this.useBtn.querySelector('span').textContent = text || 'Use';
+    this.useBtn.classList.toggle('dim', !enabled);
+  }
+}
+
+const MOVE = {
+  arrowup: [0, -1], w: [0, -1], arrowdown: [0, 1], s: [0, 1],
+  arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0],
+};
+
+function isTyping(e) {
+  const t = e.target;
+  return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+}
+
+export function isTouchDevice() {
+  return (window.matchMedia && matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 1;
+}
+
+// Pinching and double-tapping must never zoom the page (iOS ignores user-scalable=no).
+export function lockZoom() {
+  const block = (e) => { if (e.cancelable) e.preventDefault(); };
+  for (const k of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(k, block, { passive: false });
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) block(e); }, { passive: false });
+  let lastEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const ui = e.target.closest && e.target.closest('button, a, label, input, textarea, select');
+    if (e.timeStamp - lastEnd < 350 && e.touches.length === 0 && !ui) block(e);
+    lastEnd = e.timeStamp;
+  }, { passive: false });
+}
