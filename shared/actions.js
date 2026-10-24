@@ -512,24 +512,6 @@ export const ACTIONS = {
       { g: 'drag', obj: 'scraps', to: 'bin', hint: 'Drop the scraps in the bin' },
     ],
   },
-  // fetching things: open the door by its handle, reach in and take it, swing
-  // the door shut. What's taken goes into your hands.
-  take: {
-    cap: 'store', verb: 'Take', tool: 'grab', icon: '🫴', chore: true,
-    phases: (s) => [
-      doorPh(s.hot, 1, s.hot === 'fridge' ? 'Take the handle and swing the fridge open' : 'Take the handle and open the glass door'),
-      { g: 'drag', obj: 'thing', to: 'hands', hint: 'Take it out' },
-      doorPh(s.hot, 0, 'Swing the door shut'),
-    ],
-  },
-  open: {
-    cap: 'store', verb: 'Open the door', tool: 'hand', icon: '🚪', chore: true,
-    phases: (s) => [doorPh(s.hot, 1, 'Take the handle and swing it open')],
-  },
-  shut: {
-    cap: 'store', verb: 'Close the door', tool: 'hand', icon: '🚪', chore: true,
-    phases: (s) => [doorPh(s.hot, 0, 'Swing the door shut')],
-  },
   bag: {
     cap: 'bin', verb: 'Change the bag', tool: 'grab', icon: '🛍️', chore: true,
     phases: () => [

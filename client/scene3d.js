@@ -13,6 +13,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
+import { VESSELS } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook } from './cook3d.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
@@ -339,21 +340,46 @@ export class Scene3D {
     const out = new Map();
     this.stashAt = out;
     if (!D) return;
+    // put away: each store's things, in order – pans at the bottom, dishes
+    // above, food at the top (the fridge: food from the top shelf down)
     const per = new Map();
-    const put = (fx, key) => {
-      const F = this.k3.fx[fx];
-      if (!F || !F.anchors.stash) return;
-      const n = per.get(fx) || 0;
-      per.set(fx, n + 1);
-      const A = F.anchors.stash;
-      out.set(key, { pos: A[n % A.length], stored: true, sig: `s:${fx}` });
-    };
-    // pots first (they take the low shelves), then food
-    for (const [id, v] of Object.entries(D.vessels)) if (!v.at && v.held == null && v.home) put(v.home, `v:${id}`);
+    const add = (fx, key) => { if (!per.has(fx)) per.set(fx, []); per.get(fx).push(key); };
+    for (const [id, v] of Object.entries(D.vessels)) if (!v.at && v.held == null && v.home) add(v.home, `v:${id}`);
     for (const [id, it] of Object.entries(D.items)) {
       if (it.in || it.hidden || it.held != null || !it.at) continue;
       const F = this.k3.fx[it.at];
-      if (F && F.anchors.stash) put(it.at, `i:${id}`);
+      if (F && F.anchors.shelfL) add(it.at, `i:${id}`);
+    }
+    for (const [fx, keys] of per) {
+      const F = this.k3.fx[fx];
+      if (!F || !F.anchors.shelfL) continue;
+      const Ls = F.anchors.shelfL, Rs = F.anchors.shelfR, n = Ls.length;
+      const fridge = F.f.type === 'fridge';
+      const kindOf = (k) => (k[0] === 'v' ? D.vessels[k.slice(2)].kind : D.items[k.slice(2)].kind);
+      const cat = (k) => (k[0] === 'i' ? 'food' : VESSELS[kindOf(k)] && VESSELS[kindOf(k)].hob ? 'pans' : 'dishes');
+      // (levels bottom to top here; a spot's shelf r counts from the top)
+      const prefer = fridge ? { food: [3, 2, 1, 0], pans: [0, 1, 2, 3], dishes: [0, 1, 2, 3] } : { pans: [0, 1, 2, 3], dishes: [1, 0, 2, 3], food: [2, 3, 1, 0] };
+      const SLOTS = [0.125, 0.375, 0.625, 0.875];
+      const taken = Ls.map(() => new Set());
+      const put = (k, lv, u) => {
+        out.set(k, { pos: Ls[lv].clone().lerp(Rs[lv], u), yaw: k[0] === 'v' && GRIP3D[kindOf(k)] ? Math.atan2(F.front.z, -F.front.x) : null, stored: true, sig: `s:${fx}:${lv}:${u.toFixed(2)}` });
+        taken[lv].add(SLOTS.reduce((a, q, i) => (Math.abs(q - u) < Math.abs(SLOTS[a] - u) ? i : a), 0));
+      };
+      // where cooks put things (handles turned to the back of the shelf), then the rest in order
+      const loose = [];
+      for (const k of keys) {
+        const t = k[0] === 'v' ? D.vessels[k.slice(2)] : D.items[k.slice(2)];
+        if (t.spot && t.spot.r < n) put(k, n - 1 - t.spot.r, 0.08 + t.spot.x * 0.84);
+        else loose.push(k);
+      }
+      loose.sort((a, b) => ['pans', 'dishes', 'food'].indexOf(cat(a)) - ['pans', 'dishes', 'food'].indexOf(cat(b)) || a.localeCompare(b));
+      for (const k of loose) {
+        const pr = prefer[cat(k)].filter((i) => i < n);
+        let lv = pr.find((i) => taken[i].size < SLOTS.length);
+        if (lv === undefined) lv = pr[0];
+        const slot = SLOTS.findIndex((q, i) => !taken[lv].has(i));
+        put(k, lv, slot >= 0 ? SLOTS[slot] : 0.5);
+      }
     }
     // in someone's hands
     for (const rec of this.cooks.values()) {
@@ -425,7 +451,7 @@ export class Scene3D {
           this.dynamic.add(rec.group);
         }
         rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
-        rec.group.rotation.y = kept && kept.held ? kept.yaw : 0;
+        rec.group.rotation.y = kept && kept.yaw != null ? kept.yaw : 0;
         rec.group.scale.setScalar(kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         updateVessel(rec, v, this.t);
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');

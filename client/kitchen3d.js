@@ -415,9 +415,9 @@ function fridge(g, ctx, d) {
   g.add(lathe([[0, 0], [0.14, 0.02], [0.17, 0.08]], mat(ctx.T.tileB, { rough: 0.4, double: true }), 0, 1.18, -0.05));
   for (const [x, z, c] of [[-0.05, 0, '#e8432e'], [0.06, -0.06, '#f7d330'], [0.04, 0.06, '#f08a24']]) g.add(ball(0.05, mat(c, { rough: 0.5 }), x, 1.24, -0.05 + z));
   d.anchors.shelf = v3(0, 0.335, -0.08); // where a pot chills
-  // where things are kept: four shelves, four places each
-  d.anchors.stash = [];
-  for (const y of [0.815, 0.575, 0.335, 0.085]) for (const x of [-0.27, -0.09, 0.09, 0.27]) d.anchors.stash.push(v3(x, y, 0.16));
+  // where things are kept: four shelves (bottom to top), things spread along each
+  d.anchors.shelfL = [0.085, 0.335, 0.575, 0.815].map((y) => v3(-0.32, y, 0.16));
+  d.anchors.shelfR = [0.085, 0.335, 0.575, 0.815].map((y) => v3(0.32, y, 0.16));
 }
 
 function pantry(g, ctx, d) {
@@ -429,13 +429,13 @@ function pantry(g, ctx, d) {
   for (const sx of [-1, 1]) g.add(box(0.04, Ht, 0.86, wood, sx * 0.45, 0, -0.02));
   const shelves = [0.05, 0.38, 0.7, 1.02, Ht - 0.03];
   for (const y of shelves) g.add(box(0.9, 0.03, 0.86, wood, 0, y, -0.02));
-  // the top shelf: the spice jars and oils every station reaches for (always there)
+  // at the back of the top shelf: the spice jars and oils every station reaches for (always there)
   const jarCols = ['#c0412d', '#e8601a', '#f2b21a', '#9ab86a', '#3a7ac0', '#8a5a3a'];
   for (let i = 0; i < 6; i++) {
     const x = -0.33 + i * 0.132;
-    g.add(cyl(0.05, 0.05, 0.16, M.glass(), x, 1.05, 0.05, 12));
-    g.add(cyl(0.045, 0.045, 0.1, mat(jarCols[i], { rough: 0.6 }), x, 1.055, 0.05, 12));
-    g.add(cyl(0.052, 0.052, 0.025, mat(T.trim, { rough: 0.5 }), x, 1.21, 0.05, 12));
+    g.add(cyl(0.05, 0.05, 0.16, M.glass(), x, 1.05, -0.3, 12));
+    g.add(cyl(0.045, 0.045, 0.1, mat(jarCols[i], { rough: 0.6 }), x, 1.055, -0.3, 12));
+    g.add(cyl(0.052, 0.052, 0.025, mat(T.trim, { rough: 0.5 }), x, 1.21, -0.3, 12));
   }
   // a glass door over the three lower shelves: you see what's in there, and open it by its knob
   const hinge = live(new THREE.Group());
@@ -450,8 +450,8 @@ function pantry(g, ctx, d) {
   d.parts.door = hinge;
   // below: the pots, pans, bowls and plates, and the food that isn't kept cold – put away
   // on the three lower shelves, each in its own place near the front where you can see it
-  d.anchors.stash = [];
-  for (const y of [0.73, 0.41, 0.08]) for (const x of [-0.31, -0.1, 0.1, 0.31]) d.anchors.stash.push(v3(x, y + 0.005, 0.24));
+  d.anchors.shelfL = [0.085, 0.415, 0.735, 1.055].map((y) => v3(-0.38, y, 0.22));
+  d.anchors.shelfR = [0.085, 0.415, 0.735, 1.055].map((y) => v3(0.38, y, 0.22));
 }
 
 function plant(g) {

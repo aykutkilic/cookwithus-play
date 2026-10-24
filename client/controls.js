@@ -1,12 +1,14 @@
 // Moving the cook, as in the football game: arrow keys / WASD (E or Space to
-// use what's in front of you), or on phones and tablets a floating thumb
-// stick on the left and a big Use button on the right. Directions are in
+// use what's in front of you, Q for every option there), or on phones and
+// tablets a floating thumb stick on the left, a big Use button on the right
+// and a little ⋯ button for every option. Directions are in
 // screen space ("up" is away from the camera); the scene turns them into
 // kitchen directions.
 
 export class Controls {
-  constructor({ onUse, onFirst, onMenuMove }) {
+  constructor({ onUse, onMore, onFirst, onMenuMove }) {
     this.onUse = onUse;
+    this.onMore = onMore;
     this.onFirst = onFirst;
     this.onMenuMove = onMenuMove;
     this.keys = new Set();
@@ -21,6 +23,7 @@ export class Controls {
       if (this.menuOpen && ['arrowup', 'w', 'arrowdown', 's'].includes(k)) { this.onMenuMove(k === 'arrowup' || k === 'w' ? -1 : 1); e.preventDefault(); return; }
       if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); }
       if ((k === 'e' || k === ' ' || k === 'enter') && !e.repeat) { e.preventDefault(); this.first(); this.onUse(); }
+      if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
     });
     addEventListener('keyup', (e) => { this.keys.delete(e.key.toLowerCase()); });
     addEventListener('blur', () => this.keys.clear());
@@ -29,7 +32,7 @@ export class Controls {
     const root = document.createElement('div');
     root.id = 'touch';
     root.hidden = true;
-    root.innerHTML = '<div class="tzone"></div><div class="tstick" hidden><div class="tknob"></div></div><button class="tuse" id="tuse"><b>✋</b><span>Use</span></button>';
+    root.innerHTML = '<div class="tzone"></div><div class="tstick" hidden><div class="tknob"></div></div><button class="tuse" id="tuse"><b>✋</b><span>Use</span></button><button class="tmore" id="tmore" title="Every option here">⋯</button>';
     document.body.appendChild(root);
     this.root = root;
     this.zone = root.querySelector('.tzone');
@@ -37,6 +40,7 @@ export class Controls {
     this.knob = root.querySelector('.tknob');
     this.useBtn = root.querySelector('.tuse');
     this.useBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.first(); this.useBtn.classList.add('on'); this.onUse(); });
+    root.querySelector('.tmore').addEventListener('pointerdown', (e) => { e.preventDefault(); this.first(); if (this.onMore) this.onMore(); });
     const offUse = () => this.useBtn.classList.remove('on');
     this.useBtn.addEventListener('pointerup', offUse);
     this.useBtn.addEventListener('pointercancel', offUse);

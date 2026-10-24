@@ -276,6 +276,15 @@ a.btn { text-decoration: none; color: inherit; }
 #touch .tuse b { font-size: 30px; }
 #touch .tuse.on { transform: translateY(4px); box-shadow: 0 1px 0 var(--ink); }
 #touch .tuse.dim { background: var(--paper); opacity: .8; }
+#touch .tmore {
+  position: fixed; right: 132px; bottom: 100px; width: 48px; height: 48px; border-radius: 50%; pointer-events: auto; touch-action: none;
+  background: var(--paper); border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--ink); font-weight: 700; font-size: 22px; line-height: 1;
+}
+body.touchui:not(.sheetMin) #touch .tmore { bottom: calc(46vh + 24px); }
+@media (min-width: 761px) { body.touchui #touch .tmore { bottom: 114px; } }
+#prompt .more { opacity: .65; font-weight: 600; margin-left: 6px; }
+#steps li.just { animation: tick 1.4s ease-out; }
+@keyframes tick { 0% { background: #c9f2c9; transform: scale(1.03); } 100% { transform: none; } }
 body.touchui #chat { bottom: 210px; }
 body.touchui:not(.sheetMin) #touch .tuse { bottom: calc(46vh + 20px); }
 @media (min-width: 761px) { body.touchui #touch .tuse { bottom: 110px; } }

@@ -163,21 +163,15 @@ export function stepDef(x, sid) {
 // ------------------------------------------------------------------ chores (the trash)
 // A chore is a step that isn't in the recipe: '#clear@counter2' (sweep the
 // scraps off a counter into your hands), '#toss@binS1' (throw what you hold
-// into a bin), '#bag@binS1' (change a full bag), '#take@fridge1~i:egg' (get
-// the eggs out of the fridge), '#shut@fridge1' (close a door left open).
-// Same gestures, same locks.
+// into a bin), '#bag@binS1' (change a full bag). Same gestures, same locks.
+// (The fridge and the pantry aren't chores: you open them by the handle and
+// take what you like – swingDoor, takeThing, putDown.)
 
-export function choreId(kind, fx, thing) { return `#${kind}@${fx}${thing ? `~${thing}` : ''}`; }
+export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
-  const m = /^#(clear|toss|bag|take|open|shut)@([a-zA-Z]+\d*)(?:~([iv]:[\w-]+))?$/.exec(sid);
+  const m = /^#(clear|toss|bag)@([a-zA-Z]+\d*)$/.exec(sid);
   if (!m) return null;
-  const d = { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
-  if (m[1] === 'take' || m[1] === 'open' || m[1] === 'shut') d.hot = m[2].startsWith('fridge') ? 'fridge' : 'pantry';
-  if (m[1] === 'take') {
-    if (!m[3]) return null;
-    d.thing = m[3];
-  } else if (m[3]) return null;
-  return d;
+  return { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
 }
 
 // every step a cook can be busy with: the recipe's and the chores under way
@@ -204,16 +198,6 @@ function choreBlocked(C, x, K, d, memberId) {
   const sc = C.scraps[d.fx];
   const bin = C.bins[d.fx] || { fill: 0 };
   switch (d.do) {
-    case 'take': {
-      if (!isStore(f)) return 'Nothing is kept there';
-      const st = C.steps[d.id];
-      const L = locate(C, K, d.thing);
-      if (st && st.s !== 'done' && st.ph > 0 && L.held === memberId) return ''; // got it, just closing the door
-      if (!L.stored || L.fx !== d.fx) return 'That isn’t in there';
-      return handsFree(C, x, memberId, d.thing);
-    }
-    case 'shut': return isStore(f) && C.fx[d.fx] && C.fx[d.fx].door ? '' : 'It’s closed';
-    case 'open': return isStore(f) && !(C.fx[d.fx] && C.fx[d.fx].door) ? '' : 'It’s open';
     case 'clear':
       if (heldBy(C, memberId).length) return `Put down the ${thingName(C, x, heldBy(C, memberId)[0])} first`;
       return sc && sc.n > 0 ? '' : 'Nothing to clear here';
@@ -248,7 +232,39 @@ function choreDone(C, K, d, st) {
     bin.bags++;
     C.bagsOut = (C.bagsOut || 0) + 1;
   }
-  // 'take' put the thing in your hands as you lifted it out (completePhase)
+}
+
+// ------------------------------------------------------------------ the fridge / pantry door
+// Swung by a cook's hand: `swing` follows their drag (everyone sees the door
+// move), and when they let go it's open or shut (`door`).
+export function swingDoor(C, K, m, fx, v, done) {
+  const f = fixtureById(K, fx);
+  if (!f || !isStore(f)) return 'There’s no door to swing there';
+  const s = fxState(C, fx);
+  v = Math.max(0, Math.min(1, Number(v) || 0));
+  if (done) { s.door = v >= 0.5 ? 1 : 0; s.swing = null; s.by = null; }
+  else { s.swing = Math.round(v * 100) / 100; s.by = m; }
+  return '';
+}
+export function doorOpen(C, fx) { return !!(C.fx[fx] && C.fx[fx].door); }
+
+// Where a thing stands in the fridge / pantry, if a cook put it somewhere
+// particular: shelf r (0 = the top one) and how far along it x (0 … 1).
+// Things without a spot are kept in the usual order.
+export const SHELVES = 4;
+function spotOf(r, x) {
+  return { r: Math.max(0, Math.min(SHELVES - 1, Math.round(Number(r) || 0))), x: Math.round(Math.max(0, Math.min(1, Number(x) || 0)) * 100) / 100 };
+}
+
+// Rearranging the fridge / pantry as you like.
+export function arrange(C, K, m, key, fx, r, xpos) {
+  const f = fixtureById(K, fx);
+  if (!f || !isStore(f)) return 'Nothing is kept there';
+  if (!doorOpen(C, fx)) return `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first`;
+  const L = locate(C, K, key);
+  if (!L.stored || L.fx !== fx) return 'That isn’t in there';
+  thingOf(C, key).spot = spotOf(r, xpos);
+  return '';
 }
 
 // ------------------------------------------------------------------ things and hands
@@ -347,20 +363,20 @@ function halfDone(C, x, key, fx) {
   return false;
 }
 
-// Pick something up from a counter, the sink, the stove … (from the fridge
-// or the shelf it's the 'take' chore: you reach in with your own hands).
+// Pick something up: from a counter, the sink, the stove – or out of the
+// fridge / pantry once its door is open.
 export function takeThing(C, x, K, m, key, fx) {
   const t = thingOf(C, key);
   const f = fixtureById(K, fx);
   if (!t || !f) return 'Nothing like that here';
   if (C.finished) return 'The dish is finished';
   const L = locate(C, K, key);
-  if (L.stored) return L.fx === fx ? 'Open it up and reach in for it' : 'That’s put away';
+  if (L.stored && (L.fx !== fx || !doorOpen(C, fx))) return L.fx === fx ? `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first` : 'That’s put away';
   if (L.inV) return `It’s in the ${thingName(C, x, `v:${L.inV}`)} – take that`;
   if (L.held != null || L.fx !== fx) return 'It isn’t here';
   const why = handsFree(C, x, m, key);
   if (why) return why;
-  if (key[0] === 'v') {
+  if (key[0] === 'v' && !L.stored) {
     const vid = key.slice(2);
     const timer = x.steps.find((q) => q.do === 'wait' && q.vessel === vid && C.steps[q.id].s === 'running');
     if (timer && t.heat > 0) return `It’s cooking – ${timer.label || 'wait for the timer'} first`;
@@ -371,6 +387,7 @@ export function takeThing(C, x, K, m, key, fx) {
   if (halfDone(C, x, key, fx)) return 'Finish the job on it here first';
   t.held = m;
   t.at = null;
+  delete t.spot; // its place on the shelf is free now
   if (key[0] === 'v') { t.onHob = 0; t.heat = 0; } // lifted off the burner, which goes out
   return '';
 }
@@ -404,11 +421,12 @@ export function canPut(C, x, K, m, fx) {
   return f ? putBlocked(C, x, K, held, f) : 'Nowhere to put it';
 }
 
-// Put down everything in your hands here.
-export function putDown(C, x, K, m, fx) {
+// Put down everything in your hands here (or just `only`, one of them; into
+// the fridge / pantry at `spot` {r, x} if you put it somewhere particular).
+export function putDown(C, x, K, m, fx, only = null, spot = null) {
   const f = fixtureById(K, fx);
-  const held = heldBy(C, m);
-  if (!held.length) return 'Your hands are empty';
+  const held = heldBy(C, m).filter((k) => !only || k === only);
+  if (!held.length) return only ? 'You aren’t holding that' : 'Your hands are empty';
   if (!f) return 'Nowhere to put it';
   const why = putBlocked(C, x, K, held, f);
   if (why) return why;
@@ -416,6 +434,8 @@ export function putDown(C, x, K, m, fx) {
   for (const k of held) {
     const t = thingOf(C, k);
     t.held = null;
+    delete t.spot;
+    if (isStore(f) && spot) t.spot = spotOf(spot.r, spot.x);
     if (k[0] === 'i') { t.at = fx; continue; }
     if (isStore(f)) { t.at = null; t.home = fx; continue; }
     const onHob = !surface && f.caps.includes('hob');
@@ -591,7 +611,7 @@ export function placeBusy(C, x, K, s, place, memberId) {
     const st = C.steps[o.id];
     if (!st || o.id === s.id || st.s !== 'active' || st.by === memberId) continue;
     if (st.fx !== place.fx) continue;
-    if (f.caps.includes('store')) { if (s.thing && o.thing === s.thing) return 'Someone is taking that'; continue; } // room for everyone at the fridge
+    if (f.caps.includes('store')) continue; // room for everyone at the fridge
     const shared = f.caps.includes('hob') || f.caps.includes('bake') || f.caps.includes('chill') || f.caps.includes('tandoor');
     if (!shared) return 'Someone is working there';
     if (st.slot === place.slot || (vid && stepVessel(o) === vid)) return 'Someone is working on that';
@@ -740,11 +760,7 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
     const v = C.vessels[stepVessel(s)];
     if (v) { v.at = null; v.onHob = 0; v.held = st.by; }
   }
-  // taken out of the fridge / off the shelf
-  if (s.do === 'take' && ph.obj === 'thing') {
-    const t = thingOf(C, s.thing);
-    if (t && locate(C, K, s.thing).stored) { t.held = st.by; t.at = null; }
-  }
+
   st.ph++;
   st.k = 0;
   st.v = 0;
@@ -835,6 +851,8 @@ export function dropMember(C, x, memberId, K, pos) {
   }
   // scraps in their hands go back on the nearest… floor. Gone.
   if (C.carry && C.carry[memberId]) C.carry[memberId] = null;
+  // a door they were swinging stays where it is
+  for (const s of Object.values(C.fx)) if (s.by === memberId) { s.door = (s.swing || 0) >= 0.5 ? 1 : 0; s.swing = null; s.by = null; }
   // what they held is left on the counter nearest to where they stood
   const held = heldBy(C, memberId);
   if (held.length && K) {

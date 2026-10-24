@@ -11,7 +11,7 @@
 
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
-  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown,
+  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange,
   setSpeed, skipWait, SPEEDS,
 } from './cook.js';
 import { sanitizeProfile, QUICK_CHAT, COOK_COLORS } from './names.js';
@@ -171,9 +171,24 @@ export class Room {
       case 'take': case 'put': {
         if (!C) return;
         const fx = String(msg.fx || '');
-        const err = msg.t === 'take' ? takeThing(C, x, K, m.id, String(msg.what || ''), fx) : putDown(C, x, K, m.id, fx);
-        client.sendText(JSON.stringify({ t: 'handled', what: msg.t, fx, err }));
+        const what = msg.what ? String(msg.what) : null;
+        const spot = msg.r != null ? { r: msg.r, x: msg.x } : null;
+        const err = msg.t === 'take' ? takeThing(C, x, K, m.id, what || '', fx) : putDown(C, x, K, m.id, fx, what, spot);
+        client.sendText(JSON.stringify({ t: 'handled', what: msg.t, key: what, fx, err }));
         if (!err) this.flush(true);
+        break;
+      }
+      case 'arrange': {
+        if (!C) return;
+        const err = arrange(C, K, m.id, String(msg.what || ''), String(msg.fx || ''), msg.r, msg.x);
+        client.sendText(JSON.stringify({ t: 'handled', what: 'arrange', key: msg.what, err }));
+        if (!err) this.flush(true);
+        break;
+      }
+      case 'door': {
+        if (!C) return;
+        const err = swingDoor(C, K, m.id, String(msg.fx || ''), msg.v, !!msg.done);
+        if (!err && (msg.done || this.now - this.lastFlush > 120)) this.flush(true);
         break;
       }
       case 'speed': {

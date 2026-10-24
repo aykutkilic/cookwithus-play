@@ -17,7 +17,7 @@ import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
   choreId, carrying, binHolds, SCRAP_LIMIT, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
-  handsFree, canPut,
+  handsFree, canPut, HAND_ITEMS,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS } from '../shared/actions.js';
 import {
@@ -66,6 +66,8 @@ const station = new Station($('stCanvas'), {
   sfx: (n, v) => sfx.play(n, v),
   pose: (p) => { S.pose = p; },
   progress: (info) => stationProgress(info),
+  store: (m) => send(m),
+  close: () => closeStation(true),
 });
 
 function send(obj) { if (S.net) S.net.send(obj); }
@@ -321,13 +323,15 @@ function renderSheet() {
   $('rProg').style.width = `${Math.round(done / x.steps.length * 100)}%`;
   $('rProgTxt').textContent = C.finished ? 'Served! 🎉' : `${done} / ${x.steps.length}`;
   drawDishMini(r);
-  // open & active first, then running, then locked, then done
-  const order = { active: 0, open: 1, ready: 2, running: 3, locked: 4, done: 5 };
-  const list = x.steps.map((s, i) => ({ s, st: C.steps[s.id], i }))
-    .sort((a, b) => (order[a.st.s] - order[b.st.s]) || (a.i - b.i));
+  // the recipe in its own order: what's done is ticked where it stands
+  const list = x.steps.map((s, i) => ({ s, st: C.steps[s.id], i }));
+  const nowDone = new Set(list.filter((q) => q.st.s === 'done').map((q) => q.s.id));
+  const fresh = S.doneSeen ? [...nowDone].filter((id) => !S.doneSeen.has(id)) : [];
+  S.doneSeen = nowDone;
   const html = [];
   for (const { s, st } of list) {
     const cls = [st.s];
+    if (fresh.includes(s.id)) cls.push('just');
     if (st.claim.includes(S.myId) || st.by === S.myId) cls.push('mine');
     if (S.sel === s.id) cls.push('mine');
     const who = [];
@@ -352,6 +356,9 @@ function renderSheet() {
     html.push(`<li class="${cls.join(' ')}" data-sid="${s.id}"><span class="ic">${st.s === 'done' ? '✅' : st.s === 'locked' ? '🔒' : stepIcon(s)}</span><span class="nm">${esc(s.name)}${sub ? `<small>${sub}</small>` : ''}</span><span class="who">${who.join('')}</span><span class="acts">${acts.join('')}</span>${bar}</li>`);
   }
   $('steps').innerHTML = html.join('');
+  // keep the next thing to do in sight
+  const next = $('steps').querySelector('li.active, li.open, li.ready, li.running');
+  if (next && (fresh.length || !S.sheetScrolled)) { S.sheetScrolled = true; next.scrollIntoView({ block: 'nearest', behavior: fresh.length ? 'smooth' : 'auto' }); }
 }
 
 function drawDishMini(r) {
@@ -429,7 +436,7 @@ function doAct(act, what, fx) {
   if (!f) return;
   closeMenu();
   S.me.yaw = yawTo(f);
-  send({ t: act, what, fx });
+  for (const w of Array.isArray(what) ? what : [what]) send({ t: act, what: w, fx });
   sfx.play(act === 'take' ? 'pop' : 'clunk', 0.7);
 }
 
@@ -530,33 +537,60 @@ function useNow() {
   if (!f) { toast('Walk up to a counter, the sink, the stove … and use it'); return; }
   const pick = bestJob(f);
   if (pick) { runJob(pick, f); return; }
-  if (!jobsAt(f).length) { toast(`Nothing to do at the ${FIXTURES[f.type].name.toLowerCase()} right now`); return; }
+  toast(`Nothing to do at the ${FIXTURES[f.type].name.toLowerCase()} right now`);
+}
+
+// Q / ⋯: every option where I stand
+function moreNow() {
+  sfx.unlock();
+  if (!$('menu').hidden) { closeMenu(); return; }
+  if (S.working || !$('modal').hidden) return;
+  const f = S.target;
+  if (!f) { toast('Walk up to a counter, the sink, the stove … first'); return; }
   openMenu(f);
 }
 
-// what E does here without asking: the next move for the step I picked (📍),
-// a step that uses what I'm holding, or the only thing there is to do
+// What E does here, without asking (Q – ⋯ on a touch screen – lists every
+// option): the fridge / pantry opens; scraps in my hands go in the bin; the
+// next move for the step I pointed at (📍) if it's here; else the first step of
+// the recipe I can do here with what I hold / what's here; else I put down
+// what I hold, or pick up what's lying here.
 function bestJob(f, all = jobsAt(f)) {
   const C = S.M.cook, x = S.x;
   const jobs = all.filter((j) => !j.off);
+  const store = jobs.find((j) => j.store);
+  if (store) return store;
+  if (C && carrying(C, S.myId)) return jobs.find((j) => j.sid && j.sid.startsWith('#toss')) || jobs.find((j) => j.sid && j.sid.startsWith('#bag')) || null;
   if (S.sel && C && x) {
     const p = planStep(C, x, S.K, S.sel, S.myId);
     if (p && p.fx === f.id) {
       const j = p.do === 'go' ? jobs.find((q) => q.sid === S.sel)
         : p.do === 'put' ? jobs.find((q) => q.act === 'put')
-          : p.do === 'take' ? jobs.find((q) => q.what === p.key || (q.sid && q.sid === choreId('take', f.id, p.key))) : null;
+          : p.do === 'take' ? jobs.find((q) => q.what === p.key || (p.store && q.store)) : null;
       if (j) return j;
     }
   }
   const held = C ? heldBy(C, S.myId) : [];
-  if (held.length) {
-    const using = jobs.filter((j) => j.sid && j.sid[0] !== '#' && needsOf(C, stepDef(x, j.sid)).some((k) => held.includes(k)));
-    if (using.length === 1) return using[0];
+  const steps = jobs.filter((j) => j.sid && j.sid[0] !== '#').sort((a, b) => a.idx - b.idx);
+  const using = steps.filter((j) => j.uses);
+  if (held.length && using.length) return using[0];
+  if (held.length) { const put = jobs.find((j) => j.act === 'put'); if (put) return put; }
+  if (steps.length) return steps[0];
+  // pick up what's lying here – all of it that fits in my hands
+  const takes = jobs.filter((j) => j.act === 'take');
+  if (takes.length) {
+    const items = takes.filter((j) => j.what[0] === 'i');
+    if (items.length > 1 && !held.some((k) => k[0] === 'v')) {
+      const keys = items.slice(0, HAND_ITEMS - held.length).map((j) => j.what);
+      return { act: 'take', what: keys, label: `${keys.map((k) => thingEmoji(C, k)).join('')} Pick up the ${keys.map((k) => thingName(C, x, k)).join(', ')}` };
+    }
+    return takes[0];
   }
-  return jobs.length === 1 ? jobs[0] : null;
+  return jobs.find((j) => j.sid && j.sid[0] === '#') || jobs[0] || null;
 }
 function runJob(j, f) {
-  if (j.act) doAct(j.act, j.what, f.id);
+  if (j.store) openStore(f.id);
+  else if (j.act) doAct(j.act, j.what, f.id);
   else startJob(j.sid, f.id);
 }
 
@@ -573,6 +607,38 @@ function sendPos(now) {
 
 // ------------------------------------------------------------------ the station
 
+// the close-up zooms in from where the fixture is in the kitchen
+function zoomFrom(f) {
+  const el = $('station');
+  const at = scene.project(f.x + f.w / 2, 0.5, f.y + f.h / 2);
+  el.hidden = false;
+  const r = el.getBoundingClientRect();
+  el.style.setProperty('--ox', `${at.x - r.left}px`);
+  el.style.setProperty('--oy', `${at.y - r.top}px`);
+  el.classList.remove('zoom'); void el.offsetWidth; el.classList.add('zoom');
+}
+
+// The fridge / the pantry, close up: open it by the handle, take what you
+// need, put things back, swing it shut.
+function openStore(fx) {
+  const C = S.M.cook, x = S.x, K = S.K;
+  const f = fixtureById(K, fx);
+  if (!f || !C || !x) return;
+  closeMenu();
+  if (S.working) closeStation(true);
+  S.me.yaw = yawTo(f);
+  S.working = { store: true, fx: f.id, sid: null };
+  zoomFrom(f);
+  const fridge = f.type === 'fridge';
+  // what I came for (the 📍 step's next move, if it's here)
+  const p = S.sel ? planStep(C, x, K, S.sel, S.myId) : null;
+  const want = p && p.do === 'take' && p.fx === f.id ? p.key : null;
+  $('stIcon').textContent = fridge ? '🧊' : '🫙';
+  $('stName').textContent = fridge ? 'The fridge' : 'The pantry';
+  station.openStore({ f, C, x, K, me: S.myId, look: lookOf(S.profile.avatar), pal: K.palette, title: fridge ? 'The fridge' : 'The pantry', want });
+  sfx.play('whoosh', 0.5);
+}
+
 function openStation(sid, fx) {
   const C = S.M.cook, x = S.x, K = S.K;
   const s = stepDef(x, sid);
@@ -585,17 +651,9 @@ function openStation(sid, fx) {
   S.pending = null;
   S.working = { sid, fx: f.id };
   const phases = phasesOf(s, bakeKind(f));
-  // zoom in from where the fixture is in the kitchen
-  const el = $('station');
-  const at = scene.project(f.x + f.w / 2, 0.5, f.y + f.h / 2);
-  const cx = at.x, cy = at.y;
-  el.hidden = false;
-  const r = el.getBoundingClientRect();
-  el.style.setProperty('--ox', `${cx - r.left}px`);
-  el.style.setProperty('--oy', `${cy - r.top}px`);
-  el.classList.remove('zoom'); void el.offsetWidth; el.classList.add('zoom');
-  $('stIcon').textContent = s.do === 'take' ? thingEmoji(C, s.thing) : (ACTIONS[s.do] && ACTIONS[s.do].icon) || '🍳';
-  $('stName').textContent = s.do === 'take' ? `Take ${f.type === 'fridge' ? 'out ' : ''}the ${thingName(C, x, s.thing)}` : s.name;
+  zoomFrom(f);
+  $('stIcon').textContent = (ACTIONS[s.do] && ACTIONS[s.do].icon) || '🍳';
+  $('stName').textContent = s.name;
   station.open({ sid, def: s, st, phases, f, bk: bakeKind(f), pal: K.palette, C, x, K, me: S.myId, look: lookOf(S.profile.avatar) });
   sfx.play('whoosh', 0.5);
 }
@@ -603,7 +661,7 @@ function openStation(sid, fx) {
 function closeStation(silent = false) {
   if (!S.working) { $('station').hidden = true; return; }
   const sid = S.working.sid;
-  const st = S.M.cook && S.M.cook.steps[sid];
+  const st = sid && S.M.cook && S.M.cook.steps[sid];
   if (st && st.s === 'active' && st.by === S.myId) send({ t: 'close', sid });
   S.working = null;
   S.pose = null;
@@ -650,6 +708,7 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene.zoomBy(e.del
 
 const controls = new Controls({
   onUse: () => useNow(),
+  onMore: () => moreNow(),
   onFirst: () => sfx.unlock(),
   onMenuMove: (d) => {
     const bs = [...$('menu').querySelectorAll('button:not([disabled])')];
@@ -686,33 +745,31 @@ function jobsAt(f) {
         : miss.length ? ` (${miss.map((k) => `${thingEmoji(C, k)} ${thingName(C, x, k)}`).slice(0, 2).join(', ')} not here)`
           : extra.length && st.s !== 'active' ? ' (hands full)' : '';
       const uses = need.some((k) => held.includes(k));
-      out.push({ sid: s.id, label: `${stepIcon(s)} ${s.name}${why}`, mine, others, off: !!why, sel: S.sel === s.id, uses });
+      out.push({ sid: s.id, label: `${stepIcon(s)} ${s.name}${why}`, mine, others, off: !!why, sel: S.sel === s.id, uses, idx: x.steps.indexOf(s) });
     }
     out.sort((a, b) => (b.sel - a.sel) || (a.off - b.off) || (b.uses - a.uses) || (b.mine - a.mine) || (a.others.length - b.others.length));
-    // what's lying here: pick it up · what's kept here: take it out
+    // the fridge / pantry: open it up and look (take things, put things back, inside)
+    if (isStore(f)) {
+      const fridge = f.type === 'fridge';
+      const open = C.fx[f.id] && C.fx[f.id].door;
+      out.unshift({ store: true, label: `${fridge ? '🧊' : '🫙'} ${open ? 'Look in' : 'Open'} the ${fridge ? 'fridge' : 'pantry'}` });
+      return out;
+    }
+    // what's lying here: pick it up
     const wanted = new Set(x.steps.filter((s) => C.steps[s.id].s !== 'done').flatMap((s) => needsOf(C, s)));
     const things = [];
     for (const [id, it] of Object.entries(C.items)) if (!it.in && !it.staple && !it.hidden && it.held == null && it.at === f.id) things.push(`i:${id}`);
-    for (const [id, v] of Object.entries(C.vessels)) if (v.held == null && (v.at ? v.at.fx === f.id : v.home === f.id && isStore(f))) things.push(`v:${id}`);
+    for (const [id, v] of Object.entries(C.vessels)) if (v.held == null && v.at && v.at.fx === f.id) things.push(`v:${id}`);
     things.sort((a, b) => wanted.has(b) - wanted.has(a));
-    const fridge = f.type === 'fridge';
     for (const k of things) {
       const why = handsFree(C, x, me, k);
-      const name = thingName(C, x, k);
-      const label = `${thingEmoji(C, k)} ${isStore(f) ? (fridge ? `Take out the ${name}` : `Take the ${name}`) : `Pick up the ${name}`}${why ? ' (hands full)' : ''}`;
-      if (isStore(f)) out.push({ sid: choreId('take', f.id, k), label, chore: true, off: !!why, what: k });
-      else out.push({ act: 'take', what: k, label, off: !!why });
-    }
-    if (isStore(f)) {
-      const what = fridge ? 'fridge' : 'pantry';
-      if (C.fx[f.id] && C.fx[f.id].door) out.push({ sid: choreId('shut', f.id), label: `🚪 Close the ${what} door`, chore: true });
-      else if (held.length) out.push({ sid: choreId('open', f.id), label: `🚪 Open the ${what} (to put things back)`, chore: true });
+      out.push({ act: 'take', what: k, label: `${thingEmoji(C, k)} Pick up the ${thingName(C, x, k)}${why ? ' (hands full)' : ''}`, off: !!why });
     }
     // what I'm holding: put it down here
     if (held.length) {
       const why = canPut(C, x, K, me, f.id);
       const what = held.length === 1 ? thingName(C, x, held[0]) : `${held.length} things`;
-      const put = { act: 'put', what: '', label: `${isStore(f) ? '↩️ Put back' : '⬇️ Put down'} the ${what}${why ? ` (${why.toLowerCase()})` : ''}`, off: !!why };
+      const put = { act: 'put', what: '', label: `⬇️ Put down the ${what}${why ? ` (${why.toLowerCase()})` : ''}`, off: !!why };
       const firstReady = out.findIndex((j) => !j.off);
       // a step that uses what I hold comes first; otherwise putting it down does
       if (firstReady >= 0 && out[firstReady].uses) out.splice(firstReady + 1, 0, put); else out.unshift(put);
@@ -1287,7 +1344,9 @@ function buildView(now, dt) {
       if (ph && ph.g === 'door' && st.v != null) doors.set(st.fx, st.v);
     }
   }
+  if (C) for (const [id, f] of Object.entries(C.fx)) if (f.swing != null) doors.set(id, f.swing);
   if (S.working && station.g && station.g.kind === 'door') doors.set(S.working.fx, station.g.v);
+  if (S.working && S.working.store && station.store) doors.set(S.working.fx, station.store.v);
   return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, target: S.target ? S.target.id : null };
 }
 
@@ -1331,7 +1390,8 @@ function drawTags(view) {
     const p = scene.project(f.x + f.w / 2, 0.95, f.y + f.h / 2);
     pr.hidden = false;
     pr.style.transform = `translate(${p.x}px, ${p.y}px)`;
-    const html = `${touchUI ? '' : '<kbd>E</kbd> '}${esc(what)}`;
+    const more = jobs.length > 1 && !touchUI ? '<span class="more"><kbd>Q</kbd> more</span>' : '';
+    const html = `${touchUI ? '' : '<kbd>E</kbd> '}${esc(what)}${more}`;
     if (pr.dataset.h !== html) { pr.innerHTML = html; pr.dataset.h = html; }
     pr.classList.toggle('dim', !jobs.length);
     controls.setUseLabel(pick ? pick.label.split(' ')[0] + ' Do it' : jobs.length ? 'Use' : 'Use', jobs.length > 0);
@@ -1367,4 +1427,10 @@ function goAct(act, what, fx) {
   Object.assign(S.me, { x: f.stand.x + 0.5, y: f.stand.y + 0.5, walk: -1, v: { x: 0, y: 0 } });
   doAct(act, what, fx);
 }
-window.cookwithus = { S, scene, station, sfx, goDo, goAct, closeStation, send, useNow };
+function goStore(fx) {
+  const f = fixtureById(S.K, fx);
+  if (!f) return;
+  Object.assign(S.me, { x: f.stand.x + 0.5, y: f.stand.y + 0.5, walk: -1, v: { x: 0, y: 0 } });
+  openStore(fx);
+}
+window.cookwithus = { S, scene, station, sfx, goDo, goAct, goStore, closeStation, send, useNow };

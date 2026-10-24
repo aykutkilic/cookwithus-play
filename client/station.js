@@ -10,7 +10,8 @@
 import { drawIngredient, drawPieces, drawVessel, drawTool, itemSize, liquidColor, vesselGrip, OUTLINE, shade } from './art.js';
 import { phaseTarget, displayState } from '../shared/cook.js';
 import { HEAT_NAMES } from '../shared/actions.js';
-import { INGREDIENTS } from '../shared/ingredients.js';
+import { INGREDIENTS, VESSELS } from '../shared/ingredients.js';
+import { heldBy, thingName } from '../shared/cook.js';
 import { themeOf, splashTexture, topTexture } from './theme.js';
 
 export const SW = 1000, SH = 620;
@@ -26,8 +27,10 @@ const OVEN_KNOB = { x: 680, y: 145, r: 36 };
 const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 820, y: 470, r: 52 };
 const ASIDE = { x: 820, y: 520 };
+const HANDS = { x: 880, y: 470, r: 105 };   // your hands, beside the fridge / pantry
+const EYE = { x: 500, y: 330, f: 1400 };    // where you look from (for doors swinging towards you)
 
-export { MAIN, SIDE, KNOB, OVEN_KNOB, LEVER, BELL };
+export { MAIN, SIDE, KNOB, OVEN_KNOB, LEVER, BELL, HANDS };
 
 // On a tall phone screen the scene zooms in on the working area (the sides,
 // where nothing important sits, are cut off) so the food stays big.
@@ -53,6 +56,7 @@ export class Station {
   // ctx: {sid, def, st, phases, f (fixture), bk, pal, C, x (expanded), K, me}
   open(ctx) {
     this.on = true;
+    this.mode = 'step';
     this.c = ctx;
     this.sid = ctx.sid;
     this.ph = ctx.st.ph;
@@ -63,7 +67,11 @@ export class Station {
     this.setupPhase();
   }
 
-  close() { this.on = false; this.c = null; this.g = null; }
+  close() {
+    // a door let go of mid-swing stays where it is
+    if (this.mode === 'store' && this.store && this.store.door) this.hooks.store({ t: 'door', fx: this.c.f.id, v: this.store.v, done: true });
+    this.on = false; this.c = null; this.g = null; this.mode = null; this.store = null;
+  }
 
   // scene (logical) → page coordinates, for the test robot
   toClient(x, y) {
@@ -77,6 +85,7 @@ export class Station {
     if (!this.on) return;
     this.c.C = C;
     this.c.K = K;
+    if (this.mode === 'store') { this.storeSync(); return; }
     const st = C.steps[this.sid];
     if (!st) return;
     this.c.st = st;
@@ -86,7 +95,7 @@ export class Station {
   }
 
   get phase() { return this.c && this.c.phases[this.ph]; }
-  get done() { return !this.c || this.ph >= this.c.phases.length; }
+  get done() { return this.mode === 'store' ? false : !this.c || this.ph >= this.c.phases.length; }
 
   // ------------------------------------------------------------------ phase setup
 
@@ -280,6 +289,7 @@ export class Station {
   }
 
   onDown(p) {
+    if (this.mode === 'store') { this.storeDown(p); return; }
     const g = this.g;
     if (!g || this.done) return;
     switch (g.kind) {
@@ -320,6 +330,7 @@ export class Station {
   }
 
   onMove(p, prev) {
+    if (this.mode === 'store') { this.storeMove(p); return; }
     const g = this.g;
     if (!g || this.done) return;
     switch (g.kind) {
@@ -379,6 +390,7 @@ export class Station {
   }
 
   onUp(p) {
+    if (this.mode === 'store') { this.storeUp(p); return; }
     const g = this.g;
     if (!g || this.done) return;
     switch (g.kind) {
@@ -668,10 +680,7 @@ export class Station {
     if (!g || !g.pos) return { x: 0, y: 0 };
     return g.grip ? { x: g.pos.x + g.grip.x, y: g.pos.y + g.grip.y } : g.pos;
   }
-  dragScale(kind) {
-    return this.g && this.g.ph && this.g.ph.obj === 'thing' ? this.shelfScale(kind) : this.vesselScale(kind) * 0.85;
-  }
-  shelfScale(kind) { return Math.min(0.75, this.vesselScale(kind) * 0.5); }
+  dragScale(kind) { return this.vesselScale(kind) * 0.85; }
 
   // ------------------------------------------------------------------ doors
   // The fridge and the pantry swing open on their left hinge, the oven door
@@ -680,8 +689,8 @@ export class Station {
   doorGeo(hot) {
     if (!hot) hot = this.c.f.type === 'fridge' ? 'fridge' : this.c.f.type === 'shelf' ? 'pantry' : 'oven';
     if (hot === 'oven') return { kind: 'drop', hy: 570, x0: 250, x1: 750, h: 360 };
-    if (hot === 'pantry') return { kind: 'swing', hx: 240, y0: 40, y1: 600, w: 520, glass: true };
-    return { kind: 'swing', hx: 300, y0: 40, y1: 610, w: 420 };
+    if (hot === 'pantry') return { kind: 'swing', hx: 240, y0: 40, y1: 600, w: 520, glass: true, max: 1.6 };
+    return { kind: 'swing', hx: 300, y0: 40, y1: 610, w: 420, max: 1.75 };
   }
   doorGrab(geo, o) {
     o = clamp(o, 0, 1);
@@ -690,8 +699,19 @@ export class Station {
       const top = geo.hy - geo.h * Math.cos(a) + 45 * Math.sin(a);
       return { x: (geo.x0 + geo.x1) / 2, y: geo.hy + (top - geo.hy) * 0.93 };
     }
-    const c = Math.cos(o * 1.75);
-    return { x: geo.hx + geo.w * c * (c >= 0.15 ? 0.88 : 1), y: (geo.y0 + geo.y1) / 2 };
+    return this.doorPoint(geo, o, 0.88, (geo.y0 + geo.y1) / 2);
+  }
+  // a point on a swinging door (u: 0 at the hinge … 1 at the free edge), seen from the eye
+  doorPoint(geo, o, u, y) {
+    const a = clamp(o, 0, 1) * geo.max;
+    const x = geo.hx + u * geo.w * Math.cos(a), z = u * geo.w * Math.sin(a);
+    const k = EYE.f / (EYE.f - z);
+    return { x: EYE.x + (x - EYE.x) * k, y: EYE.y + (y - EYE.y) * k };
+  }
+  // do I see the door's outside (with the handle) or its inside?
+  doorOutside(geo, o) {
+    const a = clamp(o, 0, 1) * geo.max;
+    return (EYE.x - geo.hx) * -Math.sin(a) + EYE.f * Math.cos(a) > 0;
   }
   doorOpenAt(geo, p) {
     if (geo.kind === 'drop') {
@@ -699,9 +719,10 @@ export class Station {
       for (let o = 0; o <= 1.0001; o += 0.01) { const d = Math.abs(this.doorGrab(geo, o).y - p.y); if (d < bd) { bd = d; best = o; } }
       return best;
     }
-    let c = (p.x - geo.hx) / (geo.w * 0.88);
-    if (c < 0.15) c = (p.x - geo.hx) / geo.w;
-    return clamp(Math.acos(clamp(c, Math.cos(1.75), 1)) / 1.75, 0, 1);
+    // wherever the handle comes closest to your hand
+    let best = 0, bd = Infinity;
+    for (let o = 0; o <= 1.0001; o += 0.01) { const q = this.doorGrab(geo, o); const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2; if (d < bd) { bd = d; best = o; } }
+    return best;
   }
   // how far the door here is open, as I see it now
   doorOpen() {
@@ -732,27 +753,26 @@ export class Station {
       ctx.fillStyle = '#c9ccd2'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.roundRect(h.x - 200 - spread * 0.8, h.y - 11, 400 + spread * 1.6, 22, 11); ctx.fill(); ctx.stroke();
     } else {
-      const a = o * 1.75, c = Math.cos(a), sn = Math.sin(a);
-      const cy = (geo.y0 + geo.y1) / 2, hh = (geo.y1 - geo.y0) / 2, k = 1 + 0.18 * sn;
-      const fx = geo.hx + geo.w * c;
-      const quad = [[geo.hx, geo.y0], [fx, cy - hh * k], [fx, cy + hh * k], [geo.hx, geo.y1]];
-      const path = () => { ctx.beginPath(); quad.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
-      const outside = c >= 0;
+      const sn = Math.sin(o * geo.max);
+      const P = (u, y) => this.doorPoint(geo, o, u, y);
+      const cy = (geo.y0 + geo.y1) / 2;
+      const quad = [P(0, geo.y0), P(1, geo.y0), P(1, geo.y1), P(0, geo.y1)];
+      const path = (pts) => { ctx.moveTo(pts[0].x, pts[0].y); for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y); ctx.closePath(); };
+      const outside = this.doorOutside(geo, o);
+      const shadeBy = outside ? -sn * 0.22 : -0.08;
       if (geo.glass) {
-        // a wooden frame with a glass pane: what's inside shows through
-        ctx.fillStyle = shade(look.wood || '#b5613d', outside ? -sn * 0.25 : -0.3); path(); ctx.fill();
-        const inset = (t, u) => [geo.hx + (fx - geo.hx) * t, cy + (u * hh) * (1 + (k - 1) * t)];
-        const pane = [inset(0.1, -0.92), inset(0.9, -0.92), inset(0.9, 0.92), inset(0.1, 0.92)];
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.beginPath(); pane.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = 'rgba(215,236,248,0.28)'; ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 3;
-        const [a0, a1] = [inset(0.25, -0.8), inset(0.45, -0.3)]; ctx.beginPath(); ctx.moveTo(...a0); ctx.lineTo(...a1); ctx.stroke();
-        ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4; path(); ctx.stroke();
+        // a wooden frame round a glass pane: what's inside shows through it
+        const pane = [P(0.1, geo.y0 + 40), P(0.9, geo.y0 + 40), P(0.9, geo.y1 - 40), P(0.1, geo.y1 - 40)];
+        ctx.fillStyle = shade(look.wood || '#b5613d', shadeBy);
+        ctx.beginPath(); path(quad); path([...pane].reverse()); ctx.fill('evenodd');
+        ctx.fillStyle = 'rgba(215,236,248,0.22)'; ctx.beginPath(); path(pane); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 3;
+        const g0 = P(0.25, geo.y0 + 90), g1 = P(0.42, geo.y0 + 260); ctx.beginPath(); ctx.moveTo(g0.x, g0.y); ctx.lineTo(g1.x, g1.y); ctx.stroke();
+        ctx.strokeStyle = OUTLINE; ctx.lineWidth = 3; ctx.beginPath(); path(pane); ctx.stroke();
+        ctx.lineWidth = 4; ctx.beginPath(); path(quad); ctx.stroke();
       } else {
-        ctx.fillStyle = outside ? shade(look.color || '#f4f1ea', -sn * 0.22) : '#e6e2d8'; path(); ctx.fill();
-        ctx.lineWidth = 5; ctx.stroke();
+        ctx.fillStyle = outside ? shade(look.color || '#f4f1ea', shadeBy) : '#e6e2d8';
+        ctx.beginPath(); path(quad); ctx.fill(); ctx.lineWidth = 5; ctx.stroke();
         if (outside && o < 0.05) {
           // magnets and a note on the closed door
           for (const [x, y, col] of [[380, 300, '#e8573a'], [450, 360, '#f2b21a'], [400, 430, '#3faa5a'], [520, 290, '#2f8fd0']]) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 14, 0, TAU); ctx.fill(); }
@@ -760,18 +780,17 @@ export class Station {
           ctx.strokeStyle = 'rgba(40,30,20,0.4)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(geo.hx, 230); ctx.lineTo(geo.hx + geo.w, 230); ctx.stroke();
         }
         if (!outside) {
-          // the racks inside the door
-          ctx.strokeStyle = '#c9d8e2'; ctx.lineWidth = 5;
-          for (const u of [-0.35, 0.15, 0.6]) { ctx.beginPath(); ctx.moveTo(geo.hx - 6, cy + u * hh); ctx.lineTo(fx + 8, cy + u * hh * k); ctx.stroke(); }
+          // the racks on the inside of the door
+          ctx.strokeStyle = '#c9d8e2'; ctx.lineWidth = 6;
+          for (const y of [180, 330, 480]) { const a0 = P(0.06, y), a1 = P(0.94, y); ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(a1.x, a1.y); ctx.stroke(); }
         }
       }
-      if (outside && c > 0.12) {
-        const h = this.doorGrab(geo, o);
-        const hw = Math.max(6, 20 * c);
-        ctx.fillStyle = geo.glass ? '#c9a24a' : '#9aa0aa'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 3;
-        if (geo.glass) { ctx.beginPath(); ctx.ellipse(h.x, h.y, hw * 0.6, 14 * k, 0, 0, TAU); ctx.fill(); ctx.stroke(); }
-        else { ctx.beginPath(); ctx.roundRect(h.x - hw / 2, h.y - 70 * k, hw, 140 * k, hw / 2); ctx.fill(); ctx.stroke(); }
-      }
+      // the handle (or, seen from inside, the grip on that edge): always there to take
+      const h0 = P(0.88, cy - 70), h1 = P(0.88, cy + 70), hm = P(0.88, cy);
+      const hw = Math.max(9, 22 * Math.abs(Math.cos(o * geo.max)) + 6);
+      ctx.fillStyle = geo.glass ? '#c9a24a' : outside ? '#9aa0aa' : '#b8bec8'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 3;
+      if (geo.glass) { ctx.beginPath(); ctx.ellipse(hm.x, hm.y, hw * 0.7, 16 * (h1.y - h0.y) / 140, 0, 0, TAU); ctx.fill(); ctx.stroke(); }
+      else { ctx.beginPath(); ctx.roundRect(hm.x - hw / 2, h0.y, hw, h1.y - h0.y, hw / 2); ctx.fill(); ctx.stroke(); }
     }
     ctx.restore();
   }
@@ -814,6 +833,13 @@ export class Station {
 
   frame(dt) {
     if (!this.on) return;
+    if (this.mode === 'store') {
+      this.t += dt;
+      this.idle = (this.idle || 0) + dt;
+      this.storeTick(dt);
+      if (this.on) this.draw(dt); // (shutting the door may have ended the visit)
+      return;
+    }
     this.t += dt;
     this.idle = (this.idle || 0) + dt;
     const g = this.g;
@@ -863,10 +889,13 @@ export class Station {
 
     // the display state with my own (optimistic) progress in it
     const C = this.c.C;
-    const st = C.steps[this.sid];
-    const patched = { ...C, steps: { ...C.steps, [this.sid]: { ...st, s: this.done ? 'done' : 'active', ph: Math.min(this.ph, this.c.phases.length - 1), k: this.k, v: this.g ? this.g.v || 0 : 0 } } };
-    if (this.done) patched.steps[this.sid] = st;
-    this.D = displayState(patched, this.c.x, this.c.K);
+    if (this.mode === 'store') this.D = displayState(C, this.c.x, this.c.K);
+    else {
+      const st = C.steps[this.sid];
+      const patched = { ...C, steps: { ...C.steps, [this.sid]: { ...st, s: this.done ? 'done' : 'active', ph: Math.min(this.ph, this.c.phases.length - 1), k: this.k, v: this.g ? this.g.v || 0 : 0 } } };
+      if (this.done) patched.steps[this.sid] = st;
+      this.D = displayState(patched, this.c.x, this.c.K);
+    }
 
     const cap = this.sceneKind();
     this.drawBackdrop(ctx, cap);
@@ -884,6 +913,7 @@ export class Station {
       case 'store': this.sceneStore(ctx); break;
       default: this.sceneBoard(ctx); break;
     }
+    if (this.mode === 'store') { this.drawFx(ctx, dt); this.storeCursor(ctx); ctx.restore(); return; }
     this.drawGestureOverlay(ctx);
     this.drawFx(ctx, dt);
     this.drawCursor(ctx);
@@ -894,7 +924,8 @@ export class Station {
   sceneKind() {
     const f = this.c.f;
     const t = f.type;
-    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : this.c.def.do === 'take' || this.c.def.do === 'shut' ? 'store' : 'bin';
+    if (this.mode === 'store') return 'store';
+    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : 'bin';
     if (t === 'sink') return 'sink';
     if (t === 'fridge') return 'chill';
     if (t === 'pizzaOven' || t === 'stoneOven') return 'dome';
@@ -1071,73 +1102,267 @@ export class Station {
     }
   }
 
-  // ------------------------------------------------------------------ the fridge / pantry shelf
-  // What's kept here, each in its own spot on the shelves (scene coordinates
-  // of where it stands): pots and pans on the low shelves, food above.
+  // ================================================================== the fridge / pantry
+  // Not a recipe step: open it by the handle, look in, take what you need
+  // (drag it down to your hands, on the right), put things back (drag them
+  // from your hands onto a shelf), swing it shut – in any order, as often as
+  // you like. Each move goes to the kitchen at once (door, take, put).
+
+  openStore(ctx) {
+    this.on = true;
+    this.mode = 'store';
+    this.c = { ...ctx, def: { do: 'store', name: ctx.title }, phases: [], st: { s: 'active', ph: 0, k: 0 } };
+    this.sid = null; this.ph = 0; this.k = 0; this.v = 0; this.fx = []; this.g = null;
+    const fxs = ctx.C.fx[ctx.f.id] || {};
+    this.store = { v: fxs.door ? 1 : 0, door: false, drag: null, pend: new Map(), sent: 0, shut: 0 };
+    this.reportStore();
+  }
+
+  get storeGeo() { return this.doorGeo(this.c.f.type === 'fridge' ? 'fridge' : 'pantry'); }
+
+  // the host's word: the door (unless I'm swinging it), what's really taken / put back
+  storeSync() {
+    const S = this.store, C = this.c.C, fx = this.c.f.id;
+    const now = performance.now();
+    for (const [k, p] of S.pend) {
+      const t = k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)];
+      const kept = t && t.held == null && (k[0] === 'v' ? !t.at && t.home === fx : t.at === fx);
+      const placed = !p.spot || (t && t.spot && t.spot.r === p.spot.r && Math.abs(t.spot.x - p.spot.x) < 0.011);
+      const got = p.to === 'held' ? t && t.held === this.c.me : kept && placed;
+      if (got || now - p.t > 2500) S.pend.delete(k);
+    }
+    this.reportStore();
+  }
+  storeTick(dt) {
+    const S = this.store, fxs = this.c.C.fx[this.c.f.id] || {};
+    if (!S.door) {
+      // someone else swinging it, or settling to open / shut
+      const want = fxs.swing != null && fxs.by !== this.c.me ? fxs.swing : fxs.door ? 1 : 0;
+      S.v += (want - S.v) * Math.min(1, dt * 10);
+    }
+    if (S.shut && performance.now() > S.shut) { S.shut = 0; this.hooks.close(); }
+    this.hooks.pose({ s: null, tool: '', a: S.door ? S.v : 0.4, b: 0, mode: S.door ? 'door' : 'hold' });
+  }
+  reportStore() {
+    if (!this.hooks.progress || !this.store) return;
+    const S = this.store;
+    const name = this.c.want ? thingName(this.c.C, this.c.x, this.c.want) : '';
+    const hint = S.v < 0.5 ? 'Take the handle and swing the door open'
+      : this.heldHere().length ? 'Swing the door shut when you’re done – or put things back where you like'
+        : `Drag what you need to your hands →${name ? ` (the ${name})` : ''} · move things about as you like`;
+    this.hooks.progress({ title: this.c.def.name, hint, ph: 0, phases: 0, k: 0, n: 0, done: false });
+  }
+
+  // what I'm holding, as I see it (with my own moves applied at once)
+  heldHere() {
+    const keys = heldBy(this.c.C, this.c.me).filter((k) => !(this.store.pend.get(k) && this.store.pend.get(k).to === 'stored'));
+    for (const [k, p] of this.store.pend) if (p.to === 'held' && !keys.includes(k)) keys.push(k);
+    return keys;
+  }
+
+  // Everything kept here, each in its own place, sized and spaced. What a
+  // cook put somewhere particular stands there (its spot: shelf r, x along
+  // it); the rest keeps the usual order around it – pots and pans on the
+  // bottom shelf, bowls and plates above, food at the top (in the fridge, food
+  // on every shelf). key -> {x, y (where it stands), s, w, h, v, fixed}
+  storeRows() {
+    return this.c.f.type === 'fridge'
+      ? [{ y: 175, x0: 335, x1: 685 }, { y: 300, x0: 335, x1: 685 }, { y: 425, x0: 335, x1: 685 }, { y: 550, x0: 335, x1: 685 }]
+      : [{ y: 150, x0: 258, x1: 742 }, { y: 280, x0: 258, x1: 742 }, { y: 410, x0: 258, x1: 742 }, { y: 540, x0: 258, x1: 742 }];
+  }
   storeLayout() {
     const f = this.c.f, C = this.c.C;
     const fridge = f.type === 'fridge';
-    const things = [];
-    for (const [id, v] of Object.entries(C.vessels)) if (!v.at && v.held == null && v.home === f.id) things.push(`v:${id}`);
-    for (const [id, it] of Object.entries(C.items)) if (it.at === f.id && it.held == null && !it.in && !it.hidden) things.push(`i:${id}`);
-    const rows = fridge ? [190, 320, 450, 580] : [175, 325, 475, 588];
-    const cols = fridge ? [395, 510, 625] : [300, 400, 500, 600, 700];
+    const keys = [];
+    const fixed = new Set();
+    for (const [id, v] of Object.entries(C.vessels)) {
+      if (!v.at && v.held == null && v.home === f.id) keys.push(`v:${id}`);
+      else if (fridge && v.at && v.at.fx === f.id) { keys.push(`v:${id}`); fixed.add(`v:${id}`); } // chilling: it comes out with its step
+    }
+    for (const [id, it] of Object.entries(C.items)) if (it.at === f.id && it.held == null && !it.in && !it.hidden) keys.push(`i:${id}`);
+    const pend = this.store ? this.store.pend : new Map();
+    for (const [k, p] of pend) { const i = keys.indexOf(k); if (p.to === 'held' && i >= 0) keys.splice(i, 1); if (p.to === 'stored' && i < 0) keys.push(k); }
+    const thing = (k) => (k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)]);
+    const kindOf = (k) => thing(k).kind;
+    const spotOf = (k) => { const p = pend.get(k); return p && p.spot ? p.spot : thing(k).spot || null; };
+    const cat = (k) => (k[0] === 'i' ? 'food' : VESSELS[kindOf(k)] && VESSELS[kindOf(k)].hob ? 'pans' : 'dishes');
+    const rows = this.storeRows();
+    const prefer = fridge ? { food: [0, 1, 2, 3], pans: [3, 2, 1, 0], dishes: [3, 2, 1, 0] } : { pans: [3, 2, 1, 0], dishes: [2, 1, 3, 0], food: [1, 0, 2, 3] };
+    const base = (k) => (k[0] === 'v' ? Math.min(0.62, this.vesselScale(kindOf(k)) * 0.5) : Math.min(0.62, this.itemScale(kindOf(k)) * 0.44));
+    const size = (k) => { const z = itemSize(kindOf(k)); return { w: z.w * base(k), h: z.h * base(k) }; };
+    const occ = rows.map(() => []); // [from, to] taken along each shelf
     const out = new Map();
-    // vessels from the bottom shelf up, food from the top down
-    const vs = things.filter((k) => k[0] === 'v'), is = things.filter((k) => k[0] === 'i');
-    vs.forEach((k, i) => out.set(k, { x: cols[i % cols.length], y: rows[rows.length - 1 - Math.floor(i / cols.length) % rows.length], v: true }));
-    is.forEach((k, i) => out.set(k, { x: cols[i % cols.length], y: rows[Math.floor(i / cols.length) % rows.length], v: false }));
+    const place = (k, r, cx) => {
+      const R = rows[r], { w, h } = size(k);
+      cx = clamp(cx, R.x0 + w / 2, R.x1 - w / 2);
+      out.set(k, { x: cx, y: R.y, s: base(k), w, h, v: k[0] === 'v', fixed: fixed.has(k), r });
+      occ[r].push([cx - w / 2 - 7, cx + w / 2 + 7]);
+    };
+    // where cooks put things
+    const loose = [];
+    for (const k of keys) {
+      const sp = spotOf(k);
+      if (sp && sp.r < rows.length) place(k, sp.r, rows[sp.r].x0 + sp.x * (rows[sp.r].x1 - rows[sp.r].x0));
+      else loose.push(k);
+    }
+    // the rest in order, in the first gap that fits
+    loose.sort((a, b) => ['pans', 'dishes', 'food'].indexOf(cat(a)) - ['pans', 'dishes', 'food'].indexOf(cat(b)) || a.localeCompare(b));
+    const gap = (r, w) => {
+      const R = rows[r];
+      let x = R.x0 + 7;
+      for (const [a, b] of [...occ[r]].sort((p, q) => p[0] - q[0])) { if (a - x >= w + 7) break; x = Math.max(x, b); }
+      return x + w <= R.x1 - 7 ? x : null;
+    };
+    for (const k of loose) {
+      const { w } = size(k);
+      let r = prefer[cat(k)].find((i) => gap(i, w) != null);
+      const x = r === undefined ? null : gap(r, w);
+      if (r === undefined) r = prefer[cat(k)][0];
+      place(k, r, x == null ? rows[r].x1 - w / 2 : x + w / 2);
+    }
     return out;
   }
 
+  // a spot on the shelves for a point (where a thing would stand if let go there)
+  spotAt(p) {
+    const rows = this.storeRows();
+    let r = 0, bd = Infinity;
+    rows.forEach((R, i) => { const d = Math.abs(p.y - R.y) + (p.y > R.y + 30 ? 200 : 0); if (d < bd) { bd = d; r = i; } });
+    const R = rows[r];
+    return { r, x: Math.round(clamp((p.x - R.x0) / (R.x1 - R.x0), 0, 1) * 100) / 100 };
+  }
+  insideStore(p) {
+    const fridge = this.c.f.type === 'fridge';
+    return p.x > (fridge ? 320 : 250) && p.x < (fridge ? 700 : 750) && p.y > 50 && p.y < 600;
+  }
+
+  drawThing(ctx, k, x, y, s) {
+    const D = this.D, id = k.slice(2);
+    if (k[0] === 'v') { const v = D.vessels[id]; if (v) drawVessel(ctx, v.kind, this.vesselView(v), x, y, s, this.t); }
+    else { const it = D.items[id]; if (it) drawIngredient(ctx, it.kind, it, x, y, s, this.t); }
+  }
+
   sceneStore(ctx) {
-    const f = this.c.f, s = this.c.def;
+    const f = this.c.f;
     const fridge = f.type === 'fridge';
-    const g = this.g;
-    const geo = this.doorGeo(fridge ? 'fridge' : 'pantry');
-    const o = this.doorOpen();
+    const S = this.store;
+    const geo = this.storeGeo;
     const wood = this.c.K.palette.trim || '#b5613d';
     if (fridge) {
       ctx.fillStyle = '#f4f1ea'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 5;
       ctx.beginPath(); ctx.roundRect(300, 40, 420, 570, 30); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#e8f4fb'; ctx.beginPath(); ctx.roundRect(320, 60, 380, 530, 20); ctx.fill();
       const lg = ctx.createRadialGradient(510, 90, 10, 510, 120, 260);
-      lg.addColorStop(0, `rgba(255,255,240,${0.9 * Math.min(1, o * 3)})`); lg.addColorStop(1, 'rgba(255,255,240,0)');
+      lg.addColorStop(0, `rgba(255,255,240,${0.9 * Math.min(1, S.v * 3)})`); lg.addColorStop(1, 'rgba(255,255,240,0)');
       ctx.fillStyle = lg; ctx.fillRect(320, 60, 380, 300);
       ctx.strokeStyle = '#c9d8e2'; ctx.lineWidth = 6;
-      for (const y of [195, 325, 455]) { ctx.beginPath(); ctx.moveTo(330, y); ctx.lineTo(690, y); ctx.stroke(); }
+      for (const y of [180, 305, 430]) { ctx.beginPath(); ctx.moveTo(330, y); ctx.lineTo(690, y); ctx.stroke(); }
     } else {
-      // the pantry cupboard, in the room's wood
       ctx.fillStyle = shade(wood, -0.35); ctx.beginPath(); ctx.roundRect(230, 30, 540, 580, 14); ctx.fill();
       ctx.fillStyle = shade(wood, -0.15); ctx.fillRect(250, 45, 500, 555);
       ctx.fillStyle = wood; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 3;
-      for (const y of [175, 325, 475, 590]) { ctx.beginPath(); ctx.roundRect(240, y, 520, 16, 4); ctx.fill(); ctx.stroke(); }
+      for (const y of [150, 280, 410, 540]) { ctx.beginPath(); ctx.roundRect(240, y, 520, 16, 4); ctx.fill(); ctx.stroke(); }
       ctx.lineWidth = 5; ctx.beginPath(); ctx.roundRect(230, 30, 540, 580, 14); ctx.stroke();
     }
-    // what's kept here
+    // what's kept here, in its place
     const L = this.storeLayout();
-    const D = this.D;
-    const want = s.thing;
+    const drag = S.drag;
     for (const [k, at] of L) {
-      const isTarget = k === want && g && g.kind === 'drag';
-      if (isTarget && (g.drag || this.k > 0)) continue; // in your hand now
-      if (k === want && s.do === 'take' && this.ph > 1) continue; // already taken
-      if (isTarget) {
-        ctx.fillStyle = `rgba(255,200,60,${0.3 + Math.sin(this.t * 5) * 0.12})`;
-        ctx.beginPath(); ctx.ellipse(at.x, at.y - 4, 52, 16, 0, 0, TAU); ctx.fill();
+      if (drag && drag.key === k) continue;
+      if (k === this.c.want && S.v > 0.5) {
+        ctx.fillStyle = `rgba(255,200,60,${0.32 + Math.sin(this.t * 5) * 0.12})`;
+        ctx.beginPath(); ctx.ellipse(at.x, at.y - 3, at.w * 0.6 + 8, 14, 0, 0, TAU); ctx.fill();
       }
-      const id = k.slice(2);
-      if (at.v) { const v = D.vessels[id]; if (v) drawVessel(ctx, v.kind, this.vesselView(v), at.x, at.y, this.shelfScale(v.kind), this.t); }
-      else { const it = D.items[id]; if (it) drawIngredient(ctx, it.kind, it, at.x, at.y, Math.min(0.6, this.itemScale(it.kind) * 0.36), this.t); }
+      this.drawThing(ctx, k, at.x, at.y, at.s);
     }
     // the door, as far open as it is
-    this.drawDoor(ctx, geo, o, { wood });
-    // your hands, waiting at the bottom
-    if (g && g.kind === 'drag' && this.k === 0) {
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
-      ctx.beginPath(); ctx.ellipse(500, 600, 110, 40, 0, 0, TAU); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    this.drawDoor(ctx, geo, S.v, { wood });
+    if (!S.door && S.v < 0.5) { const h = this.doorGrab(geo, S.v); this.ghostRing(ctx, h.x, h.y, 42 + Math.sin(this.t * 6) * 5); }
+    // your hands, beside it: what you're holding
+    const held = this.heldHere().filter((k) => !(drag && drag.key === k));
+    ctx.fillStyle = 'rgba(255,255,255,0.16)'; ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
+    ctx.beginPath(); ctx.arc(HANDS.x, HANDS.y, HANDS.r, 0, TAU); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(60,40,30,0.75)'; ctx.font = '700 18px Fredoka, system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(held.length ? 'in your hands' : 'your hands', HANDS.x, HANDS.y + HANDS.r + 26); ctx.textAlign = 'start';
+    this.handSpots(held).forEach(({ k, x, y, s }) => this.drawThing(ctx, k, x, y, s));
+    // what I'm carrying across
+    if (drag) this.drawThing(ctx, drag.key, drag.pos.x + drag.dx, drag.pos.y + drag.dy, drag.s);
+  }
+
+  // where the things in my hands are drawn
+  handSpots(keys) {
+    const C = this.c.C;
+    return keys.map((k, i) => {
+      const t = k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)];
+      const s = k[0] === 'v' ? Math.min(0.45, this.vesselScale(t.kind) * 0.36) : Math.min(0.42, this.itemScale(t.kind) * 0.3);
+      const n = keys.length, a = n > 1 ? (i / (n - 1) - 0.5) * 1.6 : 0;
+      return { k, x: HANDS.x + Math.sin(a) * 50, y: HANDS.y + 40 - Math.cos(a) * 20 - (n > 1 ? 10 : 0), s };
+    });
+  }
+
+  storeDown(p) {
+    const S = this.store, geo = this.storeGeo;
+    if (dist(p, this.doorGrab(geo, S.v)) < 85) { S.door = true; this.hooks.sfx('door'); return; }
+    if (S.v < 0.55) { this.reportStore(); return; }
+    // something on a shelf
+    for (const [k, at] of this.storeLayout()) {
+      if (at.fixed) continue;
+      if (p.x > at.x - at.w / 2 - 10 && p.x < at.x + at.w / 2 + 10 && p.y > at.y - at.h - 10 && p.y < at.y + 12) {
+        S.drag = { key: k, from: 'shelf', pos: { ...p }, dx: at.x - p.x, dy: at.y - p.y, s: at.s };
+        this.hooks.sfx('grab');
+        return;
+      }
     }
-    this.drawSource(ctx);
+    // something in my hands
+    for (const h of this.handSpots(this.heldHere())) {
+      if (dist(p, { x: h.x, y: h.y - 30 }) < 60) { S.drag = { key: h.k, from: 'hands', pos: { ...p }, dx: h.x - p.x, dy: h.y - p.y, s: h.s }; this.hooks.sfx('grab'); return; }
+    }
+  }
+  storeMove(p) {
+    const S = this.store;
+    if (S.door) {
+      S.v = this.doorOpenAt(this.storeGeo, p);
+      const now = performance.now();
+      if (now - S.sent > 100) { S.sent = now; this.hooks.store({ t: 'door', fx: this.c.f.id, v: S.v }); }
+    } else if (S.drag) S.drag.pos = { ...p };
+  }
+  storeUp(p) {
+    const S = this.store, fx = this.c.f.id;
+    if (S.door) {
+      S.door = false;
+      S.v = S.v >= 0.5 ? 1 : 0;
+      this.hooks.store({ t: 'door', fx, v: S.v, done: true });
+      this.hooks.sfx(S.v ? 'door' : 'clunk');
+      if (!S.v) S.shut = performance.now() + 500; // shut: done here
+      this.reportStore();
+      return;
+    }
+    const d = S.drag;
+    if (!d) return;
+    S.drag = null;
+    const base = { x: d.pos.x + d.dx, y: d.pos.y + d.dy }; // where it would stand
+    const at = { x: base.x, y: base.y - 30 };
+    if (d.from === 'shelf' && dist(at, HANDS) < HANDS.r + 40) {
+      this.hooks.store({ t: 'take', what: d.key, fx });
+      S.pend.set(d.key, { to: 'held', t: performance.now() });
+      this.hooks.sfx('pop');
+    } else if (this.insideStore(base)) {
+      // onto a shelf, just where I let go: put back, or moved about
+      const spot = this.spotAt(base);
+      this.hooks.store({ t: d.from === 'hands' ? 'put' : 'arrange', what: d.key, fx, r: spot.r, x: spot.x });
+      S.pend.set(d.key, { to: 'stored', spot, t: performance.now() });
+      this.hooks.sfx('clunk');
+    }
+    this.reportStore();
+  }
+  storeCursor(ctx) {
+    const p = this.ptr;
+    if (!p.seen) return;
+    const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
+    const S = this.store;
+    const at = S.door ? this.doorGrab(this.storeGeo, S.v) : p;
+    this.drawArm(ctx, look, { x: 800, y: SH + 90 }, { x: at.x + 14, y: at.y + 40 });
+    this.drawHand(ctx, look, at.x, at.y, S.door || S.drag || p.down ? 'fist' : 'open', 0);
   }
 
   sceneBin(ctx) {
