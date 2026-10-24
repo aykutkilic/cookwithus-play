@@ -490,10 +490,19 @@ function moveMe(dt) {
   let wx = 0, wy = 0;
   const d = S.working || !$('modal').hidden || !$('menu').hidden ? { mag: 0 } : controls.dir();
   if (d.mag && S.fp) {
-    // first person: up / down walk forward / back, left / right turn
-    me.yaw -= d.x * TURN * dt * Math.min(1, d.mag + 0.2);
+    // first person: up / down walk forward / back, left / right turn – but
+    // facing a counter (the stove, the sink …) close up, left / right step
+    // sideways along it, squared up to it
     const fwd = -d.y * d.mag;
     wx = Math.sin(me.yaw) * fwd * SPEED; wy = Math.cos(me.yaw) * fwd * SPEED;
+    if (benchAhead()) {
+      const side = d.x * d.mag * SPEED * 0.8;
+      wx += -Math.cos(me.yaw) * side; wy += Math.sin(me.yaw) * side;
+      if (Math.abs(d.x) > 0.3) {
+        const square = Math.round(me.yaw / (Math.PI / 2)) * (Math.PI / 2);
+        if (Math.abs(square - me.yaw) < 0.6) me.yaw += (square - me.yaw) * (1 - Math.exp(-dt * 5));
+      }
+    } else me.yaw -= d.x * TURN * dt * Math.min(1, d.mag + 0.2);
   } else if (d.mag) {
     // the stick / keys are in screen space: turn them into kitchen directions
     const ax = scene.screenAxes();
@@ -512,6 +521,17 @@ function moveMe(dt) {
   if (v.x) { if (blocked(K, me.x + v.x * dt, me.y)) v.x = 0; else me.x += v.x * dt; }
   if (v.y) { if (blocked(K, me.x, me.y + v.y * dt)) v.y = 0; else me.y += v.y * dt; }
   me.walk = v.x || v.y ? 0 : -1;
+}
+
+// Is a counter (any fixture) just in front of me, where I face?
+function benchAhead() {
+  const me = S.me, K = S.K;
+  for (const r of [0.3, 0.45, 0.6, 0.72]) {
+    const x = me.x + Math.sin(me.yaw) * r, y = me.y + Math.cos(me.yaw) * r;
+    const tx = Math.floor(x), ty = Math.floor(y);
+    if (tx >= 0 && ty >= 0 && tx < K.w && ty < K.h && K.solid[ty][tx]) return true;
+  }
+  return false;
 }
 
 // The fixture right in front of me (close, and roughly where I face).
@@ -744,7 +764,7 @@ function toggleView() {
   scene.setFirstPerson(S.fp);
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns, drag to look' : 'W / S walk, A / D turn, drag to look'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', 3200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look' : 'W / S walk, A / D turn (step sideways along a counter), drag to look'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', 3200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
