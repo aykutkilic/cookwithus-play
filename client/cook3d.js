@@ -112,9 +112,32 @@ export function buildCook(avatar) {
   hair(head, L, hairM);
   hat(head, L);
 
-  root.userData = { legs, knees, arms, elbows, hands, head, body, upper, eyes, tool, carry, toolKind: '', look: L, anim: null };
-  root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+  root.userData = { legs, knees, arms, elbows, hands, head, body, upper, eyes, tool, carry, toolKind: '', look: L, anim: null, fade: 1 };
+  // its own copies of the materials, so this cook can turn see-through on its own
+  const mats = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = false;
+    if (!mats.has(o.material)) mats.set(o.material, o.material.clone());
+    o.material = mats.get(o.material);
+  });
+  root.userData.mats = [...mats.values()];
   return root;
+}
+
+// See-through while standing in front of what you're looking at (1 = solid).
+export function fadeCook(fig, to, dt) {
+  const U = fig.userData;
+  if (U.fade === to) return;
+  U.fade += (to - U.fade) * (1 - Math.exp(-dt * 10));
+  if (Math.abs(U.fade - to) < 0.01) U.fade = to;
+  const see = U.fade < 0.99;
+  for (const m of U.mats) {
+    if (m.userData.base == null) m.userData.base = m.opacity;
+    const tr = see || m.userData.base < 1;
+    if (m.transparent !== tr) { m.transparent = tr; m.depthWrite = !tr; m.needsUpdate = true; }
+    m.opacity = m.userData.base * U.fade;
+  }
 }
 
 function shade(hex, amt) {

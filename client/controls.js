@@ -6,9 +6,10 @@
 // kitchen directions.
 
 export class Controls {
-  constructor({ onUse, onMore, onFirst, onMenuMove }) {
+  constructor({ onUse, onMore, onView, onFirst, onMenuMove }) {
     this.onUse = onUse;
     this.onMore = onMore;
+    this.onView = onView;
     this.onFirst = onFirst;
     this.onMenuMove = onMenuMove;
     this.keys = new Set();
@@ -24,6 +25,7 @@ export class Controls {
       if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); }
       if ((k === 'e' || k === ' ' || k === 'enter') && !e.repeat) { e.preventDefault(); this.first(); this.onUse(); }
       if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
+      if (k === 'f2' && !e.repeat && this.onView) { e.preventDefault(); this.first(); this.onView(); }
     });
     addEventListener('keyup', (e) => { this.keys.delete(e.key.toLowerCase()); });
     addEventListener('blur', () => this.keys.clear());

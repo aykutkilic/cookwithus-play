@@ -28,8 +28,8 @@ const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 795, y: 470, r: 52 };
 const ASIDE = { x: 820, y: 520 };
 const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
-const EYE = { x: 500, y: 330, f: 1400 };
-const KNOB_TURN = 0.03;                     // knob radians per pixel dragged up    // where you look from (for doors swinging towards you)
+const EYE = { x: 500, y: 330, f: 1400 };    // where you look from (for doors swinging towards you)
+const KNOB_TURN = 0.03;                     // knob radians per pixel dragged up
 
 export { MAIN, SIDE, KNOB, OVEN_KNOB, LEVER, BELL, HANDS };
 

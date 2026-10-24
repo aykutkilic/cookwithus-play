@@ -15,7 +15,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
 import { VESSELS, twoHanded } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
-import { buildCook, poseCook } from './cook3d.js';
+import { buildCook, poseCook, fadeCook } from './cook3d.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
@@ -70,6 +70,13 @@ export class Scene3D {
         ao.updateGtaoMaterial({ radius: 0.25, distanceExponent: 2, thickness: 1, scale: 1, samples: 12 });
         ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
         ao.blendIntensity = 0.8;
+        // the food standees (sprites) are flat cut-outs: keep them out of the occlusion
+        // (it would see each as a solid card and darken a box round it)
+        const hide = ao._overrideVisibility.bind(ao);
+        ao._overrideVisibility = function () {
+          hide();
+          this.scene.traverse((o) => { if (o.isSprite && o.visible) { this._visibilityCache.push(o); o.visible = false; } });
+        };
         composer.addPass(ao);
         composer.addPass(new OutputPass());
         this.composer = composer;
@@ -87,6 +94,7 @@ export class Scene3D {
     this.t = 0;
     this.dt = 0;
     this.zoom = 1;
+    this.firstPerson = false;
     this.camTarget = new THREE.Vector3();
     this.camPos = new THREE.Vector3();
     this.camInit = false;
@@ -190,7 +198,16 @@ export class Scene3D {
     if (this.insets) this.setInsets(this.insets.left, this.insets.bottom);
   }
 
-  zoomBy(f) { this.zoom = Math.max(0.45, Math.min(1.6, this.zoom / f)); }
+  zoomBy(f) { if (!this.firstPerson) this.zoom = Math.max(0.45, Math.min(1.6, this.zoom / f)); }
+
+  // F2: looking through my cook's eyes, or at the whole room
+  setFirstPerson(on) {
+    this.firstPerson = on;
+    this.camera.fov = on ? 72 : 32;
+    this.camera.near = on ? 0.03 : 0.1;
+    this.camera.updateProjectionMatrix();
+    this.camInit = false;
+  }
 
   // panels cover part of the screen: centre the kitchen in what's left
   setInsets(left, bottom, top = 64) {
@@ -235,6 +252,17 @@ export class Scene3D {
     const K = this.K;
     const W = K.w, H = K.h;
     const me = view.cooks.find((c) => c.me);
+    if (this.firstPerson && me) {
+      // at my eyes, looking where I face (and up / down as I like)
+      const pitch = view.pitch ?? -0.18;
+      const eye = new THREE.Vector3(me.x, 0.62, me.y);
+      const dir = new THREE.Vector3(Math.sin(me.yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(me.yaw) * Math.cos(pitch));
+      this.camera.position.copy(eye);
+      this.camTarget.copy(eye).add(dir);
+      this.camera.lookAt(this.camTarget);
+      this.camPos.copy(eye);
+      return;
+    }
     const R = Math.hypot(W, H) / 2 + 0.6;
     // fit into the part of the screen the panels leave free
     const ins = this.insets || { left: 0, bottom: 0, top: 64 };
@@ -618,8 +646,30 @@ export class Scene3D {
       rec.holding = holding.length ? holding : null;
       rec.holdKind = vkind;
       rec.id = c.id;
+      // first person: I don't see myself; otherwise, see-through while in front of what I'm looking at
+      rec.fig.visible = !(c.me && this.firstPerson);
+      fadeCook(rec.fig, this.blocksView(c, view) ? 0.28 : 1, dt);
     }
     for (const [id, rec] of this.cooks) if (!seen.has(id)) { this.scene.remove(rec.fig); disposeTree(rec.fig); this.cooks.delete(id); }
+  }
+
+  // Is this cook standing between the camera and what I'm facing (or what's on it)?
+  blocksView(c, view) {
+    if (this.firstPerson || !view.target) return false;
+    const F = this.k3.fx[view.target];
+    if (!F) return false;
+    const A = F.anchors;
+    const pts = [A.board, A.basin, A.top, ...(A.spots || [])].filter(Boolean);
+    if (!pts.length) pts.push(new THREE.Vector3(F.f.x + F.f.w / 2, topHeight(F.f), F.f.y + F.f.h / 2));
+    const cam = this.camera.position;
+    const near = cam.distanceTo(new THREE.Vector3(c.x, 0.4, c.y));
+    const feet = this.project(c.x, 0, c.y), head = this.project(c.x, 1.15, c.y); // (with the hat)
+    const half = Math.abs(feet.y - head.y) * 0.4;
+    return pts.some((tp) => {
+      if (cam.distanceTo(tp) <= near) return false;
+      const t = this.project(tp.x, tp.y, tp.z);
+      return t.x > feet.x - half && t.x < feet.x + half && t.y > head.y - 8 && t.y < feet.y + 8;
+    });
   }
 
   // ------------------------------------------------------------------ highlights

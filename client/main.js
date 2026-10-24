@@ -32,6 +32,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(`cookwithus.${k}`, JSON.stringify(v)); } catch { /* ignore */ } },
 };
 const SPEED = 2.5;   // tiles per second
+const TURN = 2.6;    // first person: radians per second turning with the keys / stick
 const ACCEL = 12, BRAKE = 15; // how quickly the cook gets up to speed / stops
 const RADIUS = 0.26; // how wide a cook is
 
@@ -43,6 +44,7 @@ const S = {
   net: null, host: null, M: newMirror(), myId: -1,
   K: null, x: null,
   me: { x: 2.5, y: 2.5, yaw: 0, walk: -1, v: { x: 0, y: 0 }, placed: false },
+  fp: false, pitch: -0.18, // first person: on, and looking up / down
   target: null,      // the fixture in front of me
   menuSel: 0,
   pending: null,     // {sid, fx}: walking there to do it
@@ -487,7 +489,12 @@ function moveMe(dt) {
   const v = me.v;
   let wx = 0, wy = 0;
   const d = S.working || !$('modal').hidden || !$('menu').hidden ? { mag: 0 } : controls.dir();
-  if (d.mag) {
+  if (d.mag && S.fp) {
+    // first person: up / down walk forward / back, left / right turn
+    me.yaw -= d.x * TURN * dt * Math.min(1, d.mag + 0.2);
+    const fwd = -d.y * d.mag;
+    wx = Math.sin(me.yaw) * fwd * SPEED; wy = Math.cos(me.yaw) * fwd * SPEED;
+  } else if (d.mag) {
     // the stick / keys are in screen space: turn them into kitchen directions
     const ax = scene.screenAxes();
     const det = ax.x[0] * ax.z[1] - ax.x[1] * ax.z[0];
@@ -498,9 +505,9 @@ function moveMe(dt) {
       me.yaw = Math.atan2(u, w);
     }
   }
-  const k = 1 - Math.exp(-dt * (d.mag ? ACCEL : BRAKE));
+  const k = 1 - Math.exp(-dt * (wx || wy ? ACCEL : BRAKE));
   v.x += (wx - v.x) * k; v.y += (wy - v.y) * k;
-  if (!d.mag && Math.hypot(v.x, v.y) < 0.05) v.x = v.y = 0;
+  if (!(wx || wy) && Math.hypot(v.x, v.y) < 0.05) v.x = v.y = 0;
   const K = S.K;
   if (v.x) { if (blocked(K, me.x + v.x * dt, me.y)) v.x = 0; else me.x += v.x * dt; }
   if (v.y) { if (blocked(K, me.x, me.y + v.y * dt)) v.y = 0; else me.y += v.y * dt; }
@@ -697,6 +704,12 @@ let pinch = 0;
 canvas.addEventListener('pointerdown', (e) => { sfx.unlock(); closeMenu(); touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
 canvas.addEventListener('pointermove', (e) => {
   if (!touches.has(e.pointerId)) return;
+  const was = touches.get(e.pointerId);
+  if (S.fp && touches.size === 1) {
+    // first person: drag to look round and up / down
+    S.me.yaw -= (e.clientX - was.x) * 0.006;
+    S.pitch = Math.max(-1.1, Math.min(0.6, S.pitch - (e.clientY - was.y) * 0.005));
+  }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (touches.size === 2) {
     const [a, b] = [...touches.values()];
@@ -713,6 +726,7 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene.zoomBy(e.del
 const controls = new Controls({
   onUse: () => useNow(),
   onMore: () => moreNow(),
+  onView: () => toggleView(),
   onFirst: () => sfx.unlock(),
   onMenuMove: (d) => {
     const bs = [...$('menu').querySelectorAll('button:not([disabled])')];
@@ -723,6 +737,17 @@ const controls = new Controls({
   },
 });
 const touchUI = isTouchDevice() || params.has('touch');
+
+// F2 / 👁: through my own eyes, or the whole room
+function toggleView() {
+  S.fp = !S.fp;
+  scene.setFirstPerson(S.fp);
+  $('viewBtn').classList.toggle('on', S.fp);
+  $('viewBtn').textContent = S.fp ? '🏠' : '👁';
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns, drag to look' : 'W / S walk, A / D turn, drag to look'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', 3200);
+  sfx.play('whoosh', 0.4);
+}
+$('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
 controls.setTouch(touchUI);
 if (touchUI) lockZoom();
 
@@ -1393,7 +1418,7 @@ function buildView(now, dt) {
   if (C) for (const [id, f] of Object.entries(C.fx)) if (f.swing != null) doors.set(id, f.swing);
   if (S.working && station.g && station.g.kind === 'door') doors.set(S.working.fx, station.g.v);
   if (S.working && S.working.store && station.store) doors.set(S.working.fx, station.store.v);
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, target: S.target ? S.target.id : null };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, target: S.target ? S.target.id : null };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:
@@ -1413,7 +1438,7 @@ function drawTags(view) {
     }
     const p = scene.project(c.x, 1.05, c.y);
     el.style.transform = `translate(${p.x}px, ${p.y}px)`;
-    el.hidden = !p.on;
+    el.hidden = !p.on || (c.me && S.fp);
     const b = el.querySelector('b');
     const label = c.me ? `${c.name} (you)` : c.name;
     if (b.textContent !== label) b.textContent = label;
