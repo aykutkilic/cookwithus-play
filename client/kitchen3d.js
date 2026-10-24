@@ -362,11 +362,17 @@ function stove(g, ctx, d, slots) {
 function oven(g, ctx, d) {
   const { T } = ctx;
   g.add(box(0.98, COUNTER_H - 0.04, 0.9, mat('#3a3a42', { metal: 0.5, rough: 0.35 }), 0, 0, -0.02));
-  g.add(rbox(0.86, 0.3, 0.03, mat('#2a2a30', { metal: 0.4, rough: 0.3 }), 0, 0.05, 0.44, 0.01));
-  const glow = live(rbox(0.6, 0.17, 0.012, new THREE.MeshStandardMaterial({ color: '#1a1a20', emissive: new THREE.Color('#ff7a2a'), emissiveIntensity: 0, roughness: 0.15 }), 0, 0.1, 0.46, 0.01));
-  g.add(glow);
+  // the door drops down on its bottom hinge (window, glow and handle go with it)
+  const hinge = live(new THREE.Group());
+  hinge.position.set(0, 0.05, 0.455);
+  hinge.add(rbox(0.86, 0.3, 0.03, mat('#2a2a30', { metal: 0.4, rough: 0.3 }), 0, 0, -0.015, 0.01));
+  const glow = rbox(0.6, 0.17, 0.012, new THREE.MeshStandardMaterial({ color: '#1a1a20', emissive: new THREE.Color('#ff7a2a'), emissiveIntensity: 0, roughness: 0.15 }), 0, 0.05, 0.005, 0.01);
+  hinge.add(glow);
+  hinge.add(rod(v3(-0.3, 0.28, 0.025), v3(0.3, 0.28, 0.025), 0.012, M.steel()));
+  g.add(box(0.8, 0.28, 0.02, mat('#141016', { rough: 0.9 }), 0, 0.06, 0.43)); // the dark oven inside
+  g.add(hinge);
   d.parts.glow = glow;
-  g.add(rod(v3(-0.3, 0.33, 0.48), v3(0.3, 0.33, 0.48), 0.012, M.steel()));
+  d.parts.drop = hinge;
   g.add(box(0.86, 0.05, 0.02, mat('#1a1a20', { rough: 0.3 }), 0, 0.37, 0.45));
   for (const x of [-0.25, 0, 0.25]) { const k = cyl(0.02, 0.022, 0.02, mat('#f2efe6'), x, 0.395, 0.47, 12); k.rotation.x = Math.PI / 2; g.add(k); }
   worktop(g, ctx, 1);
@@ -431,6 +437,17 @@ function pantry(g, ctx, d) {
     g.add(cyl(0.045, 0.045, 0.1, mat(jarCols[i], { rough: 0.6 }), x, 1.055, 0.05, 12));
     g.add(cyl(0.052, 0.052, 0.025, mat(T.trim, { rough: 0.5 }), x, 1.21, 0.05, 12));
   }
+  // a glass door over the three lower shelves: you see what's in there, and open it by its knob
+  const hinge = live(new THREE.Group());
+  hinge.position.set(-0.45, 0, 0.43);
+  const door = new THREE.Group();
+  door.position.x = 0.45;
+  hinge.add(door);
+  for (const [w, h, x, y] of [[0.9, 0.05, 0, 0.02], [0.9, 0.05, 0, 0.96], [0.05, 0.99, -0.425, 0.02], [0.05, 0.99, 0.425, 0.02], [0.8, 0.03, 0, 0.5]]) door.add(box(w, h, 0.03, wood, x, y, 0));
+  door.add(box(0.8, 0.9, 0.006, mat('#dff0f8', { rough: 0.05, opacity: 0.22 }), 0, 0.06, 0));
+  door.add(ball(0.025, M.brass(), 0.38, 0.5, 0.03));
+  g.add(hinge);
+  d.parts.door = hinge;
   // below: the pots, pans, bowls and plates, and the food that isn't kept cold – put away
   // on the three lower shelves, each in its own place near the front where you can see it
   d.anchors.stash = [];

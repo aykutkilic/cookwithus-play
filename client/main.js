@@ -703,7 +703,11 @@ function jobsAt(f) {
       if (isStore(f)) out.push({ sid: choreId('take', f.id, k), label, chore: true, off: !!why, what: k });
       else out.push({ act: 'take', what: k, label, off: !!why });
     }
-    if (fridge && C.fx[f.id] && C.fx[f.id].door) out.push({ sid: choreId('shut', f.id), label: '🚪 Close the fridge door', chore: true });
+    if (isStore(f)) {
+      const what = fridge ? 'fridge' : 'pantry';
+      if (C.fx[f.id] && C.fx[f.id].door) out.push({ sid: choreId('shut', f.id), label: `🚪 Close the ${what} door`, chore: true });
+      else if (held.length) out.push({ sid: choreId('open', f.id), label: `🚪 Open the ${what} (to put things back)`, chore: true });
+    }
     // what I'm holding: put it down here
     if (held.length) {
       const why = canPut(C, x, K, me, f.id);
@@ -1273,7 +1277,18 @@ function buildView(now, dt) {
       if (d && d.item) { activeAt.set(st.fx, d.item); activeItems.set(d.item, st.fx); }
     }
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, target: S.target ? S.target.id : null };
+  // doors being swung right now (mine straight from my hand)
+  const doors = new Map();
+  if (C && x) {
+    for (const [sid, st] of Object.entries(C.steps)) {
+      if (st.s !== 'active' || !st.fx) continue;
+      const d = stepDef(x, sid);
+      const ph = d && phasesOf(d, bakeKind(fixtureById(K, st.fx)))[st.ph];
+      if (ph && ph.g === 'door' && st.v != null) doors.set(st.fx, st.v);
+    }
+  }
+  if (S.working && station.g && station.g.kind === 'door') doors.set(S.working.fx, station.g.v);
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, target: S.target ? S.target.id : null };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:

@@ -3431,6 +3431,21 @@ function vesselLocal(c, kind, a, vs, t) {
   return { mx: g.mx, my: g.my, rx: g.rx, ry: g.ry, top: Math.min(top, g.top) };
 }
 
+// Where a hand holds a vessel by its handle (at s=1, from the bottom centre),
+// or null for things carried with both hands (pots with two ears, bowls, trays).
+export function vesselGrip(kind) {
+  const a = (typeof kind === 'string' && VESSELS[kind]) ? VESSELS[kind].art : null;
+  if (!a) return null;
+  switch (a.type) {
+    case 'saucepan': return { x: 172, y: -72 };
+    case 'pan': return a.wide || a.handles === 2 ? null : { x: 200, y: -57 };
+    case 'cezve': return { x: 118, y: -90 };
+    case 'kettle': return { x: 0, y: -168 };
+    case 'caydanlik': return { x: 0, y: -192 };
+    default: return null;
+  }
+}
+
 export function drawVessel(ctx, kind, vs, x, y, s = 1, t = 0) {
   x = num(x); y = num(y); s = num(s, 1) || 1;
   const fallback = { mouthX: x, mouthY: y - 90 * s, mouthRx: 80 * s, mouthRy: 24 * s, bottomY: y, top: y - 120 * s };

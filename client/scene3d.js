@@ -20,6 +20,10 @@ import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
 const LIGHTS = 6;
+const GLIDE_S = 0.45;  // a thing taken / put down travels this long, in a little arc
+const REACH_S = 0.55;  // and the cook reaches out for it
+// where a hand holds a pan by its handle (model coordinates, see buildVessel)
+const GRIP3D = { saucepan: new THREE.Vector3(0.254, 0.093, 0.032), pan: new THREE.Vector3(0.294, 0.037, 0.032), cezve: new THREE.Vector3(0.194, 0.084, 0.032) };
 const mobile = matchMedia('(pointer: coarse)').matches;
 // ?lite: no shadows or ambient occlusion and a low frame rate (slow machines, headless tests)
 export const LITE = new URLSearchParams(location.search).has('lite');
@@ -78,7 +82,9 @@ export class Scene3D {
     this.sprites = new Map();  // slot key -> sprite
     this.spriteTex = new Map();
     this.particles = [];
+    this.glides = new Map(); // thing -> where it's drawn while it travels
     this.t = 0;
+    this.dt = 0;
     this.zoom = 1;
     this.camTarget = new THREE.Vector3();
     this.camPos = new THREE.Vector3();
@@ -104,6 +110,7 @@ export class Scene3D {
     this.sprites.clear();
     this.K = buildKitchen(size, cuisine);
     this.k3 = buildKitchen3D(this.K);
+    this.glides.clear();
     this.scene.add(this.k3.root);
     const T = this.k3.theme;
     this.hemi.color.set(T.light.sky); this.hemi.groundColor.set(T.light.ground); this.hemi.intensity = T.light.hemi;
@@ -209,6 +216,7 @@ export class Scene3D {
   frame(dt, view) {
     if (!this.K) return;
     this.t += dt;
+    this.dt = dt;
     this.updateCamera(dt, view);
     this.updateFixtures(view);
     this.updateCooks(view, dt); // first: things in their hands follow them
@@ -265,8 +273,20 @@ export class Scene3D {
         // the fridge door swings open / shut
         const u = P.door.userData;
         if (u.base == null) { u.base = P.door.rotation.y; u.o = 0; }
-        u.o += ((fxs[id] && fxs[id].door ? 1 : 0) - u.o) * 0.18;
+        const live = view.doors && view.doors.has(id);
+        const want = live ? view.doors.get(id) : fxs[id] && fxs[id].door ? 1 : 0;
+        u.o += (want - u.o) * (live ? 0.35 : 0.18);
         P.door.rotation.y = u.base - u.o * 1.75;
+      }
+      if (P.drop) {
+        // the oven door folds down towards you
+        const u = P.drop.userData;
+        // tip about its own hinge, whichever way the oven faces
+        if (u.o == null) { u.o = 0; P.drop.rotation.setFromQuaternion(P.drop.quaternion, 'YXZ'); u.baseX = P.drop.rotation.x; }
+        const live = view.doors && view.doors.has(id);
+        const want = live ? view.doors.get(id) : fxs[id] && fxs[id].door ? 1 : 0;
+        u.o += (want - u.o) * (live ? 0.35 : 0.18);
+        P.drop.rotation.x = u.baseX + u.o * 1.45;
       }
       const st = fxs[id] || {};
       if (P.water) {
@@ -326,7 +346,7 @@ export class Scene3D {
       const n = per.get(fx) || 0;
       per.set(fx, n + 1);
       const A = F.anchors.stash;
-      out.set(key, { pos: A[n % A.length], stored: true });
+      out.set(key, { pos: A[n % A.length], stored: true, sig: `s:${fx}` });
     };
     // pots first (they take the low shelves), then food
     for (const [id, v] of Object.entries(D.vessels)) if (!v.at && v.held == null && v.home) put(v.home, `v:${id}`);
@@ -339,13 +359,37 @@ export class Scene3D {
     for (const rec of this.cooks.values()) {
       if (!rec.holding || !rec.hands) continue;
       rec.holding.forEach((k, i) => {
+        const g = k[0] === 'v' && GRIP3D[rec.holdKind];
+        if (g) {
+          // a pan by its handle, in the right hand, the pan out in front
+          const th = rec.yaw + Math.PI / 2, sc = 0.85;
+          const gx = g.x * Math.cos(th) + g.z * Math.sin(th), gz = -g.x * Math.sin(th) + g.z * Math.cos(th);
+          const p = rec.rightHand.clone().sub(new THREE.Vector3(gx * sc, g.y * sc, gz * sc));
+          out.set(k, { pos: p, yaw: th, held: true, sig: `h:${rec.id}` });
+          return;
+        }
         const p = rec.hands.clone();
         p.x += Math.sin(rec.yaw) * 0.02 + Math.cos(rec.yaw) * (i - (rec.holding.length - 1) / 2) * 0.07;
         p.z += Math.cos(rec.yaw) * 0.02 - Math.sin(rec.yaw) * (i - (rec.holding.length - 1) / 2) * 0.07;
         p.y -= 0.05;
-        out.set(k, { pos: p, yaw: rec.yaw, held: true });
+        out.set(k, { pos: p, yaw: rec.yaw, held: true, sig: `h:${rec.id}` });
       });
     }
+  }
+
+  // Things travel between places in a little arc instead of jumping: when
+  // where it belongs changes (sig), it glides from where it was drawn.
+  glide(key, sig, target) {
+    let g = this.glides.get(key);
+    if (!g) { g = { sig, pos: target.clone(), from: null, t: 1 }; this.glides.set(key, g); return g.pos; }
+    if (g.sig !== sig) { g.sig = sig; g.from = g.pos.clone(); g.t = 0; }
+    if (g.t < 1) {
+      g.t = Math.min(1, g.t + this.dt / GLIDE_S);
+      const e = g.t * g.t * (3 - 2 * g.t);
+      g.pos.lerpVectors(g.from, target, e);
+      g.pos.y += Math.sin(Math.PI * g.t) * 0.12 * Math.min(1, g.from.distanceTo(target) * 1.5);
+    } else g.pos.copy(target);
+    return g.pos;
   }
 
   // ------------------------------------------------------------------ pots & pans
@@ -380,7 +424,7 @@ export class Scene3D {
           this.vessels.set(id, rec);
           this.dynamic.add(rec.group);
         }
-        rec.group.position.copy(p);
+        rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
         rec.group.rotation.y = kept && kept.held ? kept.yaw : 0;
         rec.group.scale.setScalar(kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         updateVessel(rec, v, this.t);
@@ -441,7 +485,7 @@ export class Scene3D {
       const kept = this.stashAt && this.stashAt.get(`i:${id}`);
       if (kept) {
         // in the fridge / on the shelf, or in someone's hands
-        show(`item:${id}`, this.spriteFor(it.kind, it), kept.pos, kept.held ? 0.2 : 0.17);
+        show(`item:${id}`, this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.held ? 0.2 : 0.17);
         continue;
       }
       if (it.used && !it.at) continue;
@@ -457,7 +501,7 @@ export class Scene3D {
       if (!pos) continue;
       const done = it.cut && (it.k || 0) >= (it.n || 0);
       const tex = done && !active ? this.spriteFor(it.kind, null, it.cut) : this.spriteFor(it.kind, it);
-      show(`item:${id}`, tex, pos, active ? 0.34 : 0.24);
+      show(`item:${id}`, tex, this.glide(`i:${id}`, `a:${fxId}`, pos), active ? 0.34 : 0.24);
     }
     // food on trays and plates
     for (const [vid, rec] of this.vessels) {
@@ -523,10 +567,23 @@ export class Scene3D {
       const turn = d * (1 - Math.exp(-dt * 12));
       rec.yaw += turn;
       rec.fig.rotation.y = rec.yaw;
-      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry || !!(c.holding && c.holding.length), scraps: !!c.carry, t: this.t + c.id * 1.7 }, dt);
+      // what they hold changed: they reached out to take it / put it down
+      const holding = c.holding || [];
+      const hsig = `${holding.join(',')}|${c.carry ? c.carry.n : 0}`;
+      if (rec.hsig !== undefined && rec.hsig !== hsig) rec.reachT = 0;
+      rec.hsig = hsig;
+      if (rec.reachT !== undefined) rec.reachT += dt;
+      const reach = rec.reachT !== undefined && rec.reachT < REACH_S ? Math.sin(Math.PI * rec.reachT / REACH_S) : 0;
+      const vk = holding.find((k) => k[0] === 'v');
+      const vkind = vk && view.D && view.D.vessels[vk.slice(2)] ? view.D.vessels[vk.slice(2)].kind : null;
+      const hold = vk ? (GRIP3D[vkind] ? 'handle' : 'both') : holding.length ? 'items' : null;
+      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry || holding.length > 0, hold, reach, scraps: !!c.carry, t: this.t + c.id * 1.7 }, dt);
       rec.fig.updateMatrixWorld(true);
       rec.hands = rec.fig.userData.carry.getWorldPosition(rec.hands || new THREE.Vector3());
-      rec.holding = c.holding || null;
+      rec.rightHand = rec.fig.userData.hands[1].getWorldPosition(rec.rightHand || new THREE.Vector3());
+      rec.holding = holding.length ? holding : null;
+      rec.holdKind = vkind;
+      rec.id = c.id;
     }
     for (const [id, rec] of this.cooks) if (!seen.has(id)) { this.scene.remove(rec.fig); disposeTree(rec.fig); this.cooks.delete(id); }
   }

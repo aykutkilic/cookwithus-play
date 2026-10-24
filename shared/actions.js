@@ -4,7 +4,8 @@
 // Nothing cooks itself: every slice, stir, pour and knob turn is a gesture.
 //
 // Gesture kinds (`g`), recognised in client/station.js:
-//   tap     – tap a hotspot (the tap lever, oven door, bell)          {hot}
+//   tap     – tap a hotspot (the tap lever, the bell, the bin pedal)  {hot}
+//   door    – take the handle and swing the door open / shut          {hot: 'fridge'|'pantry'|'oven', to: 1|0}
 //   drag    – drag a thing onto a target                              {obj, to}
 //   strokes – back-and-forth strokes (scrub, knead, roll, grate…)     {n, axis: 'h'|'v'}
 //   circle  – circular motions (stir, whisk, swirl)                   {n}
@@ -20,7 +21,7 @@
 //   wrap    – spoon filling onto a leaf, fold the sides, roll it up   {n}
 //   scoop   – ladle from the pot onto each plate / into each item     {n}
 //   dip     – dunk into the pot, hold, lift out                       {n}
-// Value gestures (pour, fill, knob, paint) send their value v; counters send k.
+// Value gestures (pour, fill, knob, paint, door) send their value v; counters send k.
 //
 // Location (`cap`): board | sink | hob | bake | tandoor | plate | chill, or
 // 'vessel' (wherever the step's vessel currently is). `moves` puts the step's
@@ -57,6 +58,9 @@ function useItem(S, id, into) {
 
 // A step's vessel ids: the one it acts on and the one things go into.
 export function stepVessel(step) { return step.vessel || step.into || null; }
+
+// a door, by its handle: v is how far open it is (0 shut … 1 wide open)
+const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, fx) => { fx.door = to; } });
 
 // --------------------------------------------------------------- the actions
 // Each: { cap, moves?, verb, tool, icon, phases(step, bk) → [phase] }
@@ -423,9 +427,9 @@ export const ACTIONS = {
       if (bk === 'dome') return [{ g: 'drag', obj: 'vessel', to: 'ovenMouth', tool: 'pizzaPeel', hint: 'Slide it into the fire', eff: (S, st) => { ves(S, st.vessel).heat = 3; } }];
       if (bk === 'tandoor') return [{ g: 'drag', obj: 'vessel', to: 'tandoorWall', hint: 'Slap it onto the hot clay wall', eff: (S, st) => { ves(S, st.vessel).heat = 3; } }];
       return [
-        { g: 'tap', hot: 'door', hint: 'Open the oven door', eff: (S, st, v, fx) => { fx.door = 1; } },
+        doorPh('oven', 1, 'Take the handle and pull the oven door down'),
         { g: 'drag', obj: 'vessel', to: 'ovenRack', hint: 'Slide it onto the rack' },
-        { g: 'tap', hot: 'door', hint: 'Close the door', eff: (S, st, v, fx) => { fx.door = 0; } },
+        doorPh('oven', 0, 'Lift the door shut by its handle'),
         { g: 'knob', to: s.level ?? 3, hint: 'Set the temperature', eff: (S, st) => { ves(S, st.vessel).heat = st.level ?? 3; } },
       ];
     },
@@ -442,8 +446,9 @@ export const ACTIONS = {
       if (bk === 'tandoor') return [{ g: 'drag', obj: 'vessel', to: 'aside', tool: 'tongs', hint: 'Peel it off the wall with the tongs', eff: out }];
       return [
         { g: 'knob', to: 0, hint: 'Turn the oven off', eff: (S, st) => { ves(S, st.vessel).heat = 0; } },
-        { g: 'tap', hot: 'door', hint: 'Open the door', eff: (S, st, v, fx) => { fx.door = 1; } },
-        { g: 'drag', obj: 'vessel', to: 'aside', hint: 'Take it out (careful, hot!)', eff: (S, st, v, fx) => { out(S, st); fx.door = 0; } },
+        doorPh('oven', 1, 'Pull the oven door down by its handle'),
+        { g: 'drag', obj: 'vessel', to: 'aside', hint: 'Take it out (careful, hot!)', eff: (S, st) => out(S, st) },
+        doorPh('oven', 0, 'Lift the door shut'),
       ];
     },
   },
@@ -454,16 +459,17 @@ export const ACTIONS = {
   chillIn: {
     cap: 'chill', moves: true, verb: 'Chill', tool: 'grab', icon: '🧊',
     phases: () => [
-      { g: 'tap', hot: 'fridge', hint: 'Open the fridge', eff: (S, st, v, fx) => { fx.door = 1; } },
+      doorPh('fridge', 1, 'Take the handle and swing the fridge open'),
       { g: 'drag', obj: 'vessel', to: 'shelf', hint: 'Put it on a shelf' },
-      { g: 'tap', hot: 'fridge', hint: 'Close the fridge', eff: (S, st, v, fx) => { fx.door = 0; } },
+      doorPh('fridge', 0, 'Swing the door shut'),
     ],
   },
   chillOut: {
     cap: 'vessel', verb: 'Take out of the fridge', tool: 'grab', icon: '🧊',
     phases: () => [
-      { g: 'tap', hot: 'fridge', hint: 'Open the fridge', eff: (S, st, v, fx) => { fx.door = 1; } },
-      { g: 'drag', obj: 'vessel', to: 'aside', hint: 'Take it out', eff: (S, st, v, fx) => { ves(S, st.vessel).at = null; ves(S, st.vessel).chilled = 1; fx.door = 0; } },
+      doorPh('fridge', 1, 'Take the handle and swing the fridge open'),
+      { g: 'drag', obj: 'vessel', to: 'aside', hint: 'Take it out', eff: (S, st) => { ves(S, st.vessel).at = null; ves(S, st.vessel).chilled = 1; } },
+      doorPh('fridge', 0, 'Swing the door shut'),
     ],
   },
 
@@ -506,19 +512,23 @@ export const ACTIONS = {
       { g: 'drag', obj: 'scraps', to: 'bin', hint: 'Drop the scraps in the bin' },
     ],
   },
-  // fetching things: open the fridge, reach in and take it, close the door
-  // (the shelf has no door). What's taken goes into your hands.
+  // fetching things: open the door by its handle, reach in and take it, swing
+  // the door shut. What's taken goes into your hands.
   take: {
     cap: 'store', verb: 'Take', tool: 'grab', icon: '🫴', chore: true,
-    phases: (s) => s.door ? [
-      { g: 'tap', hot: 'fridge', hint: 'Open the fridge', eff: (S, st, v, fx) => { fx.door = 1; } },
+    phases: (s) => [
+      doorPh(s.hot, 1, s.hot === 'fridge' ? 'Take the handle and swing the fridge open' : 'Take the handle and open the glass door'),
       { g: 'drag', obj: 'thing', to: 'hands', hint: 'Take it out' },
-      { g: 'tap', hot: 'fridge', hint: 'Close the fridge', eff: (S, st, v, fx) => { fx.door = 0; } },
-    ] : [{ g: 'drag', obj: 'thing', to: 'hands', hint: 'Take it off the shelf' }],
+      doorPh(s.hot, 0, 'Swing the door shut'),
+    ],
+  },
+  open: {
+    cap: 'store', verb: 'Open the door', tool: 'hand', icon: '🚪', chore: true,
+    phases: (s) => [doorPh(s.hot, 1, 'Take the handle and swing it open')],
   },
   shut: {
-    cap: 'store', verb: 'Close the fridge', tool: 'hand', icon: '🚪', chore: true,
-    phases: () => [{ g: 'tap', hot: 'fridge', hint: 'Close the fridge door', eff: (S, st, v, fx) => { fx.door = 0; } }],
+    cap: 'store', verb: 'Close the door', tool: 'hand', icon: '🚪', chore: true,
+    phases: (s) => [doorPh(s.hot, 0, 'Swing the door shut')],
   },
   bag: {
     cap: 'bin', verb: 'Change the bag', tool: 'grab', icon: '🛍️', chore: true,

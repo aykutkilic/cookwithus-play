@@ -50,7 +50,7 @@ export function buildCook(avatar) {
   upper.add(ring(0.118, 0.008, apron, 0, 0.29, 0, 20));
 
   // arms: shoulders and elbows
-  const arms = [], elbows = [];
+  const arms = [], elbows = [], hands = [];
   for (const sx of [-1, 1]) {
     const sh = new THREE.Group();
     sh.position.set(sx * 0.115, 0.4, 0);
@@ -59,9 +59,12 @@ export function buildCook(avatar) {
     el.position.set(0, -0.07, 0);
     el.add(limb(v3(0, 0, 0), v3(0, -0.065, 0), 0.03, shirt));
     el.add(ball(0.036, skin, 0, -0.095, 0));
+    const hand = new THREE.Object3D(); // where the hand grips (a pan's handle)
+    hand.position.set(0, -0.1, 0.01);
+    el.add(hand);
     sh.add(el);
     upper.add(sh);
-    arms.push(sh); elbows.push(el);
+    arms.push(sh); elbows.push(el); hands.push(hand);
   }
   // what the right hand holds
   const tool = new THREE.Group();
@@ -109,7 +112,7 @@ export function buildCook(avatar) {
   hair(head, L, hairM);
   hat(head, L);
 
-  root.userData = { legs, knees, arms, elbows, head, body, upper, eyes, tool, carry, toolKind: '', look: L, anim: null };
+  root.userData = { legs, knees, arms, elbows, hands, head, body, upper, eyes, tool, carry, toolKind: '', look: L, anim: null };
   root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
   return root;
 }
@@ -255,7 +258,9 @@ const SIDES = [-1, 1];
 
 // The pose each frame. pose: {speed (squares/s, measured from how far the
 // cook really moved), turn (yaw rate, rad/s), work: {tool, mode, a, b} | null,
-// carry: bool, t: seconds}. The walk cycle follows the distance covered, the
+// carry: bool, hold: 'handle' (a pan by its handle, in the right hand) |
+// 'both' | 'items' | null, reach: 0..1 (reaching out to take or put down
+// something), scraps: bool, t: seconds}. The walk cycle follows the distance covered, the
 // walk fades in and out with the speed, and everything else (arms at work,
 // carrying, the head) eases between poses rather than jumping.
 export function poseCook(fig, pose, dt) {
@@ -275,10 +280,12 @@ export function poseCook(fig, pose, dt) {
   const idle = 1 - w;
 
   // body: lowest when the legs are spread, up as they pass; leans into the run and into turns
-  A.lean = damp(A.lean, 0.1 * w + (work ? 0.06 : 0), 6, dt);
+  const reach = Math.max(0, Math.min(1, pose.reach || 0));
+  A.lean = damp(A.lean, 0.1 * w + (work ? 0.06 : 0), 6, dt) ;
+  const leanNow = A.lean + reach * 0.18;
   A.bank = damp(A.bank, Math.max(-0.16, Math.min(0.16, -(pose.turn || 0) * 0.03 * w)), 8, dt);
   U.body.position.y = w * (0.01 - 0.028 * s * s) + idle * Math.sin(t * 2.1) * 0.002;
-  U.body.rotation.x = A.lean;
+  U.body.rotation.x = leanNow;
   U.body.rotation.z = A.bank + w * 0.05 * s;
   // the waist twists with the arms; breathing when still
   U.upper.rotation.y = w * 0.14 * s * (1 - A.carry * 0.6);
@@ -295,8 +302,10 @@ export function poseCook(fig, pose, dt) {
   // arms: a pose to ease towards (idle, carrying, or what the hands do at the station) …
   const target = [[0, 0.28, -0.25], [0, 0.28, -0.25]]; // [shoulder forward(-)/back(+), out, elbow]
   for (let i = 0; i < 2; i++) target[i][0] = Math.sin(t * 1.3 + i * 2) * 0.04 * idle;
+  const oneHand = pose.hold === 'handle';
   if (A.carry > 0.01 && !work) {
-    for (const tg of target) { tg[0] = -0.75; tg[1] = -0.04; tg[2] = -0.95; }
+    if (oneHand) { target[1][0] = -0.8; target[1][1] = 0.16; target[1][2] = -0.4; } // the pan's handle in the right hand
+    else for (const tg of target) { tg[0] = -0.75; tg[1] = -0.04; tg[2] = -0.95; }
   }
   if (work) {
     const a = Math.max(0, Math.min(1, work.a ?? 0.5)), b = Math.max(-1, Math.min(1, work.b ?? 0));
@@ -307,26 +316,31 @@ export function poseCook(fig, pose, dt) {
       case 'scrub': Lt.splice(0, 3, -1.2, 0.25 - b * 0.25, -0.5); Rt.splice(0, 3, -1.2, 0.25 + b * 0.25, -0.5); break;
       case 'stroke': Lt.splice(0, 3, -1.0 - a * 0.4, 0.2 - b * 0.12, -0.5); Rt.splice(0, 3, -1.0 - a * 0.4, 0.2 + b * 0.12, -0.5); break;
       case 'pour': Lt.splice(0, 3, -1.0, 0.18, -0.6); Rt.splice(0, 3, -1.35 - a * 0.3, 0.05, -0.45); break;
+      case 'door': Lt.splice(0, 3, -0.2, 0.3, -0.3); Rt.splice(0, 3, -1.35 + a * 0.4, 0.15 + a * 0.6, -0.35); break; // pulling the handle round
       default: Lt.splice(0, 3, -1.1, 0.2, -0.55); Rt.splice(0, 3, -1.1, 0.2, -0.55); break;
     }
   }
   // … plus the swing of a walk (not while carrying)
-  const loose = w * (1 - A.carry) * (work ? 0 : 1);
   SIDES.forEach((sx, i) => {
     const rate = work ? 16 : 9;
+    // with a pan in the right hand the left arm still swings
+    const free = oneHand && i === 0 ? 1 : 1 - A.carry;
+    const loose = w * free * (work ? 0 : 1);
     A.sh[i][0] = damp(A.sh[i][0], target[i][0], rate, dt);
     A.sh[i][1] = damp(A.sh[i][1], target[i][1], rate, dt);
     A.el[i] = damp(A.el[i], target[i][2], rate, dt);
     const swing = -(i === 0 ? s : -s) * 0.7 * loose;
-    U.arms[i].rotation.x = A.sh[i][0] + swing + A.carry * w * Math.sin(ph * 2) * 0.05;
-    U.arms[i].rotation.z = sx * (A.sh[i][1] + w * 0.06);
-    U.elbows[i].rotation.x = A.el[i] - 0.35 * Math.max(0, -swing);
+    // reaching out: arms forward and down to the counter, and back
+    const rx = (A.sh[i][0] + swing + A.carry * w * Math.sin(ph * 2) * 0.05) * (1 - reach) + -1.25 * reach;
+    U.arms[i].rotation.x = rx;
+    U.arms[i].rotation.z = sx * ((A.sh[i][1] + w * 0.06) * (1 - reach) + 0.12 * reach);
+    U.elbows[i].rotation.x = (A.el[i] - 0.35 * Math.max(0, -swing)) * (1 - reach) + -0.2 * reach;
   });
 
   // head: looks down at the work, nods a little with the steps, glances about when idle
   A.nod = damp(A.nod, work ? 0.28 : 0, 6, dt);
   A.look = damp(A.look, work ? 0 : (Math.sin(t * 0.29) * 0.6 + Math.sin(t * 0.71) * 0.3) * 0.35 * idle, 3, dt);
-  U.head.rotation.x = A.nod - w * 0.04 * c * c;
+  U.head.rotation.x = A.nod - w * 0.04 * c * c + reach * 0.3;
   U.head.rotation.y = A.look - U.upper.rotation.y * 0.7;
   U.head.rotation.z = idle * Math.sin(t * 0.53) * 0.04 - A.bank * 0.5;
   // blinking

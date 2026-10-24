@@ -169,13 +169,13 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx, thing) { return `#${kind}@${fx}${thing ? `~${thing}` : ''}`; }
 export function choreDef(sid) {
-  const m = /^#(clear|toss|bag|take|shut)@([a-zA-Z]+\d*)(?:~([iv]:[\w-]+))?$/.exec(sid);
+  const m = /^#(clear|toss|bag|take|open|shut)@([a-zA-Z]+\d*)(?:~([iv]:[\w-]+))?$/.exec(sid);
   if (!m) return null;
   const d = { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
+  if (m[1] === 'take' || m[1] === 'open' || m[1] === 'shut') d.hot = m[2].startsWith('fridge') ? 'fridge' : 'pantry';
   if (m[1] === 'take') {
     if (!m[3]) return null;
     d.thing = m[3];
-    d.door = m[2].startsWith('fridge');
   } else if (m[3]) return null;
   return d;
 }
@@ -212,7 +212,8 @@ function choreBlocked(C, x, K, d, memberId) {
       if (!L.stored || L.fx !== d.fx) return 'That isn’t in there';
       return handsFree(C, x, memberId, d.thing);
     }
-    case 'shut': return f.type === 'fridge' && C.fx[d.fx] && C.fx[d.fx].door ? '' : 'It’s closed';
+    case 'shut': return isStore(f) && C.fx[d.fx] && C.fx[d.fx].door ? '' : 'It’s closed';
+    case 'open': return isStore(f) && !(C.fx[d.fx] && C.fx[d.fx].door) ? '' : 'It’s open';
     case 'clear':
       if (heldBy(C, memberId).length) return `Put down the ${thingName(C, x, heldBy(C, memberId)[0])} first`;
       return sc && sc.n > 0 ? '' : 'Nothing to clear here';
@@ -379,6 +380,7 @@ export function takeThing(C, x, K, m, key, fx) {
 function putBlocked(C, x, K, held, f) {
   const surface = f.caps.includes('board') || f.caps.includes('plate') || f.caps.includes('sink');
   const store = isStore(f);
+  if (store && !(C.fx[f.id] && C.fx[f.id].door)) return `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first`;
   for (const k of held) {
     if (k[0] === 'i' && !surface && !store) return 'Put it on a counter, a table or in the sink';
     if (k[0] === 'v') {
@@ -637,9 +639,13 @@ export function openStep(C, x, K, sid, place, memberId) {
   st.by = memberId;
   st.fx = pl.fx;
   st.slot = pl.slot;
+  { const f0 = fixtureById(K, pl.fx); const ph0 = phasesOf(s, bakeKind(f0))[st.ph]; if (ph0 && ph0.g === 'door' && st.k === 0) st.v = fxState(C, pl.fx).door ? 1 : 0; }
   if (!s.chore) {
-    // what you brought goes down here
+    // what you brought goes down here (a pot you'll put on the burner / in the
+    // oven yourself stays in your hands until you do)
+    const own = ACTIONS[s.do].moves && stepVessel(s) ? `v:${stepVessel(s)}` : null;
     for (const k of heldBy(C, memberId)) {
+      if (k === own) continue;
       const t = thingOf(C, k);
       t.held = null;
       if (k[0] === 'i') t.at = pl.fx;
@@ -668,7 +674,7 @@ export function phaseTarget(ph) {
   if (ph.g === 'circle') return ph.n < 1 ? 1 : Math.round(ph.n);
   return Math.max(1, Math.round(ph.n || 1));
 }
-export const VALUE_GESTURES = new Set(['pour', 'fill', 'knob', 'paint']);
+export const VALUE_GESTURES = new Set(['pour', 'fill', 'knob', 'paint', 'door']);
 
 // A gesture report from the cook working a step: {ph, k} for counted
 // gestures, {ph, v, done} for value gestures, {ph, v, live} while pouring,
@@ -691,6 +697,7 @@ export function actStep(C, x, K, sid, memberId, a) {
     if (ph.g === 'knob' && Math.round(v * 3) !== ph.to) return ev;
     if ((ph.g === 'pour' || ph.g === 'fill') && v < ph.band[0]) { st.v = v; return ev; }
     if (ph.g === 'paint' && v < ph.cover) return ev;
+    if (ph.g === 'door' && (ph.to ? v < 0.8 : v > 0.2)) { st.v = v; return ev; }
     if (ph.g === 'pour' || ph.g === 'fill') st.q = Math.min(st.q, v <= ph.band[1] ? 1 : 0.75);
     completePhase(C, x, K, s, st, ph, v, f, ev);
   } else {
@@ -743,6 +750,8 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
   st.v = 0;
   st.extra = [];
   const phases = phasesOf(s, bakeKind(f));
+  // a door to swing next starts from where the door is
+  if (phases[st.ph] && phases[st.ph].g === 'door') st.v = fxState(C, st.fx).door ? 1 : 0;
   ev.push({ k: 'phase', sid: s.id });
   if (st.ph < phases.length) return;
   if (s.chore) {
@@ -782,7 +791,7 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
 
 function moveVessel(C, s, st) {
   const vid = stepVessel(s);
-  if (vid && C.vessels[vid]) C.vessels[vid].at = { fx: st.fx, slot: st.slot };
+  if (vid && C.vessels[vid]) { C.vessels[vid].at = { fx: st.fx, slot: st.slot }; C.vessels[vid].held = null; }
 }
 
 // `sets: {egg: {boiled: 1}}` changes items, `vsets: {pot: {lid: 1}}` vessels –
