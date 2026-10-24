@@ -280,3 +280,4 @@ body.touchui #chat { bottom: 210px; }
 body.touchui:not(.sheetMin) #touch .tuse { bottom: calc(46vh + 20px); }
 @media (min-width: 761px) { body.touchui #touch .tuse { bottom: 110px; } }
 @media (max-width: 560px) { #joinBtn { display: none; } #top { gap: 5px; padding-left: 8px; padding-right: 8px; } }
+#stats { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 50; padding: 3px 10px; border-radius: 10px; background: rgba(30, 20, 14, 0.75); color: #fff; font: 600 12px/1.4 ui-monospace, monospace; pointer-events: none; }

@@ -1,8 +1,9 @@
 // The cooks in 3D: chunky chibi figurines (big heads, aprons, chef's hats)
-// built from primitives in the avatar's colours, with a few joints – hips,
-// shoulders, neck – so they walk, bob, and do with their arms what their
-// player's hands are doing at the station (knife up and down, stirring,
-// scrubbing, pouring). Height ≈ 0.8 of a floor square.
+// built from primitives in the avatar's colours, with joints – hips, knees,
+// a waist, shoulders, elbows, neck – so they trot, breathe, blink, look
+// about, and do with their arms what their player's hands are doing at the
+// station (knife up and down, stirring, scrubbing, pouring). Height ≈ 0.8 of
+// a floor square.
 import * as THREE from 'three';
 import { mat, M, ball, cyl, lathe, limb, rbox, ring, box, v3 } from './parts3d.js';
 import { lookOf } from './figure.js';
@@ -20,60 +21,72 @@ export function buildCook(avatar) {
   const ink = mat('#1e1614', { rough: 0.3 });
 
   const root = new THREE.Group();
-  const body = new THREE.Group(); // bobs while walking
+  const body = new THREE.Group(); // bobs, leans and sways (pivots at the feet)
   root.add(body);
+  const upper = new THREE.Group(); // the waist: twists against the hips
+  body.add(upper);
 
-  // legs (hip joints swing)
-  const legs = [];
+  // legs: hips swing, knees lift the foot
+  const legs = [], knees = [];
   for (const sx of [-1, 1]) {
     const hip = new THREE.Group();
     hip.position.set(sx * 0.055, 0.2, 0);
-    hip.add(limb(v3(0, 0, 0), v3(0, -0.16, 0), 0.038, trousers));
-    hip.add(ball(0.05, shoe, 0, -0.175, 0.02, 0.9, 0.6, 1.3, 10));
+    hip.add(limb(v3(0, 0, 0), v3(0, -0.085, 0), 0.038, trousers));
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.085, 0);
+    knee.add(limb(v3(0, 0, 0), v3(0, -0.075, 0), 0.036, trousers));
+    knee.add(ball(0.05, shoe, 0, -0.09, 0.02, 0.9, 0.6, 1.3, 10));
+    hip.add(knee);
     body.add(hip);
-    legs.push(hip);
+    legs.push(hip); knees.push(knee);
   }
   // torso with the apron
-  body.add(lathe([[0.0, 0.17], [0.1, 0.18], [0.12, 0.26], [0.115, 0.36], [0.09, 0.43], [0.0, 0.44]], shirt, 0, 0, 0, 18));
-  body.add(rbox(0.17, 0.2, 0.02, apron, 0, 0.18, 0.1, 0.01));
-  body.add(rbox(0.11, 0.07, 0.016, apron, 0, 0.36, 0.085, 0.008));
-  body.add(rbox(0.06, 0.035, 0.012, mat(shade(L.apron, -0.15)), 0, 0.25, 0.112, 0.006)); // pocket
-  body.add(ball(0.025, apron, -0.03, 0.29, -0.11, 1, 0.7, 0.6));
-  body.add(ball(0.025, apron, 0.03, 0.29, -0.11, 1, 0.7, 0.6)); // the bow at the back
-  body.add(ring(0.118, 0.008, apron, 0, 0.29, 0, 20));
+  upper.add(lathe([[0.0, 0.17], [0.1, 0.18], [0.12, 0.26], [0.115, 0.36], [0.09, 0.43], [0.0, 0.44]], shirt, 0, 0, 0, 18));
+  upper.add(rbox(0.17, 0.2, 0.02, apron, 0, 0.18, 0.1, 0.01));
+  upper.add(rbox(0.11, 0.07, 0.016, apron, 0, 0.36, 0.085, 0.008));
+  upper.add(rbox(0.06, 0.035, 0.012, mat(shade(L.apron, -0.15)), 0, 0.25, 0.112, 0.006)); // pocket
+  upper.add(ball(0.025, apron, -0.03, 0.29, -0.11, 1, 0.7, 0.6));
+  upper.add(ball(0.025, apron, 0.03, 0.29, -0.11, 1, 0.7, 0.6)); // the bow at the back
+  upper.add(ring(0.118, 0.008, apron, 0, 0.29, 0, 20));
 
-  // arms (shoulder joints)
-  const arms = [];
+  // arms: shoulders and elbows
+  const arms = [], elbows = [];
   for (const sx of [-1, 1]) {
     const sh = new THREE.Group();
     sh.position.set(sx * 0.115, 0.4, 0);
-    sh.add(limb(v3(0, 0, 0), v3(0, -0.14, 0), 0.032, shirt));
-    const hand = ball(0.036, skin, 0, -0.165, 0);
-    sh.add(hand);
-    body.add(sh);
-    arms.push(sh);
+    sh.add(limb(v3(0, 0, 0), v3(0, -0.07, 0), 0.032, shirt));
+    const el = new THREE.Group();
+    el.position.set(0, -0.07, 0);
+    el.add(limb(v3(0, 0, 0), v3(0, -0.065, 0), 0.03, shirt));
+    el.add(ball(0.036, skin, 0, -0.095, 0));
+    sh.add(el);
+    upper.add(sh);
+    arms.push(sh); elbows.push(el);
   }
   // what the right hand holds
   const tool = new THREE.Group();
-  tool.position.set(0, -0.17, 0.02);
-  arms[1].add(tool);
+  tool.position.set(0, -0.1, 0.02);
+  elbows[1].add(tool);
   // a handful of scraps carried in front
   const carry = new THREE.Group();
-  carry.position.set(0, 0.27, 0.16);
+  carry.position.set(0, 0.31, 0.15);
   carry.visible = false;
   for (let i = 0; i < 6; i++) carry.add(ball(0.025, mat(['#c98a3c', '#f4e4c8', '#4f9a3a', '#e8432e'][i % 4], { rough: 0.7 }), (i % 3 - 1) * 0.03, Math.floor(i / 3) * 0.02, (i % 2) * 0.02, 1.4, 0.6, 1));
-  body.add(carry);
+  upper.add(carry);
 
   // head
   const head = new THREE.Group();
   head.position.set(0, 0.43, 0);
-  body.add(head);
+  upper.add(head);
+  const eyes = [];
   head.add(ball(0.155, skin, 0, 0.15, 0, 1, 0.97, 0.95, 22));
   for (const sx of [-1, 1]) head.add(ball(0.03, skin, sx * 0.152, 0.15, 0, 0.6, 1, 0.8));
   // face (+z)
   for (const sx of [-1, 1]) {
-    head.add(ball(0.019, ink, sx * 0.055, 0.165, 0.136, 0.8, 1.15, 0.6));
-    head.add(ball(0.006, mat('#ffffff', { emissive: '#ffffff', ei: 0.4 }), sx * 0.055 + 0.006, 0.175, 0.149));
+    const eye = ball(0.019, ink, sx * 0.055, 0.165, 0.136, 0.8, 1.15, 0.6);
+    const glint = ball(0.006, mat('#ffffff', { emissive: '#ffffff', ei: 0.4 }), sx * 0.055 + 0.006, 0.175, 0.149);
+    head.add(eye, glint);
+    eyes.push(eye, glint);
     head.add(ball(0.024, mat('#f08a8a', { rough: 0.8, opacity: L.extra === 4 ? 0.85 : 0.5 }), sx * 0.09, 0.125, 0.12, 1, 0.6, 0.4));
     head.add(box(0.035, 0.007, 0.008, mat(shade(L.hairColor, -0.1)), sx * 0.055, 0.205, 0.138)); // brows
   }
@@ -96,7 +109,7 @@ export function buildCook(avatar) {
   hair(head, L, hairM);
   hat(head, L);
 
-  root.userData = { legs, arms, head, body, tool, carry, toolKind: '', look: L };
+  root.userData = { legs, knees, arms, elbows, head, body, upper, eyes, tool, carry, toolKind: '', look: L, anim: null };
   root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
   return root;
 }
@@ -233,35 +246,96 @@ function toolMesh(kind) {
 
 // ------------------------------------------------------------------ animation
 
-// pose: {walk: phase 0..1 or -1, work: {tool, mode, a, b} | null, carry: bool, t}
+const STRIDE = 0.78; // floor squares per walk cycle (two steps): the feet keep up with the ground
+const SWING = 0.8;   // hip swing at a full trot
+
+// eases a value towards a target, frame-rate independent
+const damp = (cur, to, rate, dt) => cur + (to - cur) * (1 - Math.exp(-rate * dt));
+const SIDES = [-1, 1];
+
+// The pose each frame. pose: {speed (squares/s, measured from how far the
+// cook really moved), turn (yaw rate, rad/s), work: {tool, mode, a, b} | null,
+// carry: bool, t: seconds}. The walk cycle follows the distance covered, the
+// walk fades in and out with the speed, and everything else (arms at work,
+// carrying, the head) eases between poses rather than jumping.
 export function poseCook(fig, pose, dt) {
   const U = fig.userData;
   const t = pose.t || 0;
-  const walking = pose.walk >= 0;
-  const ph = walking ? pose.walk * Math.PI * 2 : 0;
-  U.body.position.y = walking ? Math.abs(Math.sin(ph)) * 0.025 : Math.sin(t * 2.2) * 0.003;
-  U.legs[0].rotation.x = walking ? Math.sin(ph) * 0.6 : 0;
-  U.legs[1].rotation.x = walking ? -Math.sin(ph) * 0.6 : 0;
-  const [L, R] = U.arms;
-  const work = pose.work;
-  let lx = 0, lz = 0.12, rx = 0, rz = -0.12;
-  if (walking && !pose.carry) { lx = -Math.sin(ph) * 0.6; rx = Math.sin(ph) * 0.6; }
-  if (pose.carry) { lx = rx = -1.1; lz = -0.25; rz = 0.25; }
+  const A = U.anim || (U.anim = {
+    ph: Math.random(), w: 0, lean: 0, bank: 0, look: 0, nod: 0, blink: 1 + Math.random() * 3, shut: 0,
+    sh: [[0, 0.28], [0, 0.28]], el: [-0.25, -0.25], carry: 0,
+  });
+  const speed = Math.max(0, pose.speed || 0);
+  const work = pose.work || null;
+  A.ph = (A.ph + speed * dt / STRIDE) % 1;
+  A.w = damp(A.w, Math.min(1, speed / 1.4), speed > 0.05 ? 9 : 7, dt);
+  A.carry = damp(A.carry, pose.carry ? 1 : 0, 10, dt);
+  const w = A.w, ph = A.ph * Math.PI * 2;
+  const s = Math.sin(ph), c = Math.cos(ph);
+  const idle = 1 - w;
+
+  // body: lowest when the legs are spread, up as they pass; leans into the run and into turns
+  A.lean = damp(A.lean, 0.1 * w + (work ? 0.06 : 0), 6, dt);
+  A.bank = damp(A.bank, Math.max(-0.16, Math.min(0.16, -(pose.turn || 0) * 0.03 * w)), 8, dt);
+  U.body.position.y = w * (0.01 - 0.028 * s * s) + idle * Math.sin(t * 2.1) * 0.002;
+  U.body.rotation.x = A.lean;
+  U.body.rotation.z = A.bank + w * 0.05 * s;
+  // the waist twists with the arms; breathing when still
+  U.upper.rotation.y = w * 0.14 * s * (1 - A.carry * 0.6);
+  const breathe = idle * Math.sin(t * 2.1) * 0.012;
+  U.upper.scale.set(1 - breathe * 0.4, 1 + breathe, 1 - breathe * 0.4);
+
+  // legs: hips swing, the knee folds as the foot comes forward
+  for (let i = 0; i < 2; i++) {
+    const fwd = Math.max(0, i === 0 ? -c : c); // this foot is on its way forward
+    U.legs[i].rotation.x = (i === 0 ? s : -s) * SWING * w;
+    U.knees[i].rotation.x = w * (0.12 + 1.1 * fwd * fwd);
+  }
+
+  // arms: a pose to ease towards (idle, carrying, or what the hands do at the station) …
+  const target = [[0, 0.28, -0.25], [0, 0.28, -0.25]]; // [shoulder forward(-)/back(+), out, elbow]
+  for (let i = 0; i < 2; i++) target[i][0] = Math.sin(t * 1.3 + i * 2) * 0.04 * idle;
+  if (A.carry > 0.01 && !work) {
+    for (const tg of target) { tg[0] = -0.75; tg[1] = -0.04; tg[2] = -0.95; }
+  }
   if (work) {
     const a = Math.max(0, Math.min(1, work.a ?? 0.5)), b = Math.max(-1, Math.min(1, work.b ?? 0));
+    const [Lt, Rt] = target;
     switch (work.mode) {
-      case 'chop': lx = -1.2; lz = -0.35; rx = -0.6 - a * 1.4; rz = -0.1; break;
-      case 'circle': { const ang = work.b ?? t * 4; lx = -1.0; lz = -0.3; rx = -1.15 + Math.sin(ang) * 0.25; rz = -0.1 + Math.cos(ang) * 0.3; break; }
-      case 'scrub': lx = rx = -1.2; lz = -0.35 + b * 0.3; rz = 0.35 + b * 0.3; break;
-      case 'stroke': lx = rx = -1.0 - a * 0.5; lz = -0.3 + b * 0.15; rz = 0.3 + b * 0.15; break;
-      case 'pour': lx = -1.0; lz = -0.3; rx = -1.4 - a * 0.3; rz = 0.1; break;
-      default: lx = rx = -1.1; lz = -0.25; rz = 0.25; break;
+      case 'chop': Lt.splice(0, 3, -1.15, 0.12, -0.75); Rt.splice(0, 3, -1.05 - a * 0.65, 0.12, -0.3 - a * 1.0); break;
+      case 'circle': { const ang = work.b ?? t * 4; Lt.splice(0, 3, -1.05, 0.15, -0.6); Rt.splice(0, 3, -1.2 + Math.sin(ang) * 0.2, 0.05 + Math.cos(ang) * 0.22, -0.55 + Math.cos(ang) * 0.2); break; }
+      case 'scrub': Lt.splice(0, 3, -1.2, 0.25 - b * 0.25, -0.5); Rt.splice(0, 3, -1.2, 0.25 + b * 0.25, -0.5); break;
+      case 'stroke': Lt.splice(0, 3, -1.0 - a * 0.4, 0.2 - b * 0.12, -0.5); Rt.splice(0, 3, -1.0 - a * 0.4, 0.2 + b * 0.12, -0.5); break;
+      case 'pour': Lt.splice(0, 3, -1.0, 0.18, -0.6); Rt.splice(0, 3, -1.35 - a * 0.3, 0.05, -0.45); break;
+      default: Lt.splice(0, 3, -1.1, 0.2, -0.55); Rt.splice(0, 3, -1.1, 0.2, -0.55); break;
     }
   }
-  const k = 1 - Math.exp(-dt * 18);
-  L.rotation.x += (lx - L.rotation.x) * k; L.rotation.z += (lz - L.rotation.z) * k;
-  R.rotation.x += (rx - R.rotation.x) * k; R.rotation.z += (rz - R.rotation.z) * k;
-  U.head.rotation.x = work ? 0.25 : 0;
+  // … plus the swing of a walk (not while carrying)
+  const loose = w * (1 - A.carry) * (work ? 0 : 1);
+  SIDES.forEach((sx, i) => {
+    const rate = work ? 16 : 9;
+    A.sh[i][0] = damp(A.sh[i][0], target[i][0], rate, dt);
+    A.sh[i][1] = damp(A.sh[i][1], target[i][1], rate, dt);
+    A.el[i] = damp(A.el[i], target[i][2], rate, dt);
+    const swing = -(i === 0 ? s : -s) * 0.7 * loose;
+    U.arms[i].rotation.x = A.sh[i][0] + swing + A.carry * w * Math.sin(ph * 2) * 0.05;
+    U.arms[i].rotation.z = sx * (A.sh[i][1] + w * 0.06);
+    U.elbows[i].rotation.x = A.el[i] - 0.35 * Math.max(0, -swing);
+  });
+
+  // head: looks down at the work, nods a little with the steps, glances about when idle
+  A.nod = damp(A.nod, work ? 0.28 : 0, 6, dt);
+  A.look = damp(A.look, work ? 0 : (Math.sin(t * 0.29) * 0.6 + Math.sin(t * 0.71) * 0.3) * 0.35 * idle, 3, dt);
+  U.head.rotation.x = A.nod - w * 0.04 * c * c;
+  U.head.rotation.y = A.look - U.upper.rotation.y * 0.7;
+  U.head.rotation.z = idle * Math.sin(t * 0.53) * 0.04 - A.bank * 0.5;
+  // blinking
+  A.blink -= dt;
+  if (A.blink < 0) { A.shut = 0.14; A.blink = 2 + Math.random() * 3.5; if (Math.random() < 0.15) A.blink = 0.25; }
+  A.shut = Math.max(0, A.shut - dt);
+  const lid = A.shut > 0 ? 0.12 : 1;
+  for (let i = 0; i < U.eyes.length; i += 2) { U.eyes[i].scale.y = 1.15 * lid; U.eyes[i + 1].visible = lid === 1; }
+
   // tool in hand
   const tk = (work && work.tool) || '';
   if (tk !== U.toolKind) {
@@ -269,5 +343,5 @@ export function poseCook(fig, pose, dt) {
     U.tool.clear();
     if (tk && tk !== 'hand' && tk !== 'grab') U.tool.add(toolMesh(tk));
   }
-  U.carry.visible = !!pose.carry;
+  U.carry.visible = A.carry > 0.5;
 }

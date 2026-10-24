@@ -53,7 +53,7 @@ export function applyMsg(M, msg, nowMs = 0) {
       return [];
     }
     case 'pos':
-      for (const [id, x, y, d, w, p] of msg.m) M.pos.set(id, { x, y, d, w, p, at: nowMs });
+      for (const [id, x, y, d, w, p, ts] of msg.m) M.pos.set(id, { x, y, d, w, p, ts, at: nowMs });
       return [];
   }
   return [];

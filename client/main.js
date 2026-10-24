@@ -4,6 +4,7 @@
 import { HostSession, PeerNet } from './p2p.js';
 import { Scene3D, LITE } from './scene3d.js';
 import { Controls, isTouchDevice, lockZoom } from './controls.js';
+import { newTrack, follow } from './interp.js';
 import { applyUiTheme } from './theme.js';
 import { Station } from './station.js';
 import { Sfx } from './audio.js';
@@ -29,7 +30,8 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(`cookwithus.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(`cookwithus.${k}`, JSON.stringify(v)); } catch { /* ignore */ } },
 };
-const SPEED = 2.8;   // tiles per second
+const SPEED = 2.5;   // tiles per second
+const ACCEL = 12, BRAKE = 15; // how quickly the cook gets up to speed / stops
 const RADIUS = 0.26; // how wide a cook is
 
 // ------------------------------------------------------------------ state
@@ -39,7 +41,7 @@ const S = {
   firstVisit: !store.get('profile', null),
   net: null, host: null, M: newMirror(), myId: -1,
   K: null, x: null,
-  me: { x: 2.5, y: 2.5, yaw: 0, walk: -1, placed: false },
+  me: { x: 2.5, y: 2.5, yaw: 0, walk: -1, v: { x: 0, y: 0 }, placed: false },
   target: null,      // the fixture in front of me
   menuSel: 0,
   pending: null,     // {sid, fx}: walking there to do it
@@ -188,7 +190,7 @@ function placeMe() {
   if (!S.K || !S.M.room) return;
   const idx = Math.max(0, S.M.room.members.findIndex((m) => m.id === S.myId));
   const sp = S.K.spawns[idx % S.K.spawns.length];
-  Object.assign(S.me, { x: sp.x + 0.5, y: sp.y + 0.5, yaw: Math.PI * 1.25, walk: -1, placed: true });
+  Object.assign(S.me, { x: sp.x + 0.5, y: sp.y + 0.5, yaw: Math.PI * 1.25, walk: -1, v: { x: 0, y: 0 }, placed: true });
 }
 
 // ------------------------------------------------------------------ messages
@@ -406,7 +408,7 @@ function startJob(sid, fx) {
 function goDo(sid, fx) {
   const f = fixtureById(S.K, fx);
   if (!f) return;
-  Object.assign(S.me, { x: f.stand.x + 0.5, y: f.stand.y + 0.5, walk: -1 });
+  Object.assign(S.me, { x: f.stand.x + 0.5, y: f.stand.y + 0.5, walk: -1, v: { x: 0, y: 0 } });
   startJob(sid, fx);
 }
 
@@ -430,23 +432,31 @@ function blocked(K, x, y) {
   return false;
 }
 
+// The cook speeds up and slows down rather than starting and stopping dead,
+// and faces where you steer at once (the figure turns into it smoothly).
 function moveMe(dt) {
   const me = S.me;
-  if (S.working || !$('modal').hidden || !$('menu').hidden) { me.walk = -1; return; }
-  const d = controls.dir();
-  if (!d.mag) { me.walk = -1; return; }
-  // the stick / keys are in screen space: turn them into kitchen directions
-  const ax = scene.screenAxes();
-  const det = ax.x[0] * ax.z[1] - ax.x[1] * ax.z[0];
-  if (Math.abs(det) < 1e-6) return;
-  let u = (d.x * ax.z[1] - d.y * ax.z[0]) / det, w = (ax.x[0] * d.y - ax.x[1] * d.x) / det;
-  const n = Math.hypot(u, w) || 1; u /= n; w /= n;
-  const step = SPEED * d.mag * dt;
+  const v = me.v;
+  let wx = 0, wy = 0;
+  const d = S.working || !$('modal').hidden || !$('menu').hidden ? { mag: 0 } : controls.dir();
+  if (d.mag) {
+    // the stick / keys are in screen space: turn them into kitchen directions
+    const ax = scene.screenAxes();
+    const det = ax.x[0] * ax.z[1] - ax.x[1] * ax.z[0];
+    if (Math.abs(det) > 1e-6) {
+      let u = (d.x * ax.z[1] - d.y * ax.z[0]) / det, w = (ax.x[0] * d.y - ax.x[1] * d.x) / det;
+      const n = Math.hypot(u, w) || 1; u /= n; w /= n;
+      wx = u * SPEED * d.mag; wy = w * SPEED * d.mag;
+      me.yaw = Math.atan2(u, w);
+    }
+  }
+  const k = 1 - Math.exp(-dt * (d.mag ? ACCEL : BRAKE));
+  v.x += (wx - v.x) * k; v.y += (wy - v.y) * k;
+  if (!d.mag && Math.hypot(v.x, v.y) < 0.05) v.x = v.y = 0;
   const K = S.K;
-  if (!blocked(K, me.x + u * step, me.y)) me.x += u * step;
-  if (!blocked(K, me.x, me.y + w * step)) me.y += w * step;
-  me.yaw = Math.atan2(u, w);
-  me.walk = ((me.walk < 0 ? 0 : me.walk) + dt * 2.3 * Math.max(0.5, d.mag)) % 1;
+  if (v.x) { if (blocked(K, me.x + v.x * dt, me.y)) v.x = 0; else me.x += v.x * dt; }
+  if (v.y) { if (blocked(K, me.x, me.y + v.y * dt)) v.y = 0; else me.y += v.y * dt; }
+  me.walk = v.x || v.y ? 0 : -1;
 }
 
 // The fixture right in front of me (close, and roughly where I face).
@@ -489,7 +499,7 @@ function sendPos(now) {
   const changed = key !== S.lastPosKey;
   if ((changed && now - S.lastPos > 90) || now - S.lastPos > 2000) {
     S.lastPos = now; S.lastPosKey = key;
-    send({ t: 'pos', x: Math.round(me.x * 100) / 100, y: Math.round(me.y * 100) / 100, d: Math.round(me.yaw * 100) / 100, w: me.walk >= 0 ? 1 : 0, p });
+    send({ t: 'pos', x: Math.round(me.x * 100) / 100, y: Math.round(me.y * 100) / 100, d: Math.round(me.yaw * 100) / 100, w: me.walk >= 0 ? 1 : 0, p, ts: Math.round(now) });
   }
 }
 
@@ -1033,20 +1043,26 @@ function layout() {
 }
 addEventListener('resize', layout);
 
-// ?lite / ?fps=N cap the frame rate (slow machines, headless tests)
+// ?lite / ?fps=N cap the frame rate (slow machines, headless tests); ?stats shows it
 const FRAME_MS = params.has('fps') ? 1000 / Math.max(1, Number(params.get('fps'))) : LITE ? 90 : 0;
-let lastT = performance.now();
+const STATS = params.has('stats') ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'stats' })) : null;
+let lastT = performance.now(), sceneDt = 0, frameNo = 0, statsAt = 0, jsMs = 0;
 function frame(now) {
   if (FRAME_MS && now - lastT < FRAME_MS) { requestAnimationFrame(frame); return; }
-  const dt = Math.min(FRAME_MS ? 0.12 : 0.05, (now - lastT) / 1000);
+  const gap = now - lastT;
+  const dt = Math.min(FRAME_MS ? 0.12 : 0.05, gap / 1000);
   lastT = now;
   if (S.K && S.M.room) {
+    const t0 = performance.now();
     moveMe(dt);
     S.target = S.working ? null : findTarget();
     tickTimers(dt);
     sendPos(now);
     const view = buildView(now, dt);
-    scene.frame(dt, view);
+    // at the station your hands come first: the kitchen behind it takes every other frame
+    sceneDt += dt;
+    if (!S.working || frameNo++ % 2 === 0) { scene.frame(Math.min(0.1, sceneDt), view); sceneDt = 0; }
+    scene.govern(gap);
     drawTags(view);
     if (S.working) station.frame(dt);
     if (S.sheetDirty && now - S.lastSheet > 200) renderSheet();
@@ -1061,6 +1077,8 @@ function frame(now) {
       }
       sfx.ambience(sizzle, boil);
     }
+    jsMs += (performance.now() - t0 - jsMs) * 0.05;
+    if (STATS && now - statsAt > 500) { statsAt = now; STATS.textContent = `${scene.fps || '…'} fps · ${jsMs.toFixed(1)} ms script · ${scene.quality}`; }
   }
   requestAnimationFrame(frame);
 }
@@ -1083,12 +1101,9 @@ function buildView(now, dt) {
       const p = S.M.pos.get(m.id);
       if (!p) continue;
       let o = S.others.get(m.id);
-      if (!o) { o = { x: p.x, y: p.y, walk: -1 }; S.others.set(m.id, o); }
-      const k = 1 - Math.exp(-dt * 10);
-      o.x += (p.x - o.x) * k; o.y += (p.y - o.y) * k;
-      if (Math.hypot(p.x - o.x, p.y - o.y) > 3) { o.x = p.x; o.y = p.y; }
-      o.walk = p.w ? ((o.walk < 0 ? 0 : o.walk) + dt * 2.3) % 1 : -1;
-      c = { id: m.id, name: m.name, color: m.color, avatar: m.avatar, x: o.x, y: o.y, yaw: p.d || 0, walk: o.walk };
+      if (!o) { o = newTrack(p); S.others.set(m.id, o); }
+      follow(o, p, now, dt);
+      c = { id: m.id, name: m.name, color: m.color, avatar: m.avatar, x: o.x, y: o.y, yaw: o.d };
       if (p.p && p.p.tool !== undefined) c.work = p.p;
     }
     // what they're doing (under the name)

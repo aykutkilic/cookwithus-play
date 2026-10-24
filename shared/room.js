@@ -128,6 +128,7 @@ export class Room {
           m.x = Math.max(0, Math.min(K.w, px)); m.y = Math.max(0, Math.min(K.h, py));
         }
         m.d = Math.round((Number(msg.d) || 0) * 100) / 100; m.w = msg.w ? 1 : 0; // facing (radians)
+        m.ts = Number.isFinite(+msg.ts) ? Math.round(+msg.ts) : 0; // the sender's clock, for smooth playback
         m.p = msg.p && typeof msg.p === 'object' ? { s: String(msg.p.s || '').slice(0, 40), tool: String(msg.p.tool || '').slice(0, 16), mode: String(msg.p.mode || '').slice(0, 10), a: +msg.p.a || 0, b: +msg.p.b || 0, fx: String(msg.p.fx || '').slice(0, 20) } : null;
         break;
       }
@@ -256,7 +257,7 @@ export class Room {
   sendPositions() {
     this.lastPos = this.now;
     if (this.members.size < 2) return;
-    const list = [...this.members.values()].map((m) => [m.id, r2(m.x), r2(m.y), m.d, m.w, m.p]);
+    const list = [...this.members.values()].map((m) => [m.id, r2(m.x), r2(m.y), m.d, m.w, m.p, m.ts || 0]);
     const s = JSON.stringify({ t: 'pos', m: list });
     for (const m of this.members.values()) m.client.sendText(s);
   }

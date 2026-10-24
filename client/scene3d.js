@@ -28,7 +28,8 @@ export class Scene3D {
   constructor(canvas) {
     this.canvas = canvas;
     const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(LITE ? 1 : Math.min(devicePixelRatio, mobile ? 1.5 : 2));
+    this.dpr = LITE ? 1 : Math.min(devicePixelRatio, mobile ? 1.5 : 2);
+    r.setPixelRatio(this.dpr);
     r.shadowMap.enabled = !LITE;
     r.shadowMap.type = THREE.PCFShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -69,6 +70,8 @@ export class Scene3D {
         this.composer = composer;
       } catch (e) { console.warn('no ambient occlusion', e); }
     }
+    this.q = { steps: this.qualitySteps(), level: 0, n: 0, sum: 0, skip: 120 };
+    this.fps = 0;
     this.K = null; this.k3 = null;
     this.vessels = new Map();  // vessel id -> {kind, group, liquid, lid, bits}
     this.cooks = new Map();    // member id -> {fig, key}
@@ -122,7 +125,52 @@ export class Scene3D {
       return { ...g, pos: p };
     });
     this.camInit = false;
+    this.q.skip = Math.max(this.q.skip, 60); // new shaders compile: don't count those frames
     return this.K;
+  }
+
+  // ------------------------------------------------------------------ keeping it smooth
+
+  // What can be given up, most expensive first, when frames come too slowly.
+  qualitySteps() {
+    const steps = [];
+    if (this.composer) steps.push(['no ambient occlusion', () => { this.composer.dispose(); this.composer = null; }]);
+    if (this.dpr > 1.5) steps.push(['resolution 1.5×', () => this.setDpr(1.5)]);
+    if (this.dpr > 1) steps.push(['resolution 1×', () => this.setDpr(1)]);
+    if (this.renderer.shadowMap.enabled) {
+      steps.push(['no shadows', () => {
+        this.renderer.shadowMap.enabled = false;
+        this.scene.traverse((o) => { for (const m of [].concat(o.material || [])) m.needsUpdate = true; });
+      }]);
+    }
+    return steps;
+  }
+
+  setDpr(r) {
+    this.renderer.setPixelRatio(r);
+    if (this.composer) this.composer.setPixelRatio(r);
+    this.resize();
+  }
+
+  get quality() { return this.q.steps.slice(0, this.q.level).map((s) => s[0]).join(', ') || 'full'; }
+
+  // Called every frame with the time since the last one. Averaged over ~1.5 s:
+  // under ~50 fps, drop the next extra and look again.
+  govern(ms) {
+    const q = this.q;
+    if (q.skip > 0) { q.skip--; return; }
+    if (ms > 250) return; // a hidden tab, a dialog: not the renderer's fault
+    q.n++; q.sum += ms;
+    if (q.n < 90) return;
+    const avg = q.sum / q.n;
+    q.n = 0; q.sum = 0;
+    this.fps = Math.round(1000 / avg);
+    if (avg > 19.5 && q.level < q.steps.length) {
+      const [name, apply] = q.steps[q.level++];
+      apply();
+      console.info(`cookwithus: ${this.fps} fps, now ${name}`);
+      q.skip = 45;
+    }
   }
 
   resize() {
@@ -405,14 +453,20 @@ export class Scene3D {
         this.cooks.set(c.id, rec);
         this.scene.add(rec.fig);
       }
+      // how fast they really move (the walk cycle keeps pace with it); a jump is a teleport
+      const moved = rec.px === undefined ? 0 : Math.hypot(c.x - rec.px, c.y - rec.py);
+      const v = dt > 0 && moved < 1 ? moved / dt : 0;
+      rec.speed = rec.speed === undefined ? v : rec.speed + (v - rec.speed) * (1 - Math.exp(-dt * 14));
+      rec.px = c.x; rec.py = c.y;
       rec.fig.position.set(c.x, 0, c.y);
       // turn smoothly towards the wanted heading
       let d = (c.yaw || 0) - rec.yaw;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
-      rec.yaw += d * (1 - Math.exp(-dt * 14));
+      const turn = d * (1 - Math.exp(-dt * 12));
+      rec.yaw += turn;
       rec.fig.rotation.y = rec.yaw;
-      poseCook(rec.fig, { walk: c.walk, work: c.work, carry: !!c.carry, t: this.t + c.id }, dt);
+      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry, t: this.t + c.id * 1.7 }, dt);
     }
     for (const [id, rec] of this.cooks) if (!seen.has(id)) { this.scene.remove(rec.fig); disposeTree(rec.fig); this.cooks.delete(id); }
   }
