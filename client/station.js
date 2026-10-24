@@ -111,12 +111,14 @@ export class Station {
         else if (obj === 'lid' || obj === 'towelLid') { g.source = { type: 'lid', towel: obj === 'towelLid' }; g.subject = { type: 'vessel', id: vId }; }
         else if (obj === 'lidOff') { g.source = { type: 'lid', on: true }; g.subject = { type: 'vessel', id: vId }; }
         else if (obj === 'scraps' || obj === 'bag' || obj === 'newBag') { g.source = { type: obj }; g.subject = null; }
+        else if (obj === 'thing') { g.source = { type: s.thing[0] === 'v' ? 'vessel' : 'item', id: s.thing.slice(2) }; g.subject = null; }
         const toMain = ph.to !== 'aside';
         const start = toMain ? { ...SIDE } : { ...MAIN };
         if (obj === 'lidOff') { start.x = MAIN.x; start.y = MAIN.y - 150; }
         if (obj === 'scraps' && ph.to === 'hands') { start.x = MAIN.x; start.y = MAIN.y - 40; }
         if (obj === 'scraps' && ph.to === 'bin') { start.x = 500; start.y = 540; }
         if (obj === 'bag') { start.x = 500; start.y = 280; }
+        if (obj === 'thing') { const at = this.storeLayout().get(s.thing); if (at) { start.x = at.x; start.y = at.y; } }
         g.from = start; g.pos = { ...start };
         g.target = this.targetFor(ph.to);
         break;
@@ -734,6 +736,7 @@ export class Station {
       case 'plate': this.scenePlate(ctx); break;
       case 'scraps': this.sceneScraps(ctx); break;
       case 'bin': this.sceneBin(ctx); break;
+      case 'store': this.sceneStore(ctx); break;
       default: this.sceneBoard(ctx); break;
     }
     this.drawGestureOverlay(ctx);
@@ -746,7 +749,7 @@ export class Station {
   sceneKind() {
     const f = this.c.f;
     const t = f.type;
-    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : 'bin';
+    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : this.c.def.do === 'take' || this.c.def.do === 'shut' ? 'store' : 'bin';
     if (t === 'sink') return 'sink';
     if (t === 'fridge') return 'chill';
     if (t === 'pizzaOven' || t === 'stoneOven') return 'dome';
@@ -921,6 +924,88 @@ export class Station {
       const x = cx + Math.cos(a) * r * (g.kind === 'drag' ? 0.2 : 1), y = cy + Math.sin(a) * r * 0.45 * (g.kind === 'drag' ? 0.3 : 1);
       this.drawScrap(ctx, kind, x, y, i);
     }
+  }
+
+  // ------------------------------------------------------------------ the fridge / pantry shelf
+  // What's kept here, each in its own spot on the shelves (scene coordinates
+  // of where it stands): pots and pans on the low shelves, food above.
+  storeLayout() {
+    const f = this.c.f, C = this.c.C;
+    const fridge = f.type === 'fridge';
+    const things = [];
+    for (const [id, v] of Object.entries(C.vessels)) if (!v.at && v.held == null && v.home === f.id) things.push(`v:${id}`);
+    for (const [id, it] of Object.entries(C.items)) if (it.at === f.id && it.held == null && !it.in && !it.hidden) things.push(`i:${id}`);
+    const rows = fridge ? [190, 320, 450, 580] : [175, 325, 475, 588];
+    const cols = fridge ? [395, 510, 625] : [300, 400, 500, 600, 700];
+    const out = new Map();
+    // vessels from the bottom shelf up, food from the top down
+    const vs = things.filter((k) => k[0] === 'v'), is = things.filter((k) => k[0] === 'i');
+    vs.forEach((k, i) => out.set(k, { x: cols[i % cols.length], y: rows[rows.length - 1 - Math.floor(i / cols.length) % rows.length], v: true }));
+    is.forEach((k, i) => out.set(k, { x: cols[i % cols.length], y: rows[Math.floor(i / cols.length) % rows.length], v: false }));
+    return out;
+  }
+
+  sceneStore(ctx) {
+    const f = this.c.f, s = this.c.def;
+    const fridge = f.type === 'fridge';
+    const g = this.g;
+    const fxs = this.c.C.fx[f.id] || {};
+    // the door (with my own taps showing at once)
+    let open = true;
+    if (fridge) open = s.do === 'shut' ? !this.done : s.do === 'take' ? (this.ph === 1 || this.ph === 2 || (this.ph === 0 && !!fxs.door)) : !!fxs.door;
+    if (fridge) {
+      ctx.fillStyle = '#f4f1ea'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.roundRect(300, 40, 420, 570, 30); ctx.fill(); ctx.stroke();
+      if (open) {
+        ctx.fillStyle = '#e8f4fb'; ctx.beginPath(); ctx.roundRect(320, 60, 380, 530, 20); ctx.fill();
+        const lg = ctx.createRadialGradient(510, 90, 10, 510, 120, 260);
+        lg.addColorStop(0, 'rgba(255,255,240,0.9)'); lg.addColorStop(1, 'rgba(255,255,240,0)');
+        ctx.fillStyle = lg; ctx.fillRect(320, 60, 380, 300);
+        ctx.strokeStyle = '#c9d8e2'; ctx.lineWidth = 6;
+        for (const y of [195, 325, 455]) { ctx.beginPath(); ctx.moveTo(330, y); ctx.lineTo(690, y); ctx.stroke(); }
+        // the open door off to the right, with its bottle racks
+        ctx.fillStyle = '#ece8df'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(720, 50); ctx.lineTo(880, 90); ctx.lineTo(880, 560); ctx.lineTo(720, 600); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = '#c9d8e2'; ctx.lineWidth = 5;
+        for (const y of [220, 380, 520]) { ctx.beginPath(); ctx.moveTo(735, y); ctx.lineTo(865, y + 8); ctx.stroke(); }
+      } else {
+        ctx.strokeStyle = 'rgba(40,30,20,0.4)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(300, 230); ctx.lineTo(720, 230); ctx.stroke();
+        ctx.fillStyle = '#9aa0aa'; ctx.beginPath(); ctx.roundRect(660, 260, 20, 140, 10); ctx.fill();
+        for (const [x, y, c] of [[380, 300, '#e8573a'], [450, 360, '#f2b21a'], [400, 430, '#3faa5a'], [520, 290, '#2f8fd0']]) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, 14, 0, TAU); ctx.fill(); }
+        ctx.fillStyle = '#fffbe0'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(500, 380, 90, 110, 4); ctx.fill(); ctx.stroke();
+      }
+    } else {
+      // the pantry shelf, in the room's wood
+      const wood = this.c.K.palette.trim || '#b5613d';
+      ctx.fillStyle = shade(wood, -0.35); ctx.beginPath(); ctx.roundRect(230, 30, 540, 580, 14); ctx.fill();
+      ctx.fillStyle = shade(wood, -0.15); ctx.fillRect(250, 45, 500, 555);
+      ctx.fillStyle = wood; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 3;
+      for (const y of [175, 325, 475, 590]) { ctx.beginPath(); ctx.roundRect(240, y, 520, 16, 4); ctx.fill(); ctx.stroke(); }
+      ctx.lineWidth = 5; ctx.beginPath(); ctx.roundRect(230, 30, 540, 580, 14); ctx.stroke();
+    }
+    if (!open) return;
+    // what's kept here
+    const L = this.storeLayout();
+    const D = this.D;
+    const want = s.thing;
+    for (const [k, at] of L) {
+      const isTarget = k === want && g && g.kind === 'drag';
+      if (isTarget && (g.drag || this.k > 0)) continue; // in your hand now
+      if (k === want && this.ph > 0 && s.do === 'take' && (!g || g.kind !== 'drag')) continue; // already taken
+      if (isTarget) {
+        ctx.fillStyle = `rgba(255,200,60,${0.3 + Math.sin(this.t * 5) * 0.12})`;
+        ctx.beginPath(); ctx.ellipse(at.x, at.y - 4, 52, 16, 0, 0, TAU); ctx.fill();
+      }
+      const id = k.slice(2);
+      if (at.v) { const v = D.vessels[id]; if (v) drawVessel(ctx, v.kind, this.vesselView(v), at.x, at.y, Math.min(0.75, this.vesselScale(v.kind) * 0.5), this.t); }
+      else { const it = D.items[id]; if (it) drawIngredient(ctx, it.kind, it, at.x, at.y, Math.min(0.6, this.itemScale(it.kind) * 0.36), this.t); }
+    }
+    // your hands, waiting at the bottom
+    if (g && g.kind === 'drag' && this.k === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
+      ctx.beginPath(); ctx.ellipse(500, 600, 110, 40, 0, 0, TAU); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    }
+    this.drawSource(ctx);
   }
 
   sceneBin(ctx) {

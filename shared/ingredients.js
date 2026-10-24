@@ -128,6 +128,18 @@ export const INGREDIENTS = {
 
 // Vessels: pots, pans and dishes the cooking happens in. art.type is the
 // drawing routine; `hob` vessels can sit on a burner, `bake` ones go in an oven.
+// Where things live. Staples – salt, pepper, the spices, oil, vinegar, water
+// from the tap – stand within reach at every station; everything else is
+// fetched: cold things from the fridge, the rest (and every pot, pan, bowl
+// and plate) from the pantry shelf.
+export const STAPLES = new Set(['water', 'salt', 'pepper', 'pulBiber', 'paprika', 'cumin', 'turmeric', 'garamMasala',
+  'cardamom', 'cinnamon', 'saffron', 'oregano', 'driedMint', 'oil', 'oliveOil', 'vinegar']);
+const COLD = new Set(['egg', 'butter', 'ghee', 'milk', 'cream', 'yogurt', 'mozzarella', 'parmesan', 'gorgonzola', 'gruyere',
+  'mascarpone', 'paneer', 'chicken', 'meat', 'mince', 'bacon', 'sausage', 'salami', 'fish', 'shrimp', 'mussels', 'dough',
+  'parsley', 'basil', 'mint', 'chives', 'thyme', 'rosemary', 'mushroom', 'greenBeans', 'cabbage', 'cabbageLeaf', 'carrot',
+  'cucumber', 'zucchini', 'eggplant', 'greenPepper', 'redPepper', 'chili', 'lemon', 'peas']);
+export function storeOf(kind) { return STAPLES.has(kind) ? null : COLD.has(kind) ? 'fridge' : 'shelf'; }
+
 export const VESSELS = {
   pot:        { name: 'Pot', emoji: '🍲', hob: true, art: { type: 'pot', c1: '#c9ccd2', c2: '#8a8f99' } },
   bigPot:     { name: 'Big pot', emoji: '🍲', hob: true, art: { type: 'pot', c1: '#c9ccd2', c2: '#8a8f99', big: true } },

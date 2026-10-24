@@ -343,5 +343,5 @@ export function poseCook(fig, pose, dt) {
     U.tool.clear();
     if (tk && tk !== 'hand' && tk !== 'grab') U.tool.add(toolMesh(tk));
   }
-  U.carry.visible = A.carry > 0.5;
+  U.carry.visible = A.carry > 0.5 && !!pose.scraps; // a handful of scraps (other things are drawn by the scene)
 }

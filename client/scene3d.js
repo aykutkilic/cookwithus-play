@@ -211,9 +211,10 @@ export class Scene3D {
     this.t += dt;
     this.updateCamera(dt, view);
     this.updateFixtures(view);
+    this.updateCooks(view, dt); // first: things in their hands follow them
+    this.updateStash(view);
     this.updateVessels(view, dt);
     this.updateItems(view);
-    this.updateCooks(view, dt);
     this.updateMarker(view);
     this.updateLights(view);
     this.updateSteam(dt);
@@ -260,6 +261,13 @@ export class Scene3D {
     const fxs = (C && C.fx) || {};
     for (const [id, F] of Object.entries(this.k3.fx)) {
       const P = F.parts;
+      if (P.door) {
+        // the fridge door swings open / shut
+        const u = P.door.userData;
+        if (u.base == null) { u.base = P.door.rotation.y; u.o = 0; }
+        u.o += ((fxs[id] && fxs[id].door ? 1 : 0) - u.o) * 0.18;
+        P.door.rotation.y = u.base - u.o * 1.75;
+      }
       const st = fxs[id] || {};
       if (P.water) {
         P.water.visible = !!st.tap;
@@ -302,6 +310,44 @@ export class Scene3D {
     }
   }
 
+  // ------------------------------------------------------------------ where things are kept / carried
+
+  // Things put away in the fridge / on the shelf each get a place there, and
+  // things in someone's hands go where their hands are: thing key -> {pos, yaw}.
+  updateStash(view) {
+    const D = view.D;
+    const out = new Map();
+    this.stashAt = out;
+    if (!D) return;
+    const per = new Map();
+    const put = (fx, key) => {
+      const F = this.k3.fx[fx];
+      if (!F || !F.anchors.stash) return;
+      const n = per.get(fx) || 0;
+      per.set(fx, n + 1);
+      const A = F.anchors.stash;
+      out.set(key, { pos: A[n % A.length], stored: true });
+    };
+    // pots first (they take the low shelves), then food
+    for (const [id, v] of Object.entries(D.vessels)) if (!v.at && v.held == null && v.home) put(v.home, `v:${id}`);
+    for (const [id, it] of Object.entries(D.items)) {
+      if (it.in || it.hidden || it.held != null || !it.at) continue;
+      const F = this.k3.fx[it.at];
+      if (F && F.anchors.stash) put(it.at, `i:${id}`);
+    }
+    // in someone's hands
+    for (const rec of this.cooks.values()) {
+      if (!rec.holding || !rec.hands) continue;
+      rec.holding.forEach((k, i) => {
+        const p = rec.hands.clone();
+        p.x += Math.sin(rec.yaw) * 0.02 + Math.cos(rec.yaw) * (i - (rec.holding.length - 1) / 2) * 0.07;
+        p.z += Math.cos(rec.yaw) * 0.02 - Math.sin(rec.yaw) * (i - (rec.holding.length - 1) / 2) * 0.07;
+        p.y -= 0.05;
+        out.set(k, { pos: p, yaw: rec.yaw, held: true });
+      });
+    }
+  }
+
   // ------------------------------------------------------------------ pots & pans
 
   updateVessels(view, dt) {
@@ -311,16 +357,18 @@ export class Scene3D {
       // vessels resting on the same counter / table share its spots
       const spotUse = new Map();
       for (const [id, v] of Object.entries(D.vessels)) {
-        if (!v.at) continue;
-        const F = this.k3.fx[v.at.fx];
-        if (!F) continue;
+        const kept = this.stashAt && this.stashAt.get(`v:${id}`);
+        if (!v.at && !kept) continue;
+        const F = v.at && this.k3.fx[v.at.fx];
+        if (!F && !kept) continue;
         let p = null;
-        const A = F.anchors;
-        if (A.burners && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner') && A.burners[v.at.slot]) p = A.burners[v.at.slot];
+        const A = F ? F.anchors : {};
+        if (kept) p = kept.pos;
+        else if (A.burners && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner') && A.burners[v.at.slot]) p = A.burners[v.at.slot];
         else if (A.mouth) p = A.mouth;
         else if (A.inside) p = null; // shut in the oven
         else if (A.basin && F.f.type === 'sink') p = A.basin.clone().setY(A.basin.y + 0.02);
-        else if (F.f.type === 'fridge') p = null;
+        else if (F.f.type === 'fridge') p = A.shelf; // chilling (behind the door)
         else if (A.spots) { const n = spotUse.get(v.at.fx) || 0; spotUse.set(v.at.fx, n + 1); p = A.spots[Math.min(n, A.spots.length - 1)]; if (n === 0 && A.board && (v.kind === 'bowl' || v.kind === 'plate' || v.kind === 'blender')) p = A.board; }
         else if (A.top) p = A.top;
         if (!p) continue;
@@ -333,6 +381,8 @@ export class Scene3D {
           this.dynamic.add(rec.group);
         }
         rec.group.position.copy(p);
+        rec.group.rotation.y = kept && kept.held ? kept.yaw : 0;
+        rec.group.scale.setScalar(kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         updateVessel(rec, v, this.t);
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');
         if (v.heat > 0 && (v.kind === 'pan' || v.kind === 'paellaPan') && v.contents && v.contents.length && Math.random() < dt * 12) this.puff(p.clone().setY(p.y + 0.05), 'sizzle');
@@ -387,7 +437,14 @@ export class Scene3D {
     // what's being worked on, and prepped piles waiting
     const perFx = new Map();
     for (const [id, it] of Object.entries(D.items)) {
-      if (it.hidden || it.used || it.in) continue;
+      if (it.hidden || it.in) continue;
+      const kept = this.stashAt && this.stashAt.get(`i:${id}`);
+      if (kept) {
+        // in the fridge / on the shelf, or in someone's hands
+        show(`item:${id}`, this.spriteFor(it.kind, it), kept.pos, kept.held ? 0.2 : 0.17);
+        continue;
+      }
+      if (it.used && !it.at) continue;
       const fxId = it.at || (view.activeItems && view.activeItems.get(id));
       if (!fxId) continue;
       const F = this.k3.fx[fxId];
@@ -466,7 +523,10 @@ export class Scene3D {
       const turn = d * (1 - Math.exp(-dt * 12));
       rec.yaw += turn;
       rec.fig.rotation.y = rec.yaw;
-      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry, t: this.t + c.id * 1.7 }, dt);
+      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry || !!(c.holding && c.holding.length), scraps: !!c.carry, t: this.t + c.id * 1.7 }, dt);
+      rec.fig.updateMatrixWorld(true);
+      rec.hands = rec.fig.userData.carry.getWorldPosition(rec.hands || new THREE.Vector3());
+      rec.holding = c.holding || null;
     }
     for (const [id, rec] of this.cooks) if (!seen.has(id)) { this.scene.remove(rec.fig); disposeTree(rec.fig); this.cooks.delete(id); }
   }

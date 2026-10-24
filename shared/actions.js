@@ -50,7 +50,7 @@ function useItem(S, id, into) {
   if (!it) return;
   const prev = it.in && S.vessels[it.in];
   if (prev && prev !== S.vessels[into]) prev.contents = prev.contents.filter((c) => c.kind !== it.kind);
-  it.in = into; it.at = null; it.used = 1;
+  it.in = into; it.at = null; it.held = null; it.used = 1;
   const v = S.vessels[into];
   if (v) addContent(v, it.kind, it.cut);
 }
@@ -319,7 +319,7 @@ export const ACTIONS = {
               for (const c of f.contents) addContent(p, c.kind, c.cut);
               if (f.liquid) p.liquid = f.liquid;
               for (const it of Object.values(S.items)) if (it.in === st.from && !st.keep) it.in = st.into;
-              if (!st.keep) { f.water = 0; f.contents = []; f.at = null; f.emptied = 1; }
+              if (!st.keep) { f.water = 0; f.contents = []; f.emptied = 1; } // the empty pot stays where it is
             }
           }
         } },
@@ -329,7 +329,7 @@ export const ACTIONS = {
     cap: 'vessel', verb: 'Season with', tool: 'shaker', icon: '🧂',
     phases: (s) => [
       { g: 'strokes', axis: 'v', n: s.n || 3, tool: 'shaker', shaker: s.item, hint: 'Shake it over',
-        eff: (S, st) => { const v = S.vessels[st.into]; if (v) addContent(v, st.item); else if (S.items[st.target]) S.items[st.target].seasoned = 1; const it = S.items[st.item]; if (it) it.used = 1; } },
+        eff: (S, st) => { const v = S.vessels[st.into]; if (v) addContent(v, st.item); else if (S.items[st.target]) S.items[st.target].seasoned = 1; const it = S.items[st.item]; if (it && it.staple) it.used = 1; } },
     ],
   },
   stir: {
@@ -479,7 +479,7 @@ export const ACTIONS = {
   garnish: {
     cap: 'plate', verb: 'Garnish with', tool: 'grab', icon: '🌿',
     phases: (s) => [
-      { g: 'place', n: s.n || 3, piece: s.with, tool: 'grab', hint: 'Tap to sprinkle it on', eff: (S, st) => { const it = S.items[st.with]; if (it) it.used = 1; } },
+      { g: 'place', n: s.n || 3, piece: s.with, tool: 'grab', hint: 'Tap to sprinkle it on', eff: (S, st) => { const it = S.items[st.with]; if (it && it.staple) it.used = 1; } },
     ],
   },
   serve: {
@@ -505,6 +505,20 @@ export const ACTIONS = {
       { g: 'tap', hot: 'pedal', hint: 'Step on the pedal to lift the lid' },
       { g: 'drag', obj: 'scraps', to: 'bin', hint: 'Drop the scraps in the bin' },
     ],
+  },
+  // fetching things: open the fridge, reach in and take it, close the door
+  // (the shelf has no door). What's taken goes into your hands.
+  take: {
+    cap: 'store', verb: 'Take', tool: 'grab', icon: '🫴', chore: true,
+    phases: (s) => s.door ? [
+      { g: 'tap', hot: 'fridge', hint: 'Open the fridge', eff: (S, st, v, fx) => { fx.door = 1; } },
+      { g: 'drag', obj: 'thing', to: 'hands', hint: 'Take it out' },
+      { g: 'tap', hot: 'fridge', hint: 'Close the fridge', eff: (S, st, v, fx) => { fx.door = 0; } },
+    ] : [{ g: 'drag', obj: 'thing', to: 'hands', hint: 'Take it off the shelf' }],
+  },
+  shut: {
+    cap: 'store', verb: 'Close the fridge', tool: 'hand', icon: '🚪', chore: true,
+    phases: () => [{ g: 'tap', hot: 'fridge', hint: 'Close the fridge door', eff: (S, st, v, fx) => { fx.door = 0; } }],
   },
   bag: {
     cap: 'bin', verb: 'Change the bag', tool: 'grab', icon: '🛍️', chore: true,

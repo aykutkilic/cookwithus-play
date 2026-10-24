@@ -105,7 +105,7 @@ export function buildKitchen3D(K) {
       case 'stove': stove(g, ctx, d, def.slots); break;
       case 'oven': oven(g, ctx, d); break;
       case 'fridge': fridge(g, ctx, d); break;
-      case 'shelf': pantry(g, ctx); break;
+      case 'shelf': pantry(g, ctx, d); break;
       case 'plant': plant(g); break;
       case 'binS': case 'binM': case 'binL': bin(g, ctx, d, f.type); break;
       case 'pizzaOven': case 'stoneOven': dome(g, ctx, d, f.type); break;
@@ -378,19 +378,43 @@ function oven(g, ctx, d) {
 
 function fridge(g, ctx, d) {
   const body = mat('#f4f1ea', { rough: 0.3 });
-  g.add(rbox(0.86, 1.18, 0.84, body, 0, 0, -0.05, 0.06));
-  g.add(box(0.84, 0.01, 0.02, mat('#b8b4ac'), 0, 0.82, 0.38));
-  g.add(rod(v3(0.34, 0.9, 0.4), v3(0.34, 1.08, 0.4), 0.014, M.steel()));
-  g.add(rod(v3(0.34, 0.3, 0.4), v3(0.34, 0.72, 0.4), 0.014, M.steel()));
-  for (const [x, y, c] of [[-0.2, 0.6, '#e8573a'], [0, 0.5, '#f2b21a'], [-0.1, 0.35, '#3faa5a'], [0.15, 0.62, '#2f8fd0']]) g.add(cyl(0.025, 0.025, 0.01, mat(c, { rough: 0.4 }), x, y, 0.375).rotateX(Math.PI / 2));
-  // a little note and a fruit bowl on top
-  g.add(box(0.12, 0.14, 0.004, mat('#fffbe0'), 0.12, 0.4, 0.378));
+  const lining = mat('#eef6fa', { rough: 0.5, emissive: '#fffbe8', ei: 0.12 });
+  const glass = mat('#dceef6', { rough: 0.1, opacity: 0.5 });
+  // a hollow cabinet: when the door swings open you see what's kept inside
+  g.add(box(0.86, 1.18, 0.04, body, 0, 0, -0.45));
+  for (const sx of [-1, 1]) g.add(box(0.04, 1.18, 0.82, body, sx * 0.41, 0, -0.04));
+  g.add(box(0.86, 0.06, 0.82, body, 0, 1.12, -0.04));
+  g.add(box(0.86, 0.08, 0.82, body, 0, 0, -0.04));
+  g.add(box(0.78, 1.04, 0.01, lining, 0, 0.08, -0.42));
+  for (const sx of [-1, 1]) g.add(box(0.005, 1.04, 0.78, lining, sx * 0.385, 0.08, -0.04));
+  for (const y of [0.33, 0.57, 0.81]) g.add(box(0.77, 0.012, 0.74, glass, 0, y, -0.05));
+  g.add(box(0.06, 0.02, 0.02, mat('#fff8d0', { emissive: '#fff4c0', ei: 1.2 }), 0, 1.08, -0.3)); // the little light
+  // the door: hinged on the left, it opens out into the room
+  const hinge = live(new THREE.Group());
+  hinge.position.set(-0.43, 0, 0.38);
+  const door = new THREE.Group();
+  door.position.x = 0.43;
+  hinge.add(door);
+  door.add(rbox(0.86, 1.17, 0.06, body, 0, 0.005, 0, 0.05));
+  door.add(box(0.84, 0.01, 0.02, mat('#b8b4ac'), 0, 0.82, 0.03));
+  door.add(rod(v3(0.34, 0.9, 0.05), v3(0.34, 1.08, 0.05), 0.014, M.steel()));
+  door.add(rod(v3(0.34, 0.3, 0.05), v3(0.34, 0.72, 0.05), 0.014, M.steel()));
+  for (const [x, y, c] of [[-0.2, 0.6, '#e8573a'], [0, 0.5, '#f2b21a'], [-0.1, 0.35, '#3faa5a'], [0.15, 0.62, '#2f8fd0']]) door.add(cyl(0.025, 0.025, 0.01, mat(c, { rough: 0.4 }), x, y, 0.03).rotateX(Math.PI / 2));
+  door.add(box(0.12, 0.14, 0.004, mat('#fffbe0'), 0.12, 0.4, 0.031));
+  // racks on the inside of the door
+  for (const y of [0.25, 0.6]) door.add(box(0.7, 0.05, 0.08, lining, 0, y, -0.07));
+  g.add(hinge);
+  d.parts.door = hinge;
+  // a fruit bowl on top
   g.add(lathe([[0, 0], [0.14, 0.02], [0.17, 0.08]], mat(ctx.T.tileB, { rough: 0.4, double: true }), 0, 1.18, -0.05));
   for (const [x, z, c] of [[-0.05, 0, '#e8432e'], [0.06, -0.06, '#f7d330'], [0.04, 0.06, '#f08a24']]) g.add(ball(0.05, mat(c, { rough: 0.5 }), x, 1.24, -0.05 + z));
-  d.anchors.shelf = v3(0, 0.5, 0.2);
+  d.anchors.shelf = v3(0, 0.335, -0.08); // where a pot chills
+  // where things are kept: four shelves, four places each
+  d.anchors.stash = [];
+  for (const y of [0.815, 0.575, 0.335, 0.085]) for (const x of [-0.27, -0.09, 0.09, 0.27]) d.anchors.stash.push(v3(x, y, 0.16));
 }
 
-function pantry(g, ctx) {
+function pantry(g, ctx, d) {
   const { T } = ctx;
   const wood = mat(T.trim, { rough: 0.6 });
   const back = mat(T.cabinet2, { rough: 0.7 });
@@ -399,18 +423,18 @@ function pantry(g, ctx) {
   for (const sx of [-1, 1]) g.add(box(0.04, Ht, 0.86, wood, sx * 0.45, 0, -0.02));
   const shelves = [0.05, 0.38, 0.7, 1.02, Ht - 0.03];
   for (const y of shelves) g.add(box(0.9, 0.03, 0.86, wood, 0, y, -0.02));
-  // neat rows: pots below, tins, jars sorted by colour, bowls stacked
+  // the top shelf: the spice jars and oils every station reaches for (always there)
   const jarCols = ['#c0412d', '#e8601a', '#f2b21a', '#9ab86a', '#3a7ac0', '#8a5a3a'];
-  for (let i = 0; i < 2; i++) { g.add(cyl(0.13, 0.12, 0.16, M.steel(), -0.2 + i * 0.4, 0.08, 0)); g.add(ring(0.13, 0.008, M.steel(), -0.2 + i * 0.4, 0.24, 0)); }
-  for (let i = 0; i < 4; i++) { const x = -0.3 + i * 0.2; g.add(cyl(0.07, 0.07, 0.2, mat(i % 2 ? '#f6f1e6' : T.tileB, { rough: 0.4 }), x, 0.41, 0)); g.add(cyl(0.072, 0.072, 0.025, M.brass(), x, 0.61, 0)); }
   for (let i = 0; i < 6; i++) {
     const x = -0.33 + i * 0.132;
-    g.add(cyl(0.05, 0.05, 0.16, M.glass(), x, 0.73, 0.05, 12));
-    g.add(cyl(0.045, 0.045, 0.1, mat(jarCols[i], { rough: 0.6 }), x, 0.735, 0.05, 12));
-    g.add(cyl(0.052, 0.052, 0.025, mat(T.trim, { rough: 0.5 }), x, 0.89, 0.05, 12));
+    g.add(cyl(0.05, 0.05, 0.16, M.glass(), x, 1.05, 0.05, 12));
+    g.add(cyl(0.045, 0.045, 0.1, mat(jarCols[i], { rough: 0.6 }), x, 1.055, 0.05, 12));
+    g.add(cyl(0.052, 0.052, 0.025, mat(T.trim, { rough: 0.5 }), x, 1.21, 0.05, 12));
   }
-  for (let i = 0; i < 4; i++) g.add(lathe([[0, 0], [0.1, 0.01], [0.13, 0.06]], mat('#f8f6f0', { rough: 0.4, double: true }), -0.18, 1.05 + i * 0.03, 0));
-  for (let i = 0; i < 3; i++) g.add(cyl(0.05, 0.04, 0.1, mat(['#fffaf0', T.curtain, '#f8f6f0'][i], { rough: 0.4 }), 0.12 + i * 0.12, 1.05, 0.05));
+  // below: the pots, pans, bowls and plates, and the food that isn't kept cold – put away
+  // on the three lower shelves, each in its own place near the front where you can see it
+  d.anchors.stash = [];
+  for (const y of [0.73, 0.41, 0.08]) for (const x of [-0.31, -0.1, 0.1, 0.31]) d.anchors.stash.push(v3(x, y + 0.005, 0.24));
 }
 
 function plant(g) {

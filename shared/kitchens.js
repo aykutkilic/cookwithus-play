@@ -51,7 +51,7 @@ const MAPS = {
     'C..CC...',
     'X.......',
     'X....TT.',
-    'P.B.....',
+    'H.B....P',
   ],
   huge: [
     'FCCKSSOCCK',
@@ -73,7 +73,7 @@ const MAPS = {
     'X.............',
     'K..SSSSCCC...m',
     'C.............',
-    'C.............',
+    'H.............',
     'O..TTTT..TTT.B',
     'Pb...........B',
   ],
@@ -83,18 +83,18 @@ const MAPS = {
 //   board  – cutting, peeling, mixing … on a counter     plate – plating & serving
 //   sink   – washing, filling, draining                   hob   – burners (slots = burners)
 //   bake   – an oven                                      chill – the fridge
-//   tandoor – the Indian clay oven
+//   tandoor – the Indian clay oven                        store – where things are kept (fridge, shelf)
 export const FIXTURES = {
   counter:      { name: 'Counter', caps: ['board', 'plate'], slots: 1 },
   table:        { name: 'Table', caps: ['plate'], slots: 1 },
   sink:         { name: 'Sink', caps: ['sink'], slots: 1 },
   stove:        { name: 'Stove', caps: ['hob'], slots: 2 },
   oven:         { name: 'Oven', caps: ['bake'], slots: 1, bakeKind: 'electric' },
-  fridge:       { name: 'Fridge', caps: ['chill'], slots: 4 },
+  fridge:       { name: 'Fridge', caps: ['chill', 'store'], slots: 4 },
   binS:         { name: 'Small trash can', caps: ['bin'], slots: 1, holds: 8 },
   binM:         { name: 'Trash can', caps: ['bin'], slots: 1, holds: 14 },
   binL:         { name: 'Big trash bin', caps: ['bin'], slots: 1, holds: 24 },
-  shelf:        { name: 'Shelf', caps: [], slots: 0 },
+  shelf:        { name: 'Pantry shelf', caps: ['store'], slots: 0 },
   plant:        { name: 'Plant', caps: [], slots: 0 },
   // cuisine specials (2 tiles long)
   pizzaOven:    { name: 'Wood-fired oven', caps: ['bake'], slots: 2, bakeKind: 'dome', big: true },
@@ -198,7 +198,7 @@ export function buildKitchen(size, cuisine) {
 
 // What a kitchen offers: counts of each capability (burners count per slot).
 export function kitchenCaps(k) {
-  const c = { board: 0, plate: 0, sink: 0, hob: 0, bake: 0, chill: 0, tandoor: 0, bin: 0, dome: 0, wide: 0 };
+  const c = { board: 0, plate: 0, sink: 0, hob: 0, bake: 0, chill: 0, tandoor: 0, bin: 0, store: 0, dome: 0, wide: 0 };
   for (const f of k.fixtures) {
     for (const cap of f.caps) c[cap] += cap === 'hob' ? f.slots : 1;
     if (FIXTURES[f.type].bakeKind === 'dome') c.dome++;
@@ -213,6 +213,14 @@ export function fixtureById(k, id) {
 
 export function fixturesWith(k, cap) {
   return k.fixtures.filter((f) => f.caps.includes(cap));
+}
+
+// the fridge and the pantry shelf: things are kept there, not worked on
+export function isStore(f) { return !!f && f.caps.includes('store'); }
+
+// where a kind of thing is kept in this kitchen ('fridge' | 'shelf')
+export function storeFx(k, which) {
+  return (k.fixtures.find((f) => f.type === which) || k.fixtures.find((f) => f.caps.includes('store')) || { id: null }).id;
 }
 
 export function bakeKind(f) {

@@ -11,7 +11,7 @@
 
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
-  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember,
+  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown,
   setSpeed, skipWait, SPEEDS,
 } from './cook.js';
 import { sanitizeProfile, QUICK_CHAT, COOK_COLORS } from './names.js';
@@ -67,7 +67,7 @@ export class Room {
     if (!m) return;
     this.members.delete(client.id);
     client.room = null;
-    if (this.cook) dropMember(this.cook, this.x, client.id);
+    if (this.cook) { dropMember(this.cook, this.x, client.id, this.kitchen, { x: m.x, y: m.y }); this.flushSoon(); }
     if (this.hostId === client.id) this.hostId = this.members.size ? this.members.keys().next().value : null;
     if (!this.members.size) return;
     this.system(`${m.name} left the kitchen`);
@@ -168,6 +168,14 @@ export class Room {
       case 'close':
         if (C && closeStep(C, x, String(msg.sid), m.id)) this.flush(true);
         break;
+      case 'take': case 'put': {
+        if (!C) return;
+        const fx = String(msg.fx || '');
+        const err = msg.t === 'take' ? takeThing(C, x, K, m.id, String(msg.what || ''), fx) : putDown(C, x, K, m.id, fx);
+        client.sendText(JSON.stringify({ t: 'handled', what: msg.t, fx, err }));
+        if (!err) this.flush(true);
+        break;
+      }
       case 'speed': {
         const s = Number(msg.x);
         if (C && SPEEDS.includes(s) && s !== C.speed) {
