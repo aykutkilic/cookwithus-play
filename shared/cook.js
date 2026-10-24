@@ -19,14 +19,14 @@
 // work is. A step starts only when what it needs is there (or in your hands –
 // you put it down as you start). Nothing walks by itself.
 
-import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf } from './actions.js';
-import { INGREDIENTS, VESSELS, ingName, storeOf } from './ingredients.js';
+import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands } from './actions.js';
+import { INGREDIENTS, VESSELS, ingName, storeOf, twoHanded } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx } from './kitchens.js';
 import { RECIPES } from './recipes.js';
 
 export const SPEEDS = [1, 2, 4, 8, 16];
 export const SCRAP_LIMIT = 3; // scraps on a counter before it's too messy to start another job there
-export const HAND_ITEMS = 6;  // ingredients you can carry at once (a pot or pan takes both hands)
+export const HANDS = 2;       // one thing in each hand; a heavy pot, a tray, a stack of plates takes both
 const OVER_GRACE = 45;   // seconds a finished timer can run over before it costs
 const DONE_HOLD = 1;     // seconds
 
@@ -169,7 +169,7 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
-  const m = /^#(clear|toss|bag)@([a-zA-Z]+\d*)$/.exec(sid);
+  const m = /^#(clear|toss|bag|knob)@([a-zA-Z]+\d*)$/.exec(sid);
   if (!m) return null;
   return { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
 }
@@ -198,6 +198,9 @@ function choreBlocked(C, x, K, d, memberId) {
   const sc = C.scraps[d.fx];
   const bin = C.bins[d.fx] || { fill: 0 };
   switch (d.do) {
+    case 'knob':
+      if (!freeHand(C, memberId)) return 'Both your hands are full – no hand free for the knob';
+      return C.fx[d.fx] && C.fx[d.fx].lit && Object.keys(C.fx[d.fx].lit).length ? '' : 'No burner is on';
     case 'clear':
       if (heldBy(C, memberId).length) return `Put down the ${thingName(C, x, heldBy(C, memberId)[0])} first`;
       return sc && sc.n > 0 ? '' : 'Nothing to clear here';
@@ -240,6 +243,7 @@ function choreDone(C, K, d, st) {
 export function swingDoor(C, K, m, fx, v, done) {
   const f = fixtureById(K, fx);
   if (!f || !isStore(f)) return 'There’s no door to swing there';
+  if (!freeHand(C, m)) return 'Both your hands are full – put it down first, then come back for the door';
   const s = fxState(C, fx);
   v = Math.max(0, Math.min(1, Number(v) || 0));
   if (done) { s.door = v >= 0.5 ? 1 : 0; s.swing = null; s.by = null; }
@@ -247,6 +251,18 @@ export function swingDoor(C, K, m, fx, v, done) {
   return '';
 }
 export function doorOpen(C, fx) { return !!(C.fx[fx] && C.fx[fx].door); }
+
+// how many hands a thing takes, how many a cook has busy
+export function handsFor(C, key) {
+  const t = thingOf(C, key);
+  return key[0] === 'v' && t && twoHanded(t.kind) ? 2 : 1;
+}
+export function handsUsed(C, m) {
+  if (carrying(C, m)) return HANDS; // a double handful of scraps
+  return heldBy(C, m).reduce((n, k) => n + handsFor(C, k), 0);
+}
+// Has cook m a hand free?
+export function freeHand(C, m) { return handsUsed(C, m) < HANDS; }
 
 // Where a thing stands in the fridge / pantry, if a cook put it somewhere
 // particular: shelf r (0 = the top one) and how far along it x (0 … 1).
@@ -337,13 +353,11 @@ function holdsNeeded(C, key, need) {
 // Can this cook pick that up? ('' = yes)
 export function handsFree(C, x, m, key) {
   if (carrying(C, m)) return 'Your hands are full of scraps – take them to a bin first 🗑️';
+  const need = handsFor(C, key);
+  if (handsUsed(C, m) + need <= HANDS) return '';
   const h = heldBy(C, m);
-  if (!h.length) return '';
-  const v = h.find((k) => k[0] === 'v');
-  if (v) return `Your hands are full – put the ${thingName(C, x, v)} down first`;
-  if (key[0] === 'v') return `You need both hands for the ${thingName(C, x, key)} – put down what you're holding`;
-  if (h.length >= HAND_ITEMS) return 'Your arms are full – put something down first';
-  return '';
+  if (need === 2) return `You need both hands for the ${thingName(C, x, key)} – put down what you're holding`;
+  return `Both your hands are full – put the ${thingName(C, x, h[0])} down first`;
 }
 
 // a step is under way with it (someone's hands are on it)
@@ -385,10 +399,15 @@ export function takeThing(C, x, K, m, key, fx) {
   }
   if (inUse(C, x, key) != null) return 'Someone is working on that';
   if (halfDone(C, x, key, fx)) return 'Finish the job on it here first';
+  if (key[0] === 'v' && t.heat > 0 && t.at && f.caps.includes('hob')) {
+    // lifted off: the burner keeps burning until someone turns its knob off
+    const s = fxState(C, fx);
+    s.lit = { ...(s.lit || {}), [t.at.slot]: t.heat };
+  }
   t.held = m;
   t.at = null;
   delete t.spot; // its place on the shelf is free now
-  if (key[0] === 'v') { t.onHob = 0; t.heat = 0; } // lifted off the burner, which goes out
+  if (key[0] === 'v') { t.onHob = 0; t.heat = 0; }
   return '';
 }
 
@@ -399,7 +418,7 @@ function putBlocked(C, x, K, held, f) {
   const store = isStore(f);
   if (store && !(C.fx[f.id] && C.fx[f.id].door)) return `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first`;
   for (const k of held) {
-    if (k[0] === 'i' && !surface && !store) return 'Put it on a counter, a table or in the sink';
+    if (k[0] === 'i' && !surface && !store && !f.caps.includes('hob')) return 'Put it on a counter, a table or in the sink';
     if (k[0] === 'v') {
       const v = thingOf(C, k);
       if (store && (f.type === 'fridge' || v.contents.length || v.water > 0.05 || (v.items && v.items.length))) return f.type === 'fridge' ? 'Pots go in the fridge with their step' : 'Empty it before you put it away';
@@ -441,6 +460,9 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
     const onHob = !surface && f.caps.includes('hob');
     t.at = { fx, slot: onHob ? freeSlot(C, x, f) : 0 };
     t.onHob = onHob ? 1 : 0;
+    // onto a burner that was left on: it heats again
+    const lit = onHob && C.fx[fx] && C.fx[fx].lit;
+    if (lit && lit[t.at.slot]) { t.heat = lit[t.at.slot]; delete lit[t.at.slot]; }
   }
   return '';
 }
@@ -479,7 +501,9 @@ export function planStep(C, x, K, sid, m) {
   const held = heldBy(C, m);
   const place = targetPlace(C, x, K, s, m);
   const extra = held.filter((k) => !need.includes(k) && !holdsNeeded(C, k, need));
-  if (extra.length) return { do: 'put', fx: putSpot(C, x, K, m, place) };
+  const mine = held.filter((k) => !extra.includes(k));
+  // what I hold for something else can stay in one hand – unless this takes both
+  if (extra.length && (stepHands(s) === 2 || extra.reduce((n, k) => n + handsFor(C, k), 0) >= HANDS)) return { do: 'put', fx: putSpot(C, x, K, m, place, extra), keys: extra };
   const missing = place ? need.filter((k) => !atPlace(C, K, k, place.fx, m)) : need.filter((k) => locate(C, K, k).held !== m);
   if (place && !missing.length) return { do: 'go', fx: place.fx, slot: place.slot };
   // the pot / bowl it happens in comes first (its place decides where), then the rest
@@ -497,12 +521,16 @@ export function planStep(C, x, K, sid, m) {
     if (L.inV && L.held == null) { k = `v:${L.inV}`; L = locate(C, K, k); } // it's in a pot: bring the pot
     if (L.held != null && L.held !== m) { blocked = `Someone has the ${thingName(C, x, k)}`; continue; }
     if (L.held === m) continue;
-    if (handsFree(C, x, m, k)) return { do: 'put', fx: putSpot(C, x, K, m, place) };
+    if (handsFree(C, x, m, k)) {
+      // make room: what I hold for something else first; else leave what I've brought where it'll be used
+      const keys = extra.length ? extra : place && !putBlocked(C, x, K, mine, fixtureById(K, place.fx)) ? mine : held;
+      return { do: 'put', fx: putSpot(C, x, K, m, extra.length ? null : place, keys), keys };
+    }
     return { do: 'take', key: k, fx: L.fx, store: !!L.stored };
   }
   // someone else is holding the rest: leave my share at the spot for whoever does it
-  if (blocked && held.length) return { do: 'put', fx: putSpot(C, x, K, m, place) };
-  if (!place && held.length) return { do: 'put', fx: putSpot(C, x, K, m, null) };
+  if (blocked && held.length) return { do: 'put', fx: putSpot(C, x, K, m, place), keys: held };
+  if (!place && held.length) return { do: 'put', fx: putSpot(C, x, K, m, null), keys: held };
   return { do: 'wait', why: blocked || 'Not yet' };
 }
 
@@ -523,8 +551,8 @@ function targetPlace(C, x, K, s, m) {
 
 // where to put down what you're holding: at the place you're heading for if it
 // takes them, otherwise the counter nearest to it that's free
-function putSpot(C, x, K, m, place) {
-  const held = heldBy(C, m);
+function putSpot(C, x, K, m, place, keys = null) {
+  const held = keys || heldBy(C, m);
   const f = place && fixtureById(K, place.fx);
   if (f && !putBlocked(C, x, K, held, f)) return f.id;
   const near = (g) => (f ? Math.hypot(g.x - f.x, g.y - f.y) : 0);
@@ -649,7 +677,10 @@ export function openStep(C, x, K, sid, place, memberId) {
     // what it needs has to be here – or in your hands (and nothing else in them)
     const need = needsOf(C, s);
     const extra = heldBy(C, memberId).filter((k) => !need.includes(k) && !holdsNeeded(C, k, need));
-    if (extra.length) return `Your hands are full – put the ${thingName(C, x, extra[0])} down first`;
+    // what you hold for something else stays in one hand – if this needs only the other
+    if (extra.length && (stepHands(s) === 2 || extra.reduce((n, k) => n + handsFor(C, k), 0) >= HANDS)) {
+      return `Put the ${thingName(C, x, extra[0])} down first – you need ${stepHands(s) === 2 ? 'both hands' : 'a free hand'} for this`;
+    }
     const miss = need.filter((k) => !atPlace(C, K, k, pl.fx, memberId));
     if (miss.length) return bringMsg(C, x, K, miss);
   }
@@ -664,8 +695,9 @@ export function openStep(C, x, K, sid, place, memberId) {
     // what you brought goes down here (a pot you'll put on the burner / in the
     // oven yourself stays in your hands until you do)
     const own = ACTIONS[s.do].moves && stepVessel(s) ? `v:${stepVessel(s)}` : null;
+    const need = needsOf(C, s);
     for (const k of heldBy(C, memberId)) {
-      if (k === own) continue;
+      if (k === own || (!need.includes(k) && !holdsNeeded(C, k, need))) continue; // still in your other hand
       const t = thingOf(C, k);
       t.held = null;
       if (k[0] === 'i') t.at = pl.fx;
@@ -808,6 +840,8 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
 function moveVessel(C, s, st) {
   const vid = stepVessel(s);
   if (vid && C.vessels[vid]) { C.vessels[vid].at = { fx: st.fx, slot: st.slot }; C.vessels[vid].held = null; }
+  const lit = C.fx[st.fx] && C.fx[st.fx].lit;
+  if (lit && lit[st.slot]) { if (vid && C.vessels[vid]) C.vessels[vid].heat = lit[st.slot]; delete lit[st.slot]; }
 }
 
 // `sets: {egg: {boiled: 1}}` changes items, `vsets: {pot: {lid: 1}}` vessels –

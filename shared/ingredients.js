@@ -140,6 +140,12 @@ const COLD = new Set(['egg', 'butter', 'ghee', 'milk', 'cream', 'yogurt', 'mozza
   'cucumber', 'zucchini', 'eggplant', 'greenPepper', 'redPepper', 'chili', 'lemon', 'peas']);
 export function storeOf(kind) { return STAPLES.has(kind) ? null : COLD.has(kind) ? 'fridge' : 'shelf'; }
 
+// Heavy things take both hands (a pot, a tray, a stack of plates); a saucepan,
+// a pan, a bowl, a kettle you carry in one, leaving the other free (to shut
+// the fridge door behind you, say).
+const TWO_HANDED = new Set(['pot', 'bigPot', 'copperPot', 'cocotte', 'paellaPan', 'tray', 'bakingDish', 'peel', 'blender', 'plate', 'skewer']);
+export function twoHanded(kind) { return TWO_HANDED.has(kind); }
+
 export const VESSELS = {
   pot:        { name: 'Pot', emoji: '🍲', hob: true, art: { type: 'pot', c1: '#c9ccd2', c2: '#8a8f99' } },
   bigPot:     { name: 'Big pot', emoji: '🍲', hob: true, art: { type: 'pot', c1: '#c9ccd2', c2: '#8a8f99', big: true } },

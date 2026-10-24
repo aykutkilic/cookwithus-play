@@ -59,6 +59,15 @@ function useItem(S, id, into) {
 // A step's vessel ids: the one it acts on and the one things go into.
 export function stepVessel(step) { return step.vessel || step.into || null; }
 
+// Work that takes both hands (a knife and the hand steadying the food, dough,
+// cracking an egg …); anything else you can do with one hand while the other
+// holds something.
+const BOTH_HANDS = new Set(['crack', 'stuff', 'squeeze']);
+export function stepHands(step) {
+  const a = ACTIONS[step.do];
+  return a && (a.cap === 'board' || BOTH_HANDS.has(step.do)) ? 2 : 1;
+}
+
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)
 const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, fx) => { fx.door = to; } });
 
@@ -511,6 +520,11 @@ export const ACTIONS = {
       { g: 'tap', hot: 'pedal', hint: 'Step on the pedal to lift the lid' },
       { g: 'drag', obj: 'scraps', to: 'bin', hint: 'Drop the scraps in the bin' },
     ],
+  },
+  // a burner left on after its pan was lifted off: it burns until someone turns it off
+  knob: {
+    cap: 'hob', verb: 'Turn off the burner', tool: 'hand', icon: '🔥', chore: true,
+    phases: () => [{ g: 'knob', to: 0, hint: 'Turn the empty burner off', eff: (S, st, v, fx) => { const k = Object.keys(fx.lit || {})[0]; if (k != null) delete fx.lit[k]; } }],
   },
   bag: {
     cap: 'bin', verb: 'Change the bag', tool: 'grab', icon: '🛍️', chore: true,

@@ -10,8 +10,8 @@
 import { drawIngredient, drawPieces, drawVessel, drawTool, itemSize, liquidColor, vesselGrip, OUTLINE, shade } from './art.js';
 import { phaseTarget, displayState } from '../shared/cook.js';
 import { HEAT_NAMES } from '../shared/actions.js';
-import { INGREDIENTS, VESSELS } from '../shared/ingredients.js';
-import { heldBy, thingName } from '../shared/cook.js';
+import { INGREDIENTS, VESSELS, twoHanded } from '../shared/ingredients.js';
+import { heldBy, thingName, needsOf } from '../shared/cook.js';
 import { themeOf, splashTexture, topTexture } from './theme.js';
 
 export const SW = 1000, SH = 620;
@@ -22,21 +22,21 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // anchors in the scene (logical px)
 const MAIN = { x: 500, y: 500 };
 const SIDE = { x: 170, y: 540 };
-const KNOB = { x: 820, y: 540, r: 52 };
+const KNOB = { x: 795, y: 540, r: 52 };
 const OVEN_KNOB = { x: 680, y: 145, r: 36 };
 const LEVER = { x: 580, y: 200, r: 44 };
-const BELL = { x: 820, y: 470, r: 52 };
+const BELL = { x: 795, y: 470, r: 52 };
 const ASIDE = { x: 820, y: 520 };
-const HANDS = { x: 880, y: 470, r: 105 };   // your hands, beside the fridge / pantry
+const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
 const EYE = { x: 500, y: 330, f: 1400 };    // where you look from (for doors swinging towards you)
 
 export { MAIN, SIDE, KNOB, OVEN_KNOB, LEVER, BELL, HANDS };
 
-// On a tall phone screen the scene zooms in on the working area (the sides,
-// where nothing important sits, are cut off) so the food stays big.
+// On a tall phone screen the scene zooms in on the middle 820 of its 1000
+// (x 90 … 910: every knob, handle and door stays inside) so the food stays big.
 function sceneScale(w, h) {
   const portrait = h > w * 0.9;
-  return Math.min(w / (portrait ? 720 : SW), h / SH);
+  return Math.min(w / (portrait ? 820 : SW), h / SH);
 }
 
 export class Station {
@@ -179,8 +179,15 @@ export class Station {
 
   currentLevel() {
     const s = this.c.def;
+    if (s.do === 'knob') return this.litLevel();
     const v = this.c.C.vessels[s.vessel || s.into];
     return v ? v.heat || 0 : 0;
+  }
+  // an empty burner left burning here
+  litLevel() {
+    const lit = (this.c.C.fx[this.c.f.id] || {}).lit || {};
+    const k = Object.keys(lit)[0];
+    return k != null ? lit[k] : 0;
   }
 
   targetFor(to) {
@@ -689,7 +696,7 @@ export class Station {
   doorGeo(hot) {
     if (!hot) hot = this.c.f.type === 'fridge' ? 'fridge' : this.c.f.type === 'shelf' ? 'pantry' : 'oven';
     if (hot === 'oven') return { kind: 'drop', hy: 570, x0: 250, x1: 750, h: 360 };
-    if (hot === 'pantry') return { kind: 'swing', hx: 240, y0: 40, y1: 600, w: 520, glass: true, max: 1.6 };
+    if (hot === 'pantry') return { kind: 'swing', hx: 240, y0: 40, y1: 600, w: 520, glass: true, max: 1.5 };
     return { kind: 'swing', hx: 300, y0: 40, y1: 610, w: 420, max: 1.75 };
   }
   doorGrab(geo, o) {
@@ -914,6 +921,8 @@ export class Station {
       default: this.sceneBoard(ctx); break;
     }
     if (this.mode === 'store') { this.drawFx(ctx, dt); this.storeCursor(ctx); ctx.restore(); return; }
+    // what I hold for something else stays in my other hand while this one works
+    this.drawHeld(ctx, this.heldExtras());
     this.drawGestureOverlay(ctx);
     this.drawFx(ctx, dt);
     this.drawCursor(ctx);
@@ -925,7 +934,7 @@ export class Station {
     const f = this.c.f;
     const t = f.type;
     if (this.mode === 'store') return 'store';
-    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : 'bin';
+    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : this.c.def.do === 'knob' ? 'hob' : 'bin';
     if (t === 'sink') return 'sink';
     if (t === 'fridge') return 'chill';
     if (t === 'pizzaOven' || t === 'stoneOven') return 'dome';
@@ -1147,11 +1156,29 @@ export class Station {
     if (!this.hooks.progress || !this.store) return;
     const S = this.store;
     const name = this.c.want ? thingName(this.c.C, this.c.x, this.c.want) : '';
-    const hint = S.v < 0.5 ? 'Take the handle and swing the door open'
-      : this.heldHere().length ? 'Swing the door shut when you’re done – or put things back where you like'
-        : `Drag what you need to your hands →${name ? ` (the ${name})` : ''} · move things about as you like`;
+    const { keys, two } = this.heldNow();
+    const hint = S.msg && performance.now() < S.msgUntil ? S.msg
+      : S.v < 0.5 ? (two ? 'Both your hands are full – put something down first' : 'Take the handle and swing the door open')
+        : two ? 'Both hands full: put something back, or carry it off – the door stays open till you come back'
+          : keys.length ? 'Swing the door shut with your free hand – or put things back where you like'
+            : `Pull out what you need${name ? ` (the ${name})` : ''} · move things about as you like`;
     this.hooks.progress({ title: this.c.def.name, hint, ph: 0, phases: 0, k: 0, n: 0, done: false });
   }
+
+  // (steps) what I'm holding that this step doesn't use
+  heldExtras() {
+    const C = this.c.C, s = this.c.def;
+    if (s.chore) return [];
+    const need = needsOf(C, s);
+    return heldBy(C, this.c.me).filter((k) => !need.includes(k) && !(k[0] === 'v' && need.some((n) => n[0] === 'i' && C.items[n.slice(2)] && C.items[n.slice(2)].in === k.slice(2))));
+  }
+
+  // what I'm holding, and whether it takes both hands
+  heldNow() {
+    const keys = this.heldHere();
+    return { keys, two: this.handsFull(keys) };
+  }
+  storeSay(msg) { this.store.msg = msg; this.store.msgUntil = performance.now() + 2600; this.reportStore(); }
 
   // what I'm holding, as I see it (with my own moves applied at once)
   heldHere() {
@@ -1278,31 +1305,83 @@ export class Station {
     // the door, as far open as it is
     this.drawDoor(ctx, geo, S.v, { wood });
     if (!S.door && S.v < 0.5) { const h = this.doorGrab(geo, S.v); this.ghostRing(ctx, h.x, h.y, 42 + Math.sin(this.t * 6) * 5); }
-    // your hands, beside it: what you're holding
-    const held = this.heldHere().filter((k) => !(drag && drag.key === k));
-    ctx.fillStyle = 'rgba(255,255,255,0.16)'; ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
-    ctx.beginPath(); ctx.arc(HANDS.x, HANDS.y, HANDS.r, 0, TAU); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(60,40,30,0.75)'; ctx.font = '700 18px Fredoka, system-ui'; ctx.textAlign = 'center';
-    ctx.fillText(held.length ? 'in your hands' : 'your hands', HANDS.x, HANDS.y + HANDS.r + 26); ctx.textAlign = 'start';
-    this.handSpots(held).forEach(({ k, x, y, s }) => this.drawThing(ctx, k, x, y, s));
+    // what I'm holding, in my own hands
+    this.drawHeld(ctx, this.heldShown());
     // what I'm carrying across
-    if (drag) this.drawThing(ctx, drag.key, drag.pos.x + drag.dx, drag.pos.y + drag.dy, drag.s);
+    if (drag) {
+      const { two } = this.heldNow();
+      const x = drag.pos.x + drag.dx, y = drag.pos.y + drag.dy;
+      this.drawThing(ctx, drag.key, x, y, drag.s);
+      if (drag.from === 'hands' && two) this.drawBothHands(ctx, drag.key, x, y, drag.s);
+    }
   }
 
-  // where the things in my hands are drawn
+  // Held things, at the bottom of the view: a heavy pot or a stack of plates
+  // in both hands; otherwise one thing in each – the first in the left hand,
+  // the next in the right (food on the palm, a saucepan by its handle).
+  // While one hand is free, it's the one you work with. key -> where drawn.
   handSpots(keys) {
     const C = this.c.C;
-    return keys.map((k, i) => {
-      const t = k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)];
-      const s = k[0] === 'v' ? Math.min(0.45, this.vesselScale(t.kind) * 0.36) : Math.min(0.42, this.itemScale(t.kind) * 0.3);
-      const n = keys.length, a = n > 1 ? (i / (n - 1) - 0.5) * 1.6 : 0;
-      return { k, x: HANDS.x + Math.sin(a) * 50, y: HANDS.y + 40 - Math.cos(a) * 20 - (n > 1 ? 10 : 0), s };
+    const t = (k) => (k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)]);
+    const heavy = keys.find((k) => k[0] === 'v' && twoHanded(t(k).kind));
+    if (heavy) return [{ k: heavy, x: 500, y: 548, s: Math.min(0.75, this.vesselScale(t(heavy).kind) * 0.6), two: true }];
+    return keys.slice(0, 2).map((k, i) => {
+      const side = i === 0 ? -1 : 1;
+      if (k[0] === 'v') {
+        const kind = t(k).kind;
+        const s = Math.min(0.62, this.vesselScale(kind) * 0.5);
+        const gr = vesselGrip(kind) || { x: 60, y: -60 };
+        const hand = { x: 500 + side * 170, y: 470 };
+        return { k, x: hand.x - gr.x * s, y: hand.y - gr.y * s, s, hand, side };
+      }
+      return { k, x: 500 + side * 300, y: 500, s: Math.min(0.58, this.itemScale(t(k).kind) * 0.42), palm: { x: 500 + side * 300, y: 530 }, side };
     });
+  }
+  drawHeld(ctx, keys) {
+    if (!keys.length) return;
+    const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
+    for (const sp of this.handSpots(keys)) {
+      if (sp.two) { this.drawThing(ctx, sp.k, sp.x, sp.y, sp.s); this.drawBothHands(ctx, sp.k, sp.x, sp.y, sp.s); continue; }
+      const from = { x: 500 + sp.side * 360, y: SH + 90 };
+      if (sp.hand) {
+        this.drawThing(ctx, sp.k, sp.x, sp.y, sp.s);
+        this.drawArm(ctx, look, from, { x: sp.hand.x + sp.side * 10, y: sp.hand.y + 30 });
+        this.drawHand(ctx, look, sp.hand.x, sp.hand.y, 'fist', 0, sp.side < 0);
+      } else {
+        this.drawArm(ctx, look, from, { x: sp.palm.x, y: sp.palm.y + 15 });
+        this.drawHand(ctx, look, sp.palm.x, sp.palm.y, 'open', 0, sp.side < 0);
+        this.drawThing(ctx, sp.k, sp.x, sp.y, sp.s);
+      }
+    }
+  }
+  // (store) what's in my hands, less what I'm moving across right now
+  heldShown() {
+    const drag = this.store && this.store.drag;
+    return this.heldHere().filter((k) => !(drag && drag.key === k));
+  }
+  // both hands busy (a heavy pot, or something in each)
+  handsFull(keys) {
+    const C = this.c.C;
+    return keys.length >= 2 || keys.some((k) => k[0] === 'v' && C.vessels[k.slice(2)] && twoHanded(C.vessels[k.slice(2)].kind));
+  }
+  drawBothHands(ctx, k, x, y, s) {
+    const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
+    const kind = this.c.C.vessels[k.slice(2)].kind;
+    const w = itemSize(kind).w * s;
+    for (const side of [-1, 1]) {
+      const hx = x + side * (w / 2 - 6), hy = y - 30;
+      this.drawArm(ctx, look, { x: 500 + side * 330, y: SH + 90 }, { x: hx + side * 10, y: hy + 30 });
+      this.drawHand(ctx, look, hx, hy, 'fist', side * 0.3, side < 0);
+    }
   }
 
   storeDown(p) {
     const S = this.store, geo = this.storeGeo;
-    if (dist(p, this.doorGrab(geo, S.v)) < 85) { S.door = true; this.hooks.sfx('door'); return; }
+    const { two } = this.heldNow();
+    if (dist(p, this.doorGrab(geo, S.v)) < 85) {
+      if (two) { this.storeSay('Both your hands are full – no hand free for the door'); this.hooks.sfx('clunk', 0.4); return; }
+      S.door = true; this.hooks.sfx('door'); return;
+    }
     if (S.v < 0.55) { this.reportStore(); return; }
     // something on a shelf
     for (const [k, at] of this.storeLayout()) {
@@ -1313,9 +1392,9 @@ export class Station {
         return;
       }
     }
-    // something in my hands
+    // something in my hands (to put back)
     for (const h of this.handSpots(this.heldHere())) {
-      if (dist(p, { x: h.x, y: h.y - 30 }) < 60) { S.drag = { key: h.k, from: 'hands', pos: { ...p }, dx: h.x - p.x, dy: h.y - p.y, s: h.s }; this.hooks.sfx('grab'); return; }
+      if (dist(p, { x: h.x, y: h.y - 30 }) < (h.two ? 110 : 65)) { S.drag = { key: h.k, from: 'hands', pos: { ...p }, dx: h.x - p.x, dy: h.y - p.y, s: h.s }; this.hooks.sfx('grab'); return; }
     }
   }
   storeMove(p) {
@@ -1341,8 +1420,8 @@ export class Station {
     if (!d) return;
     S.drag = null;
     const base = { x: d.pos.x + d.dx, y: d.pos.y + d.dy }; // where it would stand
-    const at = { x: base.x, y: base.y - 30 };
-    if (d.from === 'shelf' && dist(at, HANDS) < HANDS.r + 40) {
+    if (d.from === 'shelf' && !this.insideStore(base)) {
+      // pulled out: it's in my hand
       this.hooks.store({ t: 'take', what: d.key, fx });
       S.pend.set(d.key, { to: 'held', t: performance.now() });
       this.hooks.sfx('pop');
@@ -1358,6 +1437,7 @@ export class Station {
   storeCursor(ctx) {
     const p = this.ptr;
     if (!p.seen) return;
+    if (this.heldNow().two) return; // no hand free: both are round the pot
     const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
     const S = this.store;
     const at = S.door ? this.doorGrab(this.storeGeo, S.v) : p;
@@ -1550,7 +1630,7 @@ export class Station {
     ctx.beginPath(); ctx.ellipse(MAIN.x, MAIN.y + 10, 140, 40, 0, 0, TAU); ctx.stroke();
     const vId = s.vessel || s.into;
     const v = this.D.vessels[vId];
-    let heat = v ? v.heat || 0 : 0;
+    let heat = v ? v.heat || 0 : s.do === 'knob' && !this.done ? this.litLevel() : 0;
     if (g && g.kind === 'knob') heat = g.level;
     const onBurner = v && (v.at && v.at.fx === this.c.f.id) || (g && g.kind === 'drag' && g.ph.to === 'burner' && !g.drag && this.k > 0);
     if (heat > 0) this.drawFlames(ctx, MAIN.x, MAIN.y + 10, heat);

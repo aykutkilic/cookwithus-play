@@ -300,7 +300,8 @@ export class Scene3D {
       if (P.flames) {
         P.flames.forEach((fr, slot) => {
           const v = D && vesselAtSlot(D, id, slot, F.f.type);
-          const heat = v ? v.heat || 0 : 0;
+          const lit = fxs[id] && fxs[id].lit && fxs[id].lit[slot];
+          const heat = v ? v.heat || 0 : lit || 0; // (an empty burner left on burns too)
           fr.visible = heat > 0;
           if (heat > 0) {
             fr.scale.set(1, 0.6 + heat * 0.35, 1);

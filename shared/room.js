@@ -188,6 +188,7 @@ export class Room {
       case 'door': {
         if (!C) return;
         const err = swingDoor(C, K, m.id, String(msg.fx || ''), msg.v, !!msg.done);
+        if (err && msg.done) client.sendText(JSON.stringify({ t: 'handled', what: 'door', fx: msg.fx, err }));
         if (!err && (msg.done || this.now - this.lastFlush > 120)) this.flush(true);
         break;
       }

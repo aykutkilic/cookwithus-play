@@ -17,7 +17,7 @@ import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
   choreId, carrying, binHolds, SCRAP_LIMIT, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
-  handsFree, canPut, HAND_ITEMS,
+  handsFree, canPut, HANDS, handsUsed,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS } from '../shared/actions.js';
 import {
@@ -574,14 +574,18 @@ function bestJob(f, all = jobsAt(f)) {
   const steps = jobs.filter((j) => j.sid && j.sid[0] !== '#').sort((a, b) => a.idx - b.idx);
   const using = steps.filter((j) => j.uses);
   if (held.length && using.length) return using[0];
+  // a burner left on: off it goes (with the free hand – the pan can stay in the other)
+  const knob = jobs.find((j) => j.sid && j.sid.startsWith('#knob'));
+  if (knob) return knob;
   if (held.length) { const put = jobs.find((j) => j.act === 'put'); if (put) return put; }
   if (steps.length) return steps[0];
   // pick up what's lying here – all of it that fits in my hands
   const takes = jobs.filter((j) => j.act === 'take');
   if (takes.length) {
     const items = takes.filter((j) => j.what[0] === 'i');
-    if (items.length > 1 && !held.some((k) => k[0] === 'v')) {
-      const keys = items.slice(0, HAND_ITEMS - held.length).map((j) => j.what);
+    const free = HANDS - handsUsed(C, S.myId);
+    if (items.length > 1 && free > 1) {
+      const keys = items.slice(0, free).map((j) => j.what);
       return { act: 'take', what: keys, label: `${keys.map((k) => thingEmoji(C, k)).join('')} Pick up the ${keys.map((k) => thingName(C, x, k)).join(', ')}` };
     }
     return takes[0];
@@ -774,6 +778,9 @@ function jobsAt(f) {
       // a step that uses what I hold comes first; otherwise putting it down does
       if (firstReady >= 0 && out[firstReady].uses) out.splice(firstReady + 1, 0, put); else out.unshift(put);
     }
+    // a burner left on with nothing on it
+    const lit = C.fx[f.id] && C.fx[f.id].lit;
+    if (lit && Object.keys(lit).length) out.push({ sid: choreId('knob', f.id), label: '🔥 Turn off the empty burner', chore: true });
     // the trash
     const sc = C.scraps[f.id];
     if (sc && sc.n > 0) out.unshift({ sid: choreId('clear', f.id), label: `🧹 Clear the scraps (${sc.n})`, chore: true });
