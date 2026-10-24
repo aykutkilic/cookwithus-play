@@ -418,7 +418,7 @@ export class Scene3D {
       // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
       // (leaning in a little while reaching for something)
       const lean = this.fpArms.lean();
-      const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), EYE_H - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
+      const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), EYE_H + (view.eyeOff || 0) - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
       this.camTarget.copy(eye).add(dir);

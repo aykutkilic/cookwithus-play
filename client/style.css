@@ -300,6 +300,16 @@ a.btn { text-decoration: none; color: inherit; }
 body.touchui:not(.sheetMin) #touch .tmore { bottom: calc(46vh + 24px); }
 @media (min-width: 761px) { body.touchui #touch .tmore { bottom: 114px; } }
 #prompt .more { opacity: .65; font-weight: 600; margin-left: 6px; }
+/* first person: hold to crouch / to stand up on your toes */
+#touch .tstance {
+  position: fixed; right: 136px; width: 46px; height: 46px; border-radius: 50%; pointer-events: auto; touch-action: none;
+  background: var(--paper); border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--ink); font-weight: 700; font-size: 20px; line-height: 1;
+}
+#touch .tstance.tup { bottom: 214px; }
+#touch .tstance.tdown { bottom: 158px; }
+#touch .tstance.on { transform: translateY(3px); box-shadow: 0 0 0 var(--ink); background: var(--butter); }
+body.touchui:not(.sheetMin) #touch .tstance.tup { bottom: calc(46vh + 136px); }
+body.touchui:not(.sheetMin) #touch .tstance.tdown { bottom: calc(46vh + 80px); }
 #steps li.just { animation: tick 1.4s ease-out; }
 @keyframes tick { 0% { background: #c9f2c9; transform: scale(1.03); } 100% { transform: none; } }
 body.touchui #chat { bottom: 210px; }

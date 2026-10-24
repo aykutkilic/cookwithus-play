@@ -1,7 +1,9 @@
 // Moving the cook, as in the football game: arrow keys / WASD (E or Space to
 // use what's in front of you, Q for every option there), or on phones and
 // tablets a floating thumb stick on the left, a big Use button on the right
-// and a little ⋯ button for every option. Directions are in
+// and a little ⋯ button for every option. In first person, Ctrl (or C) held
+// crouches and Space held stands you up on your toes (E uses); on a touch
+// screen, two little ⬇ ⬆ buttons do that. Directions are in
 // screen space ("up" is away from the camera); the scene turns them into
 // kitchen directions.
 
@@ -17,24 +19,28 @@ export class Controls {
     this.sx = 0; this.sy = 0; this.mag = 0;
     this.enabled = true;
     this.menuOpen = false;
+    this.fp = false;        // first person (Space and Ctrl change how high you stand)
+    this.held = { down: false, up: false }; // (the touch buttons)
 
     addEventListener('keydown', (e) => {
       if (isTyping(e)) return;
       const k = e.key.toLowerCase();
       if (this.menuOpen && ['arrowup', 'w', 'arrowdown', 's'].includes(k)) { this.onMenuMove(k === 'arrowup' || k === 'w' ? -1 : 1); e.preventDefault(); return; }
       if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); }
+      if (this.fp && (k === 'control' || k === 'c' || k === ' ')) { this.keys.add(k === ' ' ? 'space' : k); e.preventDefault(); this.first(); return; }
       if ((k === 'e' || k === ' ' || k === 'enter') && !e.repeat) { e.preventDefault(); this.first(); this.onUse(); }
       if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
       if (k === 'f2' && !e.repeat && this.onView) { e.preventDefault(); this.first(); this.onView(); }
     });
-    addEventListener('keyup', (e) => { this.keys.delete(e.key.toLowerCase()); });
+    addEventListener('keyup', (e) => { const k = e.key.toLowerCase(); this.keys.delete(k === ' ' ? 'space' : k); });
     addEventListener('blur', () => this.keys.clear());
 
     // the touch layer
     const root = document.createElement('div');
     root.id = 'touch';
     root.hidden = true;
-    root.innerHTML = '<div class="tzone"></div><div class="tstick" hidden><div class="tknob"></div></div><button class="tuse" id="tuse"><b>✋</b><span>Use</span></button><button class="tmore" id="tmore" title="Every option here">⋯</button>';
+    root.innerHTML = '<div class="tzone"></div><div class="tstick" hidden><div class="tknob"></div></div><button class="tuse" id="tuse"><b>✋</b><span>Use</span></button><button class="tmore" id="tmore" title="Every option here">⋯</button>'
+      + '<button class="tstance tdown" title="Crouch (hold)" hidden>⬇</button><button class="tstance tup" title="Up on your toes (hold)" hidden>⬆</button>';
     document.body.appendChild(root);
     this.root = root;
     this.zone = root.querySelector('.tzone');
@@ -43,6 +49,13 @@ export class Controls {
     this.useBtn = root.querySelector('.tuse');
     this.useBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.first(); this.useBtn.classList.add('on'); this.onUse(); });
     root.querySelector('.tmore').addEventListener('pointerdown', (e) => { e.preventDefault(); this.first(); if (this.onMore) this.onMore(); });
+    for (const [cls, which] of [['.tdown', 'down'], ['.tup', 'up']]) {
+      const b = root.querySelector(cls);
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.first(); this.held[which] = true; b.classList.add('on'); try { b.setPointerCapture(e.pointerId); } catch { /* ignore */ } });
+      const off = () => { this.held[which] = false; b.classList.remove('on'); };
+      b.addEventListener('pointerup', off);
+      b.addEventListener('pointercancel', off);
+    }
     const offUse = () => this.useBtn.classList.remove('on');
     this.useBtn.addEventListener('pointerup', offUse);
     this.useBtn.addEventListener('pointercancel', offUse);
@@ -98,6 +111,19 @@ export class Controls {
     for (const k of this.keys) { const m = MOVE[k]; if (m) { x += m[0]; y += m[1]; } }
     const d = Math.hypot(x, y);
     return d ? { x: x / d, y: y / d, mag: 1 } : { x: 0, y: 0, mag: 0 };
+  }
+
+  // how high I'd stand: -1 crouching, 1 on my toes, 0 standing
+  stance() {
+    if (!this.fp || !this.enabled) return 0;
+    if (this.keys.has('control') || this.keys.has('c') || this.held.down) return -1;
+    if (this.keys.has('space') || this.held.up) return 1;
+    return 0;
+  }
+  setFirstPerson(on) {
+    this.fp = on;
+    for (const b of this.root.querySelectorAll('.tstance')) b.hidden = !on;
+    if (!on) { this.keys.delete('control'); this.keys.delete('c'); this.keys.delete('space'); this.held.down = this.held.up = false; }
   }
 
   setTouch(on) {

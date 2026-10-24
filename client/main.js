@@ -34,6 +34,7 @@ const store = {
 const SPEED = 2.5;   // tiles per second
 const TURN = 2.6;    // first person: radians per second turning with the keys / stick
 const TURN_UP = 9, TURN_DOWN = 12; // (how quickly a turn gets going, and settles)
+const CROUCH = -0.3, TIPTOE = 0.1;  // first person: eye lower crouching (about 60 cm), higher on your toes (20 cm)
 const ACCEL = 12, BRAKE = 15; // how quickly the cook gets up to speed / stops
 const RADIUS = 0.26; // how wide a cook is
 
@@ -496,7 +497,8 @@ function moveMe(dt) {
     // first person: up / down walk forward / back, left / right turn – but
     // facing a counter (the stove, the sink …) close up, left / right step
     // sideways along it, squared up to it
-    const fwd = -d.y * d.mag;
+    // (slower crouching or up on your toes)
+    const fwd = -d.y * d.mag * (S.eyeOff < -0.1 ? 0.5 : S.eyeOff > 0.05 ? 0.7 : 1);
     wx = Math.sin(me.yaw) * fwd * SPEED; wy = Math.cos(me.yaw) * fwd * SPEED;
     if (benchAhead()) {
       const side = d.x * d.mag * SPEED * 0.8;
@@ -517,6 +519,10 @@ function moveMe(dt) {
       me.yaw = Math.atan2(u, w);
     }
   }
+  // first person: how high I stand – crouching (Ctrl / C), up on my toes (Space) – eases there
+  const stance = controls.stance();
+  const wantOff = stance < 0 ? CROUCH : stance > 0 ? TIPTOE : 0;
+  S.eyeOff = (S.eyeOff || 0) + (wantOff - (S.eyeOff || 0)) * (1 - Math.exp(-dt * 9));
   me.turn = (me.turn || 0) + (turn - (me.turn || 0)) * (1 - Math.exp(-dt * (turn ? TURN_UP : TURN_DOWN)));
   if (!S.fp || (!turn && Math.abs(me.turn) < 0.01)) me.turn = 0;
   me.yaw += me.turn * dt;
@@ -869,9 +875,10 @@ const touchUI = isTouchDevice() || params.has('touch');
 function toggleView() {
   S.fp = !S.fp;
   scene.setFirstPerson(S.fp);
+  controls.setFirstPerson(S.fp);
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look' : 'W / S walk, A / D turn (step sideways along a counter), drag to look'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', 3200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W / S walk, A / D turn (step sideways along a counter), drag to look, Ctrl crouch, Space up on your toes'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', 3200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
@@ -1564,7 +1571,7 @@ function buildView(now, dt) {
   if (fd && fd.kind === 'door') { doors.set(fd.fx, fd.v); fpGrab = { w: scene.handleWorld(fd.fx) }; }
   if (fd && fd.kind === 'held' && fd.cx != null) fpGrab = { key: fd.key, w: fd.spot ? fd.spot.w.clone().setY(fd.spot.w.y + 0.06) : scene.rayPoint(fd.cx, fd.cy, 0.42) };
   if (fpGrab && !fpGrab.w) fpGrab = null;
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, working: !!S.working, target: S.target ? S.target.id : null, fpGrab };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:
