@@ -10,7 +10,9 @@
 //   b m B  trash cans: small, medium, big
 // A fixture on row 0 faces +y (the cook stands below it), one on column 0
 // faces +x; free-standing ones (islands, tables, bins) are worked from the
-// first free tile next to them.
+// first free tile next to them. Whatever has a door (the fridge, the pantry,
+// an oven) has open floor in front of it to swing it into – so the fridge
+// stands on the side wall, not in the corner (test/kitchens.test.js checks).
 
 export const SIZES = {
   mini:       { id: 'mini', name: 'Cozy Mini', cap: 1, blurb: 'A tiny kitchenette for one' },
@@ -24,29 +26,29 @@ export const SIZE_ORDER = ['mini', 'small', 'medium', 'large', 'huge', 'industri
 
 const MAPS = {
   mini: [
-    'FCKS',
-    'C...',
+    'CCKS',
+    'F...',
     'H...',
     'P..b',
   ],
   small: [
-    'FCKSS',
-    'C....',
+    'CCKSS',
+    'F....',
     'O....',
     'C..T.',
     'H...b',
   ],
   medium: [
-    'FCCKSS',
-    'C.....',
+    'CCCKSS',
+    'F.....',
     'O.....',
     'C..TT.',
     'H....b',
     'P....m',
   ],
   large: [
-    'FCCKSSOC',
-    'C.......',
+    'CCCKSSOC',
+    'F.......',
     'K......b',
     'C..CC...',
     'X.......',
@@ -54,8 +56,8 @@ const MAPS = {
     'H.B....P',
   ],
   huge: [
-    'FCCKSSOCCK',
-    'C.........',
+    'CCCKSSOCCK',
+    'F.........',
     'C.........',
     'O..CCCC..b',
     'X.........',
@@ -65,8 +67,8 @@ const MAPS = {
     'P.....B.B.',
   ],
   industrial: [
-    'FCCCKSSSSOOKCC',
-    'C.............',
+    'CCCCKSSSSOOKCC',
+    'F.............',
     'C.............',
     'C..CCCCCC..m.b',
     'X.............',
@@ -175,7 +177,7 @@ export function buildKitchen(size, cuisine) {
     // the side the cook works from
     if (f.x === 0 && f.y > 0) f.face = 'e';
     else f.face = 's';
-    if (f.x === 0 && f.y === 0) f.stand = { x: 1, y: 1 }; // the corner (fridge): reached diagonally
+    if (f.x === 0 && f.y === 0) f.stand = { x: 1, y: 1 }; // the corner: reached diagonally
     else if (f.x > 0 && f.y > 0) {
       // free-standing: the first free neighbour
       const free = (x, y) => x >= 0 && y >= 0 && x < w && y < h && map[y][x] === '.';

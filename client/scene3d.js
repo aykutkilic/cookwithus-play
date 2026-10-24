@@ -25,6 +25,7 @@ import { themeOf } from './theme.js';
 const LIGHTS = 6;
 const GLIDE_S = 0.45;  // a thing taken / put down travels this long, in a little arc
 const REACH_S = 0.55;  // and the cook reaches out for it
+const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
 const GRIP3D = { saucepan: new THREE.Vector3(0.254, 0.093, 0.032), pan: new THREE.Vector3(0.294, 0.037, 0.032), cezve: new THREE.Vector3(0.194, 0.084, 0.032) };
 const mobile = matchMedia('(pointer: coarse)').matches;
@@ -417,7 +418,7 @@ export class Scene3D {
       // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
       // (leaning in a little while reaching for something)
       const lean = this.fpArms.lean();
-      const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), 0.74 - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
+      const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), EYE_H - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
       this.camTarget.copy(eye).add(dir);

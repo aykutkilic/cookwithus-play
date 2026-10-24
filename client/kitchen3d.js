@@ -140,7 +140,7 @@ export function buildKitchen3D(K) {
     if (f.y === 0 && f.x > 0) for (let x = f.x; x < f.x + f.w; x++) { if (tall) blockedN.add(x); }
     if (f.x === 0 && f.y > 0) for (let y = f.y; y < f.y + f.h; y++) { if (tall) blockedW.add(y); }
   }
-  // the corner (fridge) square
+  // the corner square
   blockedN.add(0); blockedW.add(0);
 
   // ------------------------------------------------------------------ upper cupboards & hoods
