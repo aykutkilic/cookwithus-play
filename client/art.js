@@ -4141,3 +4141,6 @@ export function drawDish(ctx, dish, x, y, s = 1, t = 0) {
   const prev = enter(ctx, x, y, s);
   try { dishLocal(ctx, dish && typeof dish === 'object' ? dish : {}, num(t)); } catch (e) { oops('drawDish ' + (dish && dish.main), e); } finally { leave(ctx, prev); }
 }
+
+// (the 3D food of first person – food3d.js – is built from the same descriptors and state rules)
+export { artOf, pal as artPal, normCut, sizeArt, defaultCount, pieceCol, roundDims, tubeOf, BLOCK_SIZE, MEATY, mix as mixHex, doughFlatGeom, hash as artHash };

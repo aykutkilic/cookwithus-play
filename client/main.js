@@ -20,6 +20,7 @@ import {
   handsFree, canPut, HANDS, handsUsed,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS } from '../shared/actions.js';
+import { foodWidth } from './food3d.js';
 import {
   randomProfile, sanitizeProfile, isProfane, cleanName, QUICK_CHAT, SKINS, HAIR_COLORS, HAIR_STYLES, HATS, HAT_COLORS,
   APRONS, SHIRTS, FACIAL, EXTRAS,
@@ -831,10 +832,18 @@ function openWork(sid, fx) {
   sfx.play('whoosh', 0.4);
 }
 // the plane the work is done on, now (the slot: which burner)
+// (working on a food, the close-up's picture of it is fitted to the real
+// thing: its width in the close-up is its width in 3D)
 function workFrame() {
   if (!S.working || !S.working.fp || !station.on || station.mode !== 'step') return null;
   const st = S.M.cook && S.M.cook.steps[S.working.sid];
-  return scene.workFrame(S.working.fx, station.sceneKind(), st ? st.slot || 0 : 0);
+  let scale = 0.001;
+  const g = station.g, it = g && g.subject && g.subject.type === 'item' && station.subjectItem();
+  if (it && !['drag', 'dip'].includes(g.kind)) {
+    const { cut, k, n, ...whole } = it; void cut; void k; void n;
+    scale = Math.max(0.00025, Math.min(0.0012, foodWidth(it.kind, whole) / Math.max(40, station.subjectBox().w)));
+  }
+  return scene.workFrame(S.working.fx, station.sceneKind(), st ? st.slot || 0 : 0, scale);
 }
 
 function closeStation(silent = false) {
