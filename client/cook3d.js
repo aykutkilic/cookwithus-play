@@ -298,6 +298,7 @@ export function poseCook(fig, pose, dt) {
   A.ph = (A.ph + speed * dt / STRIDE) % 1;
   A.w = damp(A.w, Math.min(1, speed / 1.4), speed > 0.05 ? 9 : 7, dt);
   A.carry = damp(A.carry, pose.carry ? 1 : 0, 10, dt);
+  A.lift = damp(A.lift || 0, pose.lift || 0, 8, dt); // (up over a counter in front)
   const w = A.w, ph = A.ph * Math.PI * 2;
   const s = Math.sin(ph), c = Math.cos(ph);
   const idle = 1 - w;
@@ -327,8 +328,9 @@ export function poseCook(fig, pose, dt) {
   for (let i = 0; i < 2; i++) target[i][0] = Math.sin(t * 1.3 + i * 2) * 0.04 * idle;
   const oneHand = pose.hold === 'handle';
   if (A.carry > 0.01 && !work) {
-    if (oneHand) { target[1][0] = -0.8; target[1][1] = 0.16; target[1][2] = -0.4; } // the pan's handle in the right hand
-    else for (const tg of target) { tg[0] = -0.75; tg[1] = -0.04; tg[2] = -0.95; }
+    // (facing a counter, what's carried is lifted up over the worktop)
+    if (oneHand) { target[1][0] = -0.8 - A.lift * 0.75; target[1][1] = 0.16; target[1][2] = -0.4 + A.lift * 0.3; } // the pan's handle in the right hand
+    else for (const tg of target) { tg[0] = -0.75 - A.lift * 0.65; tg[1] = -0.04; tg[2] = -0.95 + A.lift * 0.45; }
   }
   if (work) {
     const a = Math.max(0, Math.min(1, work.a ?? 0.5)), b = Math.max(-1, Math.min(1, work.b ?? 0));

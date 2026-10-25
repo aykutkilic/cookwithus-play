@@ -613,7 +613,7 @@ export class Scene3D {
           // a plate, a bowl: carried on one hand, out in front
           const p = rec.rightHand.clone();
           p.x += Math.sin(rec.yaw) * 0.06; p.z += Math.cos(rec.yaw) * 0.06; p.y -= 0.02;
-          out.set(k, { pos: p, yaw: rec.yaw, held: true, sig: `h:${rec.id}` });
+          out.set(k, { pos: this.aboveCounter(p), yaw: rec.yaw, held: true, sig: `h:${rec.id}` });
           return;
         }
         const g = k[0] === 'v' && GRIP3D[rec.holdKind];
@@ -622,14 +622,14 @@ export class Scene3D {
           const th = rec.yaw + Math.PI / 2, sc = 0.85;
           const gx = g.x * Math.cos(th) + g.z * Math.sin(th), gz = -g.x * Math.sin(th) + g.z * Math.cos(th);
           const p = rec.rightHand.clone().sub(new THREE.Vector3(gx * sc, g.y * sc, gz * sc));
-          out.set(k, { pos: p, yaw: th, held: true, sig: `h:${rec.id}` });
+          out.set(k, { pos: this.aboveCounter(p, 0.12), yaw: th, held: true, sig: `h:${rec.id}` });
           return;
         }
         const p = rec.hands.clone();
         p.x += Math.sin(rec.yaw) * 0.02 + Math.cos(rec.yaw) * (i - (rec.holding.length - 1) / 2) * 0.07;
         p.z += Math.cos(rec.yaw) * 0.02 - Math.sin(rec.yaw) * (i - (rec.holding.length - 1) / 2) * 0.07;
         p.y -= 0.05;
-        out.set(k, { pos: p, yaw: rec.yaw, held: true, sig: `h:${rec.id}` });
+        out.set(k, { pos: this.aboveCounter(p), yaw: rec.yaw, held: true, sig: `h:${rec.id}` });
       });
     }
   }
@@ -883,7 +883,9 @@ export class Scene3D {
       const vk = holding.find((k) => k[0] === 'v');
       const vkind = vk && view.D && view.D.vessels[vk.slice(2)] ? view.D.vessels[vk.slice(2)].kind : null;
       const hold = vk ? (GRIP3D[vkind] || !twoHanded(vkind) ? 'handle' : 'both') : holding.length ? 'items' : null;
-      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry || holding.length > 0, hold, reach, scraps: !!c.carry, t: this.t + c.id * 1.7 }, dt);
+      // a counter just in front: lift what's carried up over it
+      const lift = holding.length && !c.work && this.lowFixtureAt(c.x + Math.sin(rec.yaw) * 0.42, c.y + Math.cos(rec.yaw) * 0.42) ? 1 : 0;
+      poseCook(rec.fig, { speed: rec.speed, turn: dt > 0 ? turn / dt : 0, work: c.work, carry: !!c.carry || holding.length > 0, hold, reach, lift, scraps: !!c.carry, t: this.t + c.id * 1.7 }, dt);
       rec.fig.updateMatrixWorld(true);
       rec.hands = rec.fig.userData.carry.getWorldPosition(rec.hands || new THREE.Vector3());
       rec.rightHand = rec.fig.userData.hands[1].getWorldPosition(rec.rightHand || new THREE.Vector3());
@@ -895,6 +897,22 @@ export class Scene3D {
       fadeCook(rec.fig, this.blocksView(c, view) ? 0.28 : 1, dt);
     }
     for (const [id, rec] of this.cooks) if (!seen.has(id)) { this.scene.remove(rec.fig); disposeTree(rec.fig); this.cooks.delete(id); }
+  }
+
+  // A counter-high fixture (not a tall fridge / pantry / oven dome) on the floor square at x, z.
+  lowFixtureAt(x, z) {
+    const K = this.K;
+    const tx = Math.floor(x), ty = Math.floor(z);
+    if (!K || tx < 0 || ty < 0 || tx >= K.w || ty >= K.h || !K.solid[ty][tx]) return null;
+    const f = K.fixtures.find((q) => tx >= q.x && tx < q.x + q.w && ty >= q.y && ty < q.y + q.h);
+    return f && !['fridge', 'shelf', 'pizzaOven', 'stoneOven', 'tandoor', 'plant'].includes(f.type) ? f : null;
+  }
+  // A carried thing never sinks into a counter: over one, it's at least at the worktop.
+  aboveCounter(p, r = 0.08) {
+    for (const [dx, dz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) {
+      if (this.lowFixtureAt(p.x + dx, p.z + dz)) { if (p.y < COUNTER_H + 0.012) p.y = COUNTER_H + 0.012; break; }
+    }
+    return p;
   }
 
   // First person: my own arms. Each thing stays in the hand that took it (a
@@ -1020,22 +1038,38 @@ export class Scene3D {
     if (!F) return null;
     const A = F.anchors;
     const pick = (...ks) => { for (const k of ks) { const a = A[k]; if (a) return Array.isArray(a) ? a[Math.min(slot, a.length - 1)] : a; } return null; };
-    const O = kind === 'hob' ? pick('burners', 'top') : kind === 'sink' ? pick('basin', 'top') : ['oven', 'dome', 'tandoor'].includes(kind) ? pick('inside', 'mouth', 'top')
+    let O = kind === 'hob' ? pick('burners', 'top') : kind === 'sink' ? pick('basin', 'top') : ['oven', 'dome', 'tandoor'].includes(kind) ? pick('inside', 'mouth', 'top')
       : kind === 'chill' ? pick('shelf', 'top') : pick('board', 'top', 'mouth', 'basin', 'inside', 'shelf');
     if (!O) return null;
+    if (kind === 'sink') O = O.clone().setY(COUNTER_H); // (the worktop round the basin: what's carried over stays above it)
     const N = F.front.clone();
     return { fx: fxId, kind, slot, O: O.clone(), N, R: new THREE.Vector3().crossVectors(N.clone().negate(), UP).normalize(), U: UP.clone(), S: scale };
   }
-  workWorld(w, x, y) { return w.O.clone().addScaledVector(w.R, (x - MAIN.x) * w.S).addScaledVector(w.U, (MAIN.y - y) * w.S); }
+  // (The close-up looks down at the worktop: above the work spot its points
+  // stand up into the air, below it they lie on the worktop, towards you – the
+  // plane folds at the spot, so nothing put down beside it sinks into the counter.)
+  workWorld(w, x, y) {
+    const p = w.O.clone().addScaledVector(w.R, (x - MAIN.x) * w.S);
+    return y <= MAIN.y ? p.addScaledVector(w.U, (MAIN.y - y) * w.S) : p.addScaledVector(w.N, (y - MAIN.y) * w.S);
+  }
   // the close-up point under this point of the screen
   workAt(w, cx, cy) {
     const ray = this.rayAt(cx, cy);
     const den = ray.direction.dot(w.N);
-    if (Math.abs(den) < 1e-4) return null;
-    const t = w.O.clone().sub(ray.origin).dot(w.N) / den;
-    if (t <= 0) return null;
-    const P = ray.at(t, new THREE.Vector3()).sub(w.O);
-    return { x: MAIN.x + P.dot(w.R) / w.S, y: MAIN.y - P.dot(w.U) / w.S };
+    if (Math.abs(den) > 1e-4) {
+      const t = w.O.clone().sub(ray.origin).dot(w.N) / den;
+      if (t > 0) {
+        const P = ray.at(t, new THREE.Vector3()).sub(w.O);
+        if (P.dot(w.U) >= 0) return { x: MAIN.x + P.dot(w.R) / w.S, y: MAIN.y - P.dot(w.U) / w.S };
+      }
+    }
+    // below the spot: on the worktop, towards me
+    if (ray.direction.y < -1e-4) {
+      const t = (w.O.y - ray.origin.y) / ray.direction.y;
+      const Q = ray.at(t, new THREE.Vector3()).sub(w.O);
+      if (t > 0 && Q.dot(w.N) >= 0) return { x: MAIN.x + Q.dot(w.R) / w.S, y: MAIN.y + Q.dot(w.N) / w.S };
+    }
+    return null;
   }
   // The real thing a gesture takes hold of, where the close-up has it somewhere
   // else (the knob for this burner on the stove's front, the tap's lever): its
@@ -1120,7 +1154,7 @@ export class Scene3D {
       case 'drag': {
         const k = vKey(g.source);
         const pos = at(g.pos);
-        if (k) out.ov.set(k, { pos: k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z) });
+        if (k) out.ov.set(k, { pos: this.firstPerson ? pos.clone() : k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z) });
         hand(wi, at(st.grabPoint()), g.grip ? 'grab' : 'hand', { curl: g.drag ? 0.85 : 0.35 });
         if (!g.drag) ring(g.pos, 50);
         ring(g.target);
@@ -1171,7 +1205,10 @@ export class Scene3D {
           const F = this.k3.fx[w.fx];
           const lever = F && F.parts.lever ? F.parts.lever.getWorldPosition(new THREE.Vector3()).addScaledVector(w.R, 0.08) : at({ x: 580, y: 200 });
           hand(wi, lever, 'hand', { curl: g.pouring ? 0.8 : 0.35 });
-          if (g.pouring && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: w.O.clone().addScaledVector(UP, 0.03), color: '#cfe8f8' };
+          // (into the pan in the basin)
+          const vr = g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id);
+          const into = vr && vr.group.visible ? vr.group.position.clone().addScaledVector(UP, vr.h * 0.7) : (F && F.anchors.basin ? F.anchors.basin.clone() : w.O.clone());
+          if (g.pouring && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: into, color: '#cfe8f8' };
         }
         break;
       }
