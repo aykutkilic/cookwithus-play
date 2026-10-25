@@ -101,6 +101,7 @@ export function buildKitchen3D(K) {
     const d = { anchors: {}, parts: {} };
     switch (f.type) {
       case 'counter': counter(g, ctx, along, d, true); break;
+      case 'dishwasher': dishwasher(g, ctx, along, d); break;
       case 'table': table(g, ctx, d); break;
       case 'sink': sink(g, ctx, d); break;
       case 'stove': stove(g, ctx, d, def.slots); break;
@@ -153,7 +154,7 @@ export function buildKitchen3D(K) {
     let free = true;
     for (let k = span[0]; k < span[1]; k++) if ((onN ? blockedN : blockedW).has(k)) free = false;
     if (!free) continue;
-    if (!['counter', 'sink', 'stove', 'oven'].includes(f.type)) continue;
+    if (!['counter', 'dishwasher', 'sink', 'stove', 'oven'].includes(f.type)) continue;
     const g = new THREE.Group();
     if (f.type === 'stove') hood(g, ctx);
     else cupboard(g, ctx, f.x * 7 + f.y * 13);
@@ -252,8 +253,30 @@ function worktop(g, ctx, w, depth = 0.96, y = COUNTER_H - 0.04) {
   g.add(box(w, 0.04, depth, mat(ctx.T.topA, { rough: ctx.T.top === 'marble' ? 0.25 : 0.6, map: topTexture(ctx.T) }), 0, y, 0));
 }
 
-function counter(g, ctx, w, d, withBoard) {
-  carcass(g, ctx, w, d);
+// A counter with the dishwasher built in under it: a steel front instead of the
+// cupboard doors – a handle, a control strip with its lights and the start button
+function dishwasher(g, ctx, w, d) {
+  counter(g, ctx, w, d, true, false);
+  const steel = M.steel(), fz = 0.45 - 0.02 + 0.012;
+  g.add(rbox(w - 0.06, COUNTER_H - 0.1, 0.03, steel, 0, 0.055, fz, 0.01));
+  g.add(box(w - 0.08, 0.06, 0.012, mat('#3a3f46', { metal: 0.4, rough: 0.4 }), 0, COUNTER_H - 0.11, fz + 0.018)); // the control strip
+  g.add(rod(v3(-(w - 0.2) / 2, COUNTER_H - 0.17, fz + 0.04), v3((w - 0.2) / 2, COUNTER_H - 0.17, fz + 0.04), 0.009, M.steel()));
+  for (let i = 0; i < 3; i++) g.add(ball(0.006, mat('#7a808a', { rough: 0.3 }), -0.3 + i * 0.05, COUNTER_H - 0.08, fz + 0.026));
+  const light = live(ball(0.008, mat('#5ad86a', { emissive: '#3ad84a', ei: 2, rough: 0.3 }), -0.35, COUNTER_H - 0.08, fz + 0.026));
+  light.visible = false;
+  g.add(light);
+  d.parts.dwLight = light;
+  const btn = live(cyl(0.016, 0.016, 0.01, mat('#3a7ac0', { rough: 0.35 }), 0.3, COUNTER_H - 0.08, fz + 0.022, 14));
+  btn.rotation.x = Math.PI / 2;
+  btn.material = btn.material.clone(); // (its own: it turns green while it runs)
+  g.add(btn);
+  d.parts.dwButton = btn;
+  d.anchors.rack = v3(0, 0.42, fz + 0.12); // (in front of its door: where things go in)
+}
+
+function counter(g, ctx, w, d, withBoard, doors = true) {
+  if (doors) carcass(g, ctx, w, d);
+  else carcass(g, ctx, w, d, { doors: 0, drawer: false });
   worktop(g, ctx, w);
   if (withBoard) {
     // (towards the front: in first person it's within a hand's reach)

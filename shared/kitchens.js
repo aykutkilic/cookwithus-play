@@ -5,6 +5,7 @@
 //
 // Layouts are drawn as ASCII maps:
 //   F fridge   C counter (cutting board)   K sink   S stove (2 burners)
+//   D a counter with the dishwasher under it
 //   O oven     X cuisine special (2 tiles) T table (plating)
 //   H shelf    P plant   . floor
 //   b m B  trash cans: small, medium, big
@@ -27,20 +28,20 @@ export const SIZE_ORDER = ['mini', 'small', 'medium', 'large', 'huge', 'industri
 
 const MAPS = {
   mini: [
-    'CCKS',
+    'CDKS',
     '....',
     'F...',
     'H..b',
   ],
   small: [
-    'CCKSS',
+    'CDKSS',
     '.....',
     'F....',
     'O..T.',
     'H...b',
   ],
   medium: [
-    'CCCKSS',
+    'CCDKSS',
     '......',
     'F.....',
     'O..TT.',
@@ -48,7 +49,7 @@ const MAPS = {
     'P....m',
   ],
   large: [
-    'CCCKSSOC',
+    'CCDKSSOC',
     '........',
     'F......b',
     'K..CC...',
@@ -57,7 +58,7 @@ const MAPS = {
     'H.B....P',
   ],
   huge: [
-    'CCCKSSOCCK',
+    'CCDKSSOCCK',
     '..........',
     'F.........',
     'O..CCCC..b',
@@ -68,7 +69,7 @@ const MAPS = {
     'P.....B.B.',
   ],
   industrial: [
-    'CCCCKSSSSOOKCC',
+    'CCCDKSSSSOOKCC',
     '..............',
     'F.............',
     'C..CCCCCC..m.b',
@@ -89,6 +90,7 @@ const MAPS = {
 //   tandoor – the Indian clay oven                        store – where things are kept (fridge, shelf)
 export const FIXTURES = {
   counter:      { name: 'Counter', caps: ['board', 'plate'], slots: 1 },
+  dishwasher:   { name: 'Dishwasher', caps: ['board', 'plate', 'dishwasher'], slots: 1 }, // (a counter, the dishwasher under it)
   table:        { name: 'Table', caps: ['plate'], slots: 1 },
   sink:         { name: 'Sink', caps: ['sink'], slots: 1 },
   stove:        { name: 'Stove', caps: ['hob'], slots: 2 },
@@ -143,7 +145,7 @@ export const CUISINES = {
 };
 export const CUISINE_ORDER = ['turkish', 'italian', 'spanish', 'french', 'english', 'indian'];
 
-const CHAR_TYPE = { F: 'fridge', C: 'counter', K: 'sink', S: 'stove', O: 'oven', T: 'table', H: 'shelf', P: 'plant', b: 'binS', m: 'binM', B: 'binL' };
+const CHAR_TYPE = { F: 'fridge', C: 'counter', D: 'dishwasher', K: 'sink', S: 'stove', O: 'oven', T: 'table', H: 'shelf', P: 'plant', b: 'binS', m: 'binM', B: 'binL' };
 
 // Build the kitchen for a size and cuisine: grid size, fixtures with their
 // stand tiles, walkable floor and a spawn spot for each cook.

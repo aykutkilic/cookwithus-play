@@ -142,6 +142,7 @@ export function newCook(r, kitchen) {
     scraps: {},  // fixture -> {n, kinds}: peel, shells, stems lying on a counter
     bins: {},    // bin fixture -> {fill, bags}
     carry: {},   // cook -> {n, kinds}: scraps in their hands (null when empty)
+    dw: {},      // dishwasher fixture -> {run, t}: running, how long
     bagsOut: 0,  // full bags taken out to the back door
   };
   refresh(C, x);
@@ -171,7 +172,7 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
-  const m = /^#(clear|toss|bag|knob|scrub|wipe)@([a-zA-Z]+\d*)$/.exec(sid);
+  const m = /^#(clear|toss|bag|knob|scrub|wipe|dw)@([a-zA-Z]+\d*)$/.exec(sid);
   if (!m) return null;
   return { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
 }
@@ -222,6 +223,12 @@ function choreBlocked(C, x, K, d, memberId) {
     case 'wipe':
       if (!(C.fx[d.fx] && C.fx[d.fx].dirty)) return 'The board is clean';
       return handsUsed(C, memberId) >= HANDS ? 'No hand free for the sponge' : '';
+    case 'dw': {
+      if (!f.caps.includes('dishwasher')) return 'That isn’t a dishwasher';
+      const dw = C.dw && C.dw[d.fx];
+      if (dw && dw.run) return 'It’s running';
+      return dwLoad(C, d.fx).some((id) => C.vessels[id].dirty) ? '' : 'Nothing dirty in it – load it first';
+    }
   }
   return 'Nothing to do';
 }
@@ -231,11 +238,36 @@ function choreBlocked(C, x, K, d, memberId) {
 // Before the dish is served the kitchen must be clean: no scraps lying about
 // or in anyone's hands, no dirty board, nothing dirty but what holds the dish.
 
+// What can go in the dishwasher – not wooden, copper or electric things (the
+// pizza peel, a copper pot, the cezve, the blender, the kettle …): by hand.
+const HAND_WASH = new Set(['peel', 'copperPot', 'cezve', 'cocotte', 'blender', 'kettle', 'caydanlik']);
+export function dishwasherSafe(kind) { return !HAND_WASH.has(kind); }
+export const DW_DUR = 90; // seconds a dishwasher runs (sped up with the kitchen, or skipped)
+// what's in a dishwasher (vessel ids)
+export function dwLoad(C, fx) { return Object.keys(C.vessels).filter((id) => C.vessels[id].inDw && C.vessels[id].at && C.vessels[id].at.fx === fx); }
+// is it running?
+export function dwRunning(C, fx) { return !!(C.dw && C.dw[fx] && C.dw[fx].run); }
+// done: everything in it clean
+function dwFinish(C, fx, ev) {
+  const dw = C.dw && C.dw[fx];
+  if (!dw || !dw.run) return false;
+  dw.run = 0; dw.t = 0;
+  for (const id of dwLoad(C, fx)) Object.assign(C.vessels[id], { dirty: 0, water: 0, contents: [], liquid: null });
+  if (ev) ev.push({ k: 'ding', dw: fx });
+  return true;
+}
+// ⏭ – the dishwashers that are running finish now
+export function skipDw(C, fx = null) {
+  let any = false;
+  for (const f of Object.keys(C.dw || {})) if ((!fx || f === fx) && dwFinish(C, f, null)) any = true;
+  return any;
+}
+
 // a pot / pan / bowl that wants washing: used, done with (off the heat, no
 // step left that needs it) and nothing but water left in it
 export function needsWash(C, x, id) {
   const v = C.vessels[id];
-  if (!v || !v.dirty || v.heat > 0 || (v.contents || []).some((c) => c.kind !== 'water') || (v.items || []).length) return false;
+  if (!v || !v.dirty || v.inDw || v.heat > 0 || (v.contents || []).some((c) => c.kind !== 'water') || (v.items || []).length) return false;
   return !x.steps.some((s) => !['done', 'ready'].includes(C.steps[s.id].s) && (stepVessel(s) === id || s.from === id || s.into === id || s.vessel === id));
 }
 // the dirty one standing in this sink (vessel id), if any
@@ -243,13 +275,18 @@ function dirtyAt(C, x, fx) {
   for (const [id, v] of Object.entries(C.vessels)) if (v.held == null && v.at && v.at.fx === fx && needsWash(C, x, id)) return id;
   return null;
 }
-// What's still to clean up: [{kind: 'scraps' | 'carry' | 'board' | 'vessel', fx?, key?, m?}]
+// What's still to clean up: [{kind: 'scraps' | 'carry' | 'board' | 'vessel' | 'dw', fx?, key?, m?, run?}]
+// ('dw': dirty things in a dishwasher – run: it's running)
 export function cleanup(C, x) {
   const out = [];
   for (const [fx, sc] of Object.entries(C.scraps || {})) if (sc && sc.n > 0) out.push({ kind: 'scraps', fx });
   for (const [m, c] of Object.entries(C.carry || {})) if (c && c.n > 0) out.push({ kind: 'carry', m: Number(m) });
   for (const [fx, s] of Object.entries(C.fx || {})) if (s && s.dirty) out.push({ kind: 'board', fx });
-  for (const id of Object.keys(C.vessels)) if (needsWash(C, x, id)) out.push({ kind: 'vessel', key: `v:${id}` });
+  for (const id of Object.keys(C.vessels)) {
+    const v = C.vessels[id];
+    if (v.inDw && v.dirty && v.at) out.push({ kind: 'dw', key: `v:${id}`, fx: v.at.fx, run: dwRunning(C, v.at.fx) });
+    else if (needsWash(C, x, id)) out.push({ kind: 'vessel', key: `v:${id}` });
+  }
   return out;
 }
 
@@ -278,6 +315,9 @@ function choreDone(C, x, K, d, st) {
     if (v) { v.dirty = 0; v.water = 0; v.contents = []; v.liquid = null; }
   } else if (d.do === 'wipe') {
     if (C.fx[d.fx]) C.fx[d.fx].dirty = 0;
+  } else if (d.do === 'dw') {
+    C.dw = C.dw || {};
+    C.dw[d.fx] = { run: 1, t: 0 };
   }
 }
 
@@ -432,6 +472,7 @@ export function takeThing(C, x, K, m, key, fx) {
   if (L.stored && (L.fx !== fx || !doorOpen(C, fx))) return L.fx === fx ? `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first` : 'That’s put away';
   if (L.inV) return `It’s in the ${thingName(C, x, `v:${L.inV}`)} – take that`;
   if (L.held != null || L.fx !== fx) return 'It isn’t here';
+  if (t.inDw && dwRunning(C, fx)) return 'The dishwasher is running – wait till it’s done';
   const why = handsFree(C, x, m, key);
   if (why) return why;
   if (key[0] === 'v' && !L.stored) {
@@ -450,6 +491,7 @@ export function takeThing(C, x, K, m, key, fx) {
   }
   t.held = m;
   t.at = null;
+  t.inDw = 0;
   delete t.spot; // its place on the shelf is free now
   if (key[0] === 'v') { t.onHob = 0; t.heat = 0; }
   return '';
@@ -503,6 +545,8 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
     if (isStore(f)) { t.at = null; t.home = fx; continue; }
     const onHob = !surface && f.caps.includes('hob');
     t.at = { fx, slot: onHob ? freeSlot(C, x, f) : 0 };
+    // a dirty one put down at the dishwasher goes in it (if it may – and it isn't running)
+    if (f.caps.includes('dishwasher') && dishwasherSafe(t.kind) && needsWash(C, x, k.slice(2)) && !dwRunning(C, fx)) t.inDw = 1;
     t.onHob = onHob ? 1 : 0;
     // onto a burner that was left on: it heats again
     const lit = onHob && C.fx[fx] && C.fx[fx].lit;
@@ -1052,6 +1096,12 @@ export function tickCook(C, x, K, dt) {
       st.over += dt;
       // nobody needs to stop a lenient timer: it just stays ready
     }
+  }
+  // dishwashers running
+  for (const [fx, dw] of Object.entries(C.dw || {})) {
+    if (!dw.run) continue;
+    dw.t += dt * sp;
+    if (dw.t >= DW_DUR) { dwFinish(C, fx, ev); refresh(C, x); }
   }
   // the pots: boiling follows the heat (sped up with the kitchen while timers run)
   const running = x.steps.some((s) => C.steps[s.id].s === 'running');

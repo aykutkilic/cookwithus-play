@@ -26,6 +26,7 @@ const KNOB = { x: 795, y: 540, r: 52 };
 const OVEN_KNOB = { x: 680, y: 145, r: 36 };
 const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 795, y: 470, r: 52 };
+const DW_BTN = { x: 640, y: 214, r: 40 }; // the dishwasher's start button, on its control strip
 const SOAP = { x: 770, y: 300, r: 60 }; // the dish soap bottle by the sink (by the board too, washing it)
 const ASIDE = { x: 820, y: 520 };
 const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
@@ -920,6 +921,7 @@ export class Station {
       case 'bell': return BELL;
       case 'pedal': return { x: 500, y: 590, r: 60 };
       case 'soap': return SOAP;
+      case 'dwStart': return DW_BTN;
       default: return { x: 500, y: 300, r: 80 };
     }
   }
@@ -1039,6 +1041,7 @@ export class Station {
       case 'plate': this.scenePlate(ctx); break;
       case 'scraps': this.sceneScraps(ctx); break;
       case 'bin': this.sceneBin(ctx); break;
+      case 'dishwasher': this.sceneDishwasher(ctx); break;
       case 'store': this.sceneStore(ctx); break;
       default: this.sceneBoard(ctx); break;
     }
@@ -1056,7 +1059,7 @@ export class Station {
     const f = this.c.f;
     const t = f.type;
     if (this.mode === 'store') return 'store';
-    if (this.c.def.chore) return this.c.def.do === 'clear' ? 'scraps' : this.c.def.do === 'knob' ? 'hob' : 'bin';
+    if (this.c.def.chore) return { clear: 'scraps', knob: 'hob', scrub: 'sink', wipe: 'board', dw: 'dishwasher' }[this.c.def.do] || 'bin';
     if (t === 'sink') return 'sink';
     if (t === 'fridge') return 'chill';
     if (t === 'pizzaOven' || t === 'stoneOven') return 'dome';
@@ -2168,6 +2171,27 @@ export class Station {
     ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4; ctx.stroke();
     ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.moveTo(-w / 2 + 14, -h + 10); ctx.lineTo(-wb / 2 + 12, -10); ctx.stroke();
+  }
+
+  // The dishwasher, from the front: its door (shut – it's loaded), the control strip and start
+  sceneDishwasher(ctx) {
+    const g = this.g;
+    const on = !!(g && g.kind === 'tap' && this.k > 0);
+    ctx.fillStyle = '#d8a868'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.roundRect(160, 150, 680, 30, 8); ctx.fill(); ctx.stroke(); // the worktop over it
+    ctx.fillStyle = '#c9ccd2'; ctx.beginPath(); ctx.roundRect(200, 180, 600, 420, 14); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e4e7ec'; ctx.beginPath(); ctx.roundRect(214, 192, 572, 48, 10); ctx.fill();
+    ctx.fillStyle = '#9aa0aa'; ctx.beginPath(); ctx.roundRect(300, 262, 400, 16, 8); ctx.fill(); ctx.stroke(); // the handle
+    // lights and the start button
+    for (let i = 0; i < 4; i++) { ctx.fillStyle = on && i === 0 ? '#5ad86a' : '#7a808a'; ctx.beginPath(); ctx.arc(260 + i * 34, 216, 7, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = on ? '#5ad86a' : '#3a7ac0'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(DW_BTN.x, DW_BTN.y, 18, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(DW_BTN.x - 5, DW_BTN.y - 8); ctx.lineTo(DW_BTN.x + 8, DW_BTN.y); ctx.lineTo(DW_BTN.x - 5, DW_BTN.y + 8); ctx.closePath(); ctx.fill();
+    // what's in it, behind the door's window
+    ctx.fillStyle = 'rgba(40,60,80,0.75)'; ctx.beginPath(); ctx.roundRect(300, 320, 400, 220, 18); ctx.fill();
+    const load = Object.entries(this.c.C.vessels).filter(([, v]) => v.inDw && v.at && v.at.fx === this.c.f.id);
+    load.slice(0, 4).forEach(([id], i) => this.drawMainVessel(ctx, id, 380 + i * 90, 500, 0.45));
+    if (on) for (let i = 0; i < 8; i++) { ctx.fillStyle = 'rgba(200,230,255,0.5)'; ctx.beginPath(); ctx.arc(320 + ((i * 53 + this.t * 120) % 360), 340 + ((i * 37) % 180), 4 + (i % 3) * 2, 0, TAU); ctx.fill(); }
   }
 
   // washing up: how grimy it still is, how sudsy (0..1) – by how far along the scrubbing and rinsing are

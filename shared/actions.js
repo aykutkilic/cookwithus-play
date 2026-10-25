@@ -549,6 +549,11 @@ export const ACTIONS = {
       { g: 'strokes', axis: 'v', n: 3, tool: 'sponge', hint: 'Wipe it down clean' },
     ],
   },
+  // the dishwasher, loaded with dirty things: shut it and start it (it runs by itself)
+  dw: {
+    cap: 'dishwasher', verb: 'Run the dishwasher', tool: 'hand', icon: '🫧', chore: true,
+    phases: () => [{ g: 'tap', hot: 'dwStart', hint: 'Shut the dishwasher and press start' }],
+  },
   bag: {
     cap: 'bin', verb: 'Change the bag', tool: 'grab', icon: '🛍️', chore: true,
     phases: () => [

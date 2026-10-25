@@ -12,7 +12,7 @@
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
   recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange,
-  setSpeed, skipWait, SPEEDS,
+  setSpeed, skipWait, SPEEDS, skipDw, refresh,
 } from './cook.js';
 import { sanitizeProfile, QUICK_CHAT, COOK_COLORS } from './names.js';
 
@@ -201,6 +201,14 @@ export class Room {
         }
         break;
       }
+      case 'skipdw':
+        // (⏭ on a running dishwasher)
+        if (C && skipDw(C, msg.fx ? String(msg.fx) : null)) {
+          this.system(`${m.name} skipped ahead: the dishwasher`);
+          refresh(C, x);
+          this.flush(true);
+        }
+        break;
       case 'skip':
         if (C && skipWait(C, x, K, String(msg.sid))) {
           const s = x.steps.find((q) => q.id === String(msg.sid));
@@ -245,7 +253,7 @@ export class Room {
     for (const [id, st] of Object.entries(C.steps)) this.sent.steps[id] = stepKey(st);
     for (const [id, it] of Object.entries(C.items)) this.sent.items[id] = JSON.stringify(it);
     for (const [id, v] of Object.entries(C.vessels)) this.sent.vessels[id] = vesselKey(v);
-    for (const key of ['fx', 'scraps', 'bins', 'carry']) for (const [id, f] of Object.entries(C[key])) this.sent[key][id] = JSON.stringify(f);
+    for (const key of ['fx', 'scraps', 'bins', 'carry', 'dw']) for (const [id, f] of Object.entries(C[key] || {})) this.sent[key][id] = JSON.stringify(f);
     this.sent.meta = metaKey(C);
   }
 
@@ -272,6 +280,7 @@ export class Room {
     diff('scraps', C.scraps, (v) => JSON.stringify(v));
     diff('bins', C.bins, (v) => JSON.stringify(v));
     diff('carry', C.carry, (v) => JSON.stringify(v));
+    diff('dw', C.dw || {}, (v) => JSON.stringify({ run: v.run, t: Math.round(v.t) }));
     const mk = metaKey(C);
     if (mk !== this.sent.meta) { this.sent.meta = mk; Object.assign(up, metaOf(C)); any = true; }
     if (this.ev.length) { up.ev = this.ev; this.ev = []; any = true; }
@@ -339,7 +348,7 @@ const r2 = (v) => Math.round(v * 100) / 100;
 function stepKey(st) { return JSON.stringify(st, (k, v) => (k === 't' || k === 'over' ? undefined : v)); }
 function vesselKey(v) { return JSON.stringify(v, (k, val) => (k === 'boil' || k === 'hot' ? undefined : val)); }
 function metaOf(C) { return { speed: C.speed, started: C.started, finished: C.finished, stars: C.stars, credits: C.credits, bagsOut: C.bagsOut }; }
-function freshSent() { return { steps: {}, items: {}, vessels: {}, fx: {}, scraps: {}, bins: {}, carry: {}, meta: '' }; }
+function freshSent() { return { steps: {}, items: {}, vessels: {}, fx: {}, scraps: {}, bins: {}, carry: {}, dw: {}, meta: '' }; }
 function metaKey(C) { return JSON.stringify(metaOf(C)); }
 
 export { fixtureById };

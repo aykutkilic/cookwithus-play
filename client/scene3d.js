@@ -517,6 +517,12 @@ export class Scene3D {
     const fxs = (C && C.fx) || {};
     for (const [id, F] of Object.entries(this.k3.fx)) {
       const P = F.parts;
+      // the dishwasher's light: on (blinking) while it runs
+      if (P.dwLight) {
+        const run = !!(C && C.dw && C.dw[id] && C.dw[id].run);
+        P.dwLight.visible = run && Math.sin(this.t * 4) > -0.6;
+        if (P.dwButton) { P.dwButton.material.color.set(run ? '#5ad86a' : '#3a7ac0'); P.dwButton.material.emissive.set(run ? '#2a9a3a' : '#000000'); }
+      }
       // a board after knife work: its stains (going as it's scrubbed) and the suds
       if (P.stains) {
         const wl = this.work && this.work.washing && this.work.washing.fx === id && !this.work.washing.vid ? this.work.washing : null;
@@ -735,10 +741,12 @@ export class Scene3D {
           if (n === 0 && A.board && (v.kind === 'bowl' || v.kind === 'plate' || v.kind === 'blender') && !(view.activeAt && view.activeAt.has(v.at.fx))) stand = A.board;
         }
         else if (A.top) stand = A.top;
+        // (in the dishwasher: put in at its door – and not to be seen once it's in)
+        if (v.inDw && A.rack) stand = A.rack;
         // (my hand setting it down: it goes right to where it will stand, and lets go there)
         if (kept && stand && this.fpGripAt) for (const { r, i } of this.fpPuts(`v:${id}`)) { const gp = this.fpGripAt(`v:${id}`, i, stand, 0); if (gp) { r.world = gp.world; if (gp.aimAt) r.aimAt = gp.aimAt; } }
         p = kept ? kept.pos : stand;
-        if (!p) continue;
+        if (!p || (!kept && v.inDw)) continue;
         seen.add(id);
         let rec = this.vessels.get(id);
         if (!rec || rec.kind !== v.kind) {
@@ -1268,6 +1276,8 @@ export class Scene3D {
     if ((g.kind === 'tap' && g.ph.hot === 'faucet') && F.parts.lever) {
       return { w: F.parts.lever.localToWorld(new THREE.Vector3(0.1, 0.03, 0)), at: st.hotspot() };
     }
+    // the dishwasher's start button
+    if (g.kind === 'tap' && g.ph.hot === 'dwStart' && F.parts.dwButton) return { w: F.parts.dwButton.getWorldPosition(new THREE.Vector3()).addScaledVector(w.N, 0.02), at: st.hotspot() };
     // the dish soap: on the sink's rim – or, cleaning a board, standing beside it on the worktop
     if (g.kind === 'tap' && g.ph.hot === 'soap') {
       if (F.parts.soap) return { w: F.parts.soap.localToWorld(new THREE.Vector3(0, 0.14, 0)), at: st.hotspot() };

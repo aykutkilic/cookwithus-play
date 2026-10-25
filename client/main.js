@@ -17,7 +17,7 @@ import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
   choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
-  handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash,
+  handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS } from '../shared/actions.js';
 import { foodWidth } from './food3d.js';
@@ -383,6 +383,9 @@ function drawDishMini(r) {
 }
 
 $('steps').addEventListener('click', (e) => {
+  // (⏭ on the dishwasher, on the clean-up line)
+  const sk = e.target.closest('[data-skipdw]');
+  if (sk) { sfx.unlock(); send({ t: 'skipdw', fx: sk.dataset.skipdw }); sfx.play('whoosh'); return; }
   const b = e.target.closest('button');
   const li = e.target.closest('li');
   sfx.unlock();
@@ -644,6 +647,8 @@ function bestJob(f, all = jobsAt(f)) {
   // a burner left on: off it goes (with the free hand – the pan can stay in the other)
   const knob = jobs.find((j) => j.sid && j.sid.startsWith('#knob'));
   if (knob) return knob;
+  const dwRun = !held.length && jobs.find((j) => j.sid && j.sid.startsWith('#dw@'));
+  if (dwRun) return dwRun;
   if (held.length) { const put = jobs.find((j) => j.act === 'put'); if (put) return put; }
   if (steps.length) return steps[0];
   // pick up what's lying here – all of it that fits in my hands
@@ -1215,6 +1220,19 @@ function jobsAtNow(f) {
       const full = held.length > 0; // (both hands for washing up)
       if (dirty) out.push({ sid: choreId('scrub', f.id), label: `🧽 Wash up the ${thingName(C, x, `v:${dirty[0]}`)}${full ? ' (hands full)' : ''}`, chore: true, off: full });
     }
+    // the dishwasher: what's dirty in my hands goes in; loaded, it can be started; done, things come out
+    if (f.caps.includes('dishwasher')) {
+      const put = out.find((j) => j.act === 'put');
+      const intoDw = held.filter((k) => k[0] === 'v' && dishwasherSafe(C.vessels[k.slice(2)].kind) && needsWash(C, x, k.slice(2)));
+      if (put && intoDw.length && !dwRunning(C, f.id)) put.label = `🫧 Into the dishwasher: the ${intoDw.map((k) => thingName(C, x, k)).join(', ')}`;
+      const load = dwLoad(C, f.id);
+      if (dwRunning(C, f.id)) {
+        for (const j of out) if (j.act === 'take' && load.includes(j.what.slice(2))) { j.off = true; j.label = `🫧 ${thingName(C, x, j.what)} (washing)`; }
+      } else {
+        for (const j of out) if (j.act === 'take' && load.includes(j.what.slice(2)) && !C.vessels[j.what.slice(2)].dirty) j.label = `✨ Take the ${thingName(C, x, j.what)} out of the dishwasher`;
+        if (load.some((id) => C.vessels[id].dirty)) out.push({ sid: choreId('dw', f.id), label: `🫧 Run the dishwasher (${load.length})`, chore: true });
+      }
+    }
     // a dirty board (wooden: by hand, with the sponge)
     if (f.caps.includes('board') && C.fx[f.id] && C.fx[f.id].dirty) out.push({ sid: choreId('wipe', f.id), label: '🧽 Clean the board', chore: true });
   }
@@ -1358,7 +1376,14 @@ function cleanupRow(C, x, todo) {
   const sc = todo.filter((t) => t.kind === 'scraps').map((t) => fxName(t.fx));
   if (sc.length) parts.push(`clear the scraps off the ${sc.join(', ')}`);
   if (todo.some((t) => t.kind === 'carry')) parts.push('bin the scraps in hand');
-  return `<li class="open cleanup"><span class="ic">🧽</span><span class="nm">Clean up before serving<small>${esc(parts.join(' · '))}</small></span><span class="who"></span><span class="acts"></span></li>`;
+  // the dishwasher: to start, or running (⏭ skips it)
+  const dws = [...new Set(todo.filter((t) => t.kind === 'dw').map((t) => t.fx))];
+  let acts = '';
+  for (const fx of dws) {
+    const dw = C.dw && C.dw[fx];
+    if (dw && dw.run) { parts.push(`🫧 the dishwasher's on – ${fmtTime(Math.max(0, DW_DUR - dw.t) / Math.max(1, C.speed))} left`); acts += `<button data-skipdw="${fx}" title="Skip ahead">⏭</button>`; } else parts.push('start the dishwasher');
+  }
+  return `<li class="open cleanup"><span class="ic">🧽</span><span class="nm">Clean up before serving<small>${esc(parts.join(' · '))}</small></span><span class="who"></span><span class="acts">${acts}</span></li>`;
 }
 
 // What glows a little, to help: for the step I picked (📍), else the one
@@ -1393,6 +1418,8 @@ function guideNow() {
       const todo = cleanup(C, x);
       for (const t of todo) if (t.kind === 'scraps' || t.kind === 'board') out.add(t.fx); else if (t.kind === 'vessel') out.add(t.key);
       if (todo.some((t) => t.kind === 'vessel')) { const sink = K.fixtures.find((f) => f.caps.includes('sink')); if (sink) out.add(sink.id); }
+      const dwf = K.fixtures.find((f) => f.caps.includes('dishwasher'));
+      if (dwf && todo.some((t) => (t.kind === 'dw' && !t.run) || (t.kind === 'vessel' && dishwasherSafe(C.vessels[t.key.slice(2)].kind)))) out.add(dwf.id);
     }
   }
   S.guideCache = { key, out };
@@ -1782,7 +1809,7 @@ function frame(now) {
     drawTags(view);
     if (S.working) station.frame(dt);
     if (S.sheetDirty && now - S.lastSheet > 200) renderSheet();
-    if (now - S.lastClockUi > 250) { S.lastClockUi = now; renderTimers(); renderNudge(); if (S.M.cook && S.M.cook.steps && Object.values(S.M.cook.steps).some((st) => st.s === 'running')) S.sheetDirty = true; }
+    if (now - S.lastClockUi > 250) { S.lastClockUi = now; renderTimers(); renderNudge(); if (S.M.cook && S.M.cook.steps && (Object.values(S.M.cook.steps).some((st) => st.s === 'running') || Object.values(S.M.cook.dw || {}).some((d) => d.run))) S.sheetDirty = true; }
     // the sound of the kitchen
     if (view.D) {
       let sizzle = 0, boil = 0;
