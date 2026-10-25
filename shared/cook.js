@@ -19,8 +19,8 @@
 // work is. A step starts only when what it needs is there (or in your hands –
 // you put it down as you start). Nothing walks by itself.
 
-import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands } from './actions.js';
-import { INGREDIENTS, VESSELS, ingName, storeOf, twoHanded } from './ingredients.js';
+import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest } from './actions.js';
+import { INGREDIENTS, VESSELS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx } from './kitchens.js';
 import { RECIPES } from './recipes.js';
 
@@ -117,19 +117,23 @@ export function canCook(r, kitchen) {
 
 // ------------------------------------------------------------------ state
 
+function bunchHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
 export function newCook(r, kitchen) {
   const x = expandRecipe(r, kitchen.cap);
   const made = new Set(x.steps.filter((s) => s.makes).map((s) => s.makes));
   const items = {};
+  // (counted, loose produce worked on a board is kept by the bunch: a few more than the recipe takes)
+  const onBoard = new Set(x.steps.filter((s) => s.item && ACTIONS[s.do] && ACTIONS[s.do].cap === 'board').map((s) => s.item));
   for (const [id, i] of Object.entries(x.ing)) {
     items[id] = { kind: i.kind, qty: i.qty, washed: 0, peeled: 0, cut: null, k: 0, n: 0, cook: 0, at: null, in: null, held: null, used: 0 };
+    if (onBoard.has(id) && stocked(i.kind)) items[id].extra = 1 + (bunchHash(`${r.id}|${i.kind}`) % 3);
     if (i.kind === 'dough') items[id].shape = 'rough';
     if (i.form) items[id].form = i.form; // naan is a teardrop, pide a boat
     if (i.boiled) items[id].boiled = 1;
     const store = storeOf(i.kind);
     if (made.has(id)) items[id].hidden = 1;
     else if (!store) items[id].staple = 1; // salt, spices, oil, water: within reach everywhere
-    else items[id].at = storeFx(kitchen, store); // in the fridge / on the pantry shelf
+    else { items[id].at = storeFx(kitchen, store); items[id].stored = 1; } // in the fridge / on the pantry shelf
   }
   const vessels = {};
   const shelf = storeFx(kitchen, 'shelf');
@@ -176,6 +180,8 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
+  const p = /^#portion\.([a-zA-Z0-9]+)\.(\d+)@([a-zA-Z]+\d*)$/.exec(sid);
+  if (p) return { id: sid, do: 'portion', item: p[1], n: Number(p[2]), fx: p[3], chore: true, after: [], name: ACTIONS.portion.verb };
   const m = /^#(clear|toss|bag|knob|scrub|wipe|dw)@([a-zA-Z]+\d*)$/.exec(sid);
   if (!m) return null;
   return { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
@@ -227,6 +233,14 @@ function choreBlocked(C, x, K, d, memberId) {
     case 'wipe':
       if (!(C.fx[d.fx] && C.fx[d.fx].dirty)) return 'The board is clean';
       return handsUsed(C, memberId) >= HANDS ? 'No hand free for the sponge' : '';
+    case 'portion': {
+      const it = C.items[d.item];
+      if (!f.caps.includes('board')) return 'Portion it out at a counter';
+      if (!it || !(it.extra > 0)) return 'Nothing to portion – there’s just what’s needed';
+      if (it.at !== d.fx || it.in || it.held != null) return `Put the ${thingName(C, null, `i:${d.item}`)} down here first`;
+      const h = heldBy(C, memberId);
+      return h.length ? `Put the ${thingName(C, null, h[0])} down first – it takes both hands` : '';
+    }
     case 'dw': {
       if (!f.caps.includes('dishwasher')) return 'That isn’t a dishwasher';
       const dw = C.dw && C.dw[d.fx];
@@ -286,6 +300,8 @@ export function cleanup(C, x) {
   for (const [fx, sc] of Object.entries(C.scraps || {})) if (sc && sc.n > 0) out.push({ kind: 'scraps', fx });
   for (const [m, c] of Object.entries(C.carry || {})) if (c && c.n > 0) out.push({ kind: 'carry', m: Number(m) });
   for (const [fx, s] of Object.entries(C.fx || {})) if (s && s.dirty) out.push({ kind: 'board', fx });
+  // what's left of a bunch, not back in the fridge / pantry
+  for (const [id, it] of Object.entries(C.items)) if (it.rest && !it.stored) out.push({ kind: 'rest', key: `i:${id}`, fx: it.held == null ? it.at : null, m: it.held });
   for (const id of Object.keys(C.vessels)) {
     const v = C.vessels[id];
     if (v.inDw && v.dirty && v.at) out.push({ kind: 'dw', key: `v:${id}`, fx: v.at.fx, run: dwRunning(C, v.at.fx) });
@@ -322,6 +338,8 @@ function choreDone(C, x, K, d, st) {
   } else if (d.do === 'dw') {
     C.dw = C.dw || {};
     C.dw[d.fx] = { run: 1, t: 0 };
+  } else if (d.do === 'portion') {
+    splitRest(C, d.item);
   }
 }
 
@@ -377,6 +395,8 @@ export function arrange(C, K, m, key, fx, r, xpos) {
 export function thingOf(C, key) { const id = key.slice(2); return key[0] === 'v' ? C.vessels[id] : C.items[id]; }
 export function thingName(C, x, key) {
   const id = key.slice(2);
+  const t = key[0] === 'i' && C.items[id];
+  if (t && t.rest) return `leftover ${ingName(t.kind, t.qty).toLowerCase()}`;
   return (x && x.names[id]) || (key[0] === 'v' ? (VESSELS[C.vessels[id]?.kind]?.name || id) : ingName(C.items[id]?.kind || id, 1)).toLowerCase();
 }
 
@@ -495,6 +515,7 @@ export function takeThing(C, x, K, m, key, fx) {
   }
   t.held = m;
   t.at = null;
+  if (key[0] === 'i') t.stored = 0;
   t.inDw = 0;
   delete t.spot; // its place on the shelf is free now
   if (key[0] === 'v') { t.onHob = 0; t.heat = 0; }
@@ -545,7 +566,7 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
     t.held = null;
     delete t.spot;
     if (isStore(f) && spot) t.spot = spotOf(spot.r, spot.x);
-    if (k[0] === 'i') { t.at = fx; continue; }
+    if (k[0] === 'i') { t.at = fx; t.stored = isStore(f) ? 1 : 0; continue; }
     if (isStore(f)) { t.at = null; t.home = fx; continue; }
     const onHob = !surface && f.caps.includes('hob');
     t.at = { fx, slot: onHob ? freeSlot(C, x, f) : 0 };
@@ -556,6 +577,8 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
     const lit = onHob && C.fx[fx] && C.fx[fx].lit;
     if (lit && lit[t.at.slot]) { t.heat = lit[t.at.slot]; delete lit[t.at.slot]; }
   }
+  // (the last of the leftovers back where they're kept: the dish may be served now)
+  if (x && held.some((k) => k[0] === 'i' && C.items[k.slice(2)] && C.items[k.slice(2)].rest)) refresh(C, x);
   return '';
 }
 

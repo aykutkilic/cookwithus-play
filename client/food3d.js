@@ -109,7 +109,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -153,14 +153,25 @@ const BOX_SIZES = [{ w: 0.12, d: 0.09, h: 0.055 }, { w: 0.16, d: 0.12, h: 0.065 
 const PLASTIC = ['#7ec8a8', '#f2a65a', '#8ab4e8', '#e9dfc9', '#d98ab0'];
 const SPECS = new Map();
 // which container a food has: the smallest of the three it fits in, whole – it keeps it while it's cut up
+// The rows and columns q things of w × d best lie in, in a w0 × d0 space: the one that
+// needs them shrunk least (fit: 1 – at their own size).
+function gridFor(q, w, d, w0, d0) {
+  let best = { cols: 1, rows: q, fit: -1 };
+  for (let c = 1; c <= q; c++) {
+    const r = Math.ceil(q / c), fit = Math.min(1, (w0 / c * 0.96) / w, (d0 / r * 0.96) / d);
+    if (fit > best.fit + 1e-6) best = { cols: c, rows: r, fit };
+  }
+  return best;
+}
 export function boxSpec(kind, st) {
-  const q = clamp(num(st && st.qty, 1) | 0, 1, 12);
+  const q = clamp((num(st && st.qty, 1) + num(st && st.extra, 0)) | 0, 1, 12); // (a bunch: all of it)
   const key = `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${q}`;
   let sp = SPECS.get(key);
   if (!sp) {
-    const one = new THREE.Box3().setFromObject(buildFood(kind, { qty: 1 }));
-    const fw = one.max.x - one.min.x, fd = one.max.z - one.min.z, s = Math.max(fw, fd);
-    let size = BOX_SIZES.findIndex((b) => b.w * b.d * 0.8 >= q * fw * fd && Math.min(b.w, b.d) >= Math.min(fw, fd) * 1.02 && Math.max(b.w, b.d) >= s * 0.9);
+    // (the smallest of the set they all lie in at their own size – the biggest if none does)
+    const a = artOf(kind), S = a ? sizeArt(a) : { w: 100, h: 60 }, w = S.w * K, long = S.w > S.h * 1.6;
+    const deep = long ? Math.min(S.w, S.h) * K : Math.min(w, S.h * K * 1.2);
+    let size = BOX_SIZES.findIndex((b) => gridFor(q, w, deep, b.w * 0.86, b.d * 0.86).fit >= 1);
     if (size < 0) size = 2;
     const h = artHash(typeof kind === 'string' ? kind : JSON.stringify(kind));
     sp = { size, style: ['glass', 'clear', 'plastic'][h % 3], color: PLASTIC[(h >> 3) % PLASTIC.length], label: typeof kind === 'string' ? ingName(kind, q) : '' };
@@ -287,6 +298,21 @@ export function boxedFood(kind, st, of = st) {
   };
 }
 
+// A stack of empty food containers, the three sizes nested in each other (glass), standing by a
+// board: an empty one's taken from it for what's been cut or portioned out.
+export function containerNest() {
+  const g = new THREE.Group();
+  [2, 1, 0].forEach((size, i) => {
+    const c = containerMesh({ size, style: 'glass', color: PLASTIC[0], label: '' });
+    // (no water in these – and the hidden water box mustn't be baked into the kitchen)
+    const wm = c.userData.water;
+    if (wm && wm.parent) wm.parent.remove(wm);
+    c.position.y = i * 0.006;
+    g.add(c);
+  });
+  return g;
+}
+
 // how wide (along x) a food is, in kitchen units
 const WIDTHS = new Map();
 export function foodWidth(kind, st) {
@@ -314,7 +340,7 @@ function foodLocal(g, kind, st) {
   }
   if (a.type === 'egg' && (cut === 'cracked' || cut === 'beaten' || st.cracked)) return pieces(g, a, P, cut === 'beaten' ? 'beaten' : 'cracked', defaultCount(a, 'cracked', st), seed, st);
   if (cut && cut !== 'whole') return cutProgress(g, a, P, cut, st, seed, wet);
-  const q = clamp(num(st.qty, 1) | 0, 1, 8);
+  const q = clamp((num(st.qty, 1) + num(st.extra, 0)) | 0, 1, 8); // (a bunch: what the recipe takes and the rest)
   if (q > 1 && a.type !== 'pile' && a.type !== 'leaf' && !(a.type === 'block' && a.shape === 'mince')) return cluster(g, a, q, (h, i) => whole(h, a, P, { ...st, qty: 1 }, seed + i * 31, wet), num(st.spread), Array.isArray(st.box) ? st.box : null);
   whole(g, a, P, st, seed, wet);
 }
@@ -325,10 +351,12 @@ function cluster(g, a, q, make, spread = 0, box = null) {
   const S = sizeArt(a);
   const w = S.w * K, d = Math.min(S.w, S.h) * K;
   const long = S.w > S.h * 1.6;
-  // (in a container: as many columns as suit its shape, each one shrunk to its cell if it must)
-  const cols = box ? Math.max(1, Math.min(q, Math.round(Math.sqrt(q * box[0] / box[1])))) : 0, rows = box ? Math.ceil(q / cols) : 0;
+  // (in a container: in the rows and columns that let them lie there at their own size – long ones
+  // one behind the other – only shrunk if there's no way they fit)
+  const deep = long ? d : Math.min(w, S.h * K * 1.2);
+  const grid = box ? gridFor(q, w, deep, box[0], box[1]) : { cols: 0, rows: 0, fit: 1 };
+  const cols = grid.cols, rows = grid.rows, fit = grid.fit;
   const cw = box ? box[0] / cols : 0, cd = box ? box[1] / rows : 0;
-  const fit = box ? Math.min(1, (cw * 0.96) / w, (cd * 0.96) / (long ? d : Math.min(w, S.h * K * 1.2))) : 1;
   for (let i = 0; i < q; i++) {
     const h = new THREE.Group();
     make(h, i);

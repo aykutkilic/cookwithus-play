@@ -20,6 +20,7 @@ import {
   handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS, BOARD_TOOLS } from '../shared/actions.js';
+import { ingName } from '../shared/ingredients.js';
 import { foodWidth } from './food3d.js';
 import {
   randomProfile, sanitizeProfile, isProfane, cleanName, QUICK_CHAT, SKINS, HAIR_COLORS, HAIR_STYLES, HATS, HAT_COLORS,
@@ -861,6 +862,14 @@ function openWork(sid, fx) {
       const s = scene.screenOf(k), p = scene.workAt(w, s.x, s.y);
       return p ? { x: p.x, y: p.y, r: Math.max(50, 0.04 / w.S) } : null;
     }
+    // (the stack of empty containers beside the board; portioning: the bunch's container, the new one)
+    if (to === 'stack' || to === 'portion' || to === 'portionFrom') {
+      const w = workFrame();
+      if (!w) return null;
+      const P = to === 'stack' ? scene.nestSpot(w) : to === 'portion' ? scene.portionSpot(w, 1) : scene.portionSpot(w, -1);
+      const s = scene.screenOf(P), p = scene.workAt(w, s.x, s.y);
+      return p ? { x: p.x, y: p.y, r: Math.max(60, 0.07 / w.S) } : null;
+    }
     // (several worked one at a time: the pile of those done, at the board's back right – as the pointer has it)
     if (to === 'pile') {
       const w = workFrame();
@@ -1263,6 +1272,11 @@ function jobsAtNow(f) {
     }
     // a dirty board (wooden: by hand, with the sponge)
     if (f.caps.includes('board') && C.fx[f.id] && C.fx[f.id].dirty) out.push({ sid: choreId('wipe', f.id), label: '🧽 Clean the board', chore: true });
+    // a bunch with more than the recipe takes, lying here: just what's needed into a container of its own
+    if (f.caps.includes('board')) for (const [id, it] of Object.entries(C.items)) {
+      if (!(it.extra > 0) || it.at !== f.id || it.in || it.held != null) continue;
+      out.push({ sid: `#portion.${id}.${it.qty || 1}@${f.id}`, label: `🫙 Take ${it.qty > 1 ? `${it.qty} of the ${thingName(C, x, `i:${id}`)}` : `one ${ingName(it.kind, 1).toLowerCase()}`} into a container of their own`, chore: true });
+    }
   }
   return out;
 }
@@ -1404,6 +1418,9 @@ function cleanupRow(C, x, todo) {
   const sc = todo.filter((t) => t.kind === 'scraps').map((t) => fxName(t.fx));
   if (sc.length) parts.push(`clear the scraps off the ${sc.join(', ')}`);
   if (todo.some((t) => t.kind === 'carry')) parts.push('bin the scraps in hand');
+  // what's left of the bunches, back in the fridge / pantry
+  const rest = todo.filter((t) => t.kind === 'rest').map((t) => thingName(C, x, t.key));
+  if (rest.length) parts.push(`put the ${rest.join(', ')} back`);
   // the dishwasher: to start, or running (⏭ skips it)
   const dws = [...new Set(todo.filter((t) => t.kind === 'dw').map((t) => t.fx))];
   let acts = '';

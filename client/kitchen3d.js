@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { FIXTURES } from '../shared/kitchens.js';
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
 import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, chefKnife, peelerMesh, boxGrater } from './parts3d.js';
+import { containerNest } from './food3d.js';
 
 export const COUNTER_H = 0.46;
 const SINK_DEPTH = 0.1;
@@ -130,6 +131,12 @@ export function buildKitchen3D(K) {
       grater.position.set(b.x - 0.2, b.y + 0.115, b.z - 0.11);
       d.parts.tools = { knife, peeler, grater };
       for (const o of [knife, peeler, grater]) { o.userData.live = true; g.add(o); } // (shown and hidden: not baked in)
+      // and a stack of empty food containers on the worktop beside it (an empty one's taken from it
+      // for what's been cut or portioned out)
+      const nest = containerNest();
+      nest.position.set(b.x + 0.39, b.y - (d.anchors.top ? b.y - d.anchors.top.y : 0.025), b.z - 0.06);
+      g.add(nest);
+      d.anchors.nest = nest.position.clone();
     }
     // place: local front is +z; face 'e' fronts turn to +x
     const cx = f.x + f.w / 2, cz = f.y + f.h / 2;

@@ -75,9 +75,12 @@ export function stepHands(step) {
 // board before the work with it and put back down on it after (held meanwhile –
 // `held` – while the other hand does something in between).
 export const BOARD_TOOLS = ['knife', 'peeler', 'grater'];
-const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board' });
+const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board',
+  prog: (D, st) => { const it = item(D, st); if (it && it.out == null) it.out = 0; }, eff: (S, st) => { const it = item(S, st); if (it) it.out = 1; } });
+// (still with the rest of its bunch: into an empty container from the stack by the board – the
+// bunch's own container, with what's left, stays there to go back in the fridge / pantry)
 const boxUp = (cut, pile = false) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
-  eff: (S, st) => { const it = item(S, st); if (it) { delete it.out; delete it.aside; delete it.pile; } } });
+  eff: (S, st) => { const it = item(S, st); if (it) { splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
 const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
 const putTool = (t) => ({ g: 'tap', hot: 'rest', takes: t, tool: t, hint: `Put the ${t} down on the board` });
 // Several of a thing are worked one at a time: one taken out onto the board, worked
@@ -122,14 +125,26 @@ function onBoard(s, phases, cut = false) {
   }
   return boxed ? [...out, boxUp(cut, q > 1)] : out;
 }
+// A bunch has more than the recipe takes (it.extra, in the same container): once what's
+// needed has its own container, what's left stays in the bunch's one – a leftover of its
+// own (`${id}~rest`) where it is, which goes back in the fridge / pantry.
+export function splitRest(S, id) {
+  const it = S.items[id];
+  if (!it || !(it.extra > 0)) return null;
+  const rid = `${id}~rest`, r = S.items[rid];
+  if (r) r.qty += it.extra;
+  else S.items[rid] = { kind: it.kind, qty: it.extra, rest: id, washed: it.washed || 0, peeled: 0, cut: null, k: 0, n: 0, cook: 0, at: it.at, in: null, held: null, used: 0 };
+  it.extra = 0;
+  return rid;
+}
 // Where the parts of a thing worked several at a time are just now (null: it isn't): the
 // one being worked on (its own state – its share of the cuts), what's on the pile at the
 // side of the board, how many are still in the container.
 export function boardUnits(it) {
-  const q = Math.max(1, (it && it.qty) || 1);
-  if (!it || q < 2 || it.out == null) return null;
+  const q = Math.max(1, (it && it.qty) || 1), extra = (it && it.extra) || 0;
+  if (!it || (q < 2 && !extra) || it.out == null) return null;
   const out = it.out, aside = Math.min(it.aside || 0, out);
-  const one = { ...it, qty: 1 };
+  const one = { ...it, qty: 1, extra: 0 };
   delete one.out; delete one.aside; delete one.pile;
   let cur = null;
   if (out > aside) {
@@ -140,7 +155,7 @@ export function boardUnits(it) {
   }
   const cutAs = it.pile || it.cut;
   const pile = aside < 1 ? null : cutAs ? { ...one, cut: cutAs, k: it.n || 1, n: it.n || 1, bits: aside / q, spread: 0.03 } : { ...one, qty: aside, cut: null, peeled: it.peeled ? 1 : 0 };
-  return { cur, pile, left: q - out, aside, q };
+  return { cur, pile, left: q + extra - out, aside, q };
 }
 
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)
@@ -634,6 +649,16 @@ export const ACTIONS = {
       { g: 'tap', hot: 'soap', hint: 'A squeeze of dish soap on the sponge' },
       { g: 'strokes', axis: 'h', n: 5, tool: 'sponge', hint: 'Scrub the board with the sponge' },
       { g: 'strokes', axis: 'v', n: 3, tool: 'sponge', hint: 'Wipe it down clean' },
+    ],
+  },
+  // a bunch with more than the recipe takes: just what's needed into an empty container of its
+  // own, one at a time (what's left stays in the bunch's container, to go back) – '#portion.<item>.<n>@<fx>'
+  portion: {
+    cap: 'board', verb: 'Portion', tool: 'hand', icon: '🫙', chore: true,
+    phases: (s) => [
+      { g: 'drag', obj: 'newBox', to: 'portion', hint: 'Take an empty container from the stack' },
+      { g: 'drag', obj: 'oneOver', to: 'portion', n: s.n || 1, hint: s.n > 1 ? `Move ${s.n} into it, one at a time` : 'Move one into it',
+        prog: (D, st, k) => { const it = D.items[st.item]; if (it) it.moved = k; } },
     ],
   },
   // the dishwasher, loaded with dirty things: shut it and start it (it runs by itself)

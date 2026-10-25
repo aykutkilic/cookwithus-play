@@ -32,7 +32,9 @@ const DW_BTN = { x: 640, y: 214, r: 40 }; // the dishwasher's start button, on i
 const TOOL_AT = { knife: { x: 236, y: 548, r: 70, ang: -1.15, s: 0.9 }, peeler: { x: 335, y: 582, r: 60, ang: -1.45, s: 0.85 }, grater: { x: 248, y: 372, r: 75, ang: 0, s: 0.7 } };
 const BOARD_TOOLS = Object.keys(TOOL_AT);
 const BOX_AT = { x: 770, y: 500, r: 110 };
-const PILE_AT = { x: 675, y: 335, r: 110 }; // (several worked one at a time: the done ones' pile, at the board's back right)
+const PILE_AT = { x: 675, y: 335, r: 110 };
+const STACK_AT = { x: 910, y: 420, r: 95 }; // (the stack of empty food containers on the worktop beside the board)
+const PORTION_FROM = { x: 360, y: 470 }, PORTION_TO = { x: 640, y: 470, r: 115 }; // (portioning: the bunch's container, the new one) // (several worked one at a time: the done ones' pile, at the board's back right)
 const TIP_AT = { x: MAIN.x + 80, y: MAIN.y - 165 }; // (a food's container held over the pot's rim, to be tipped in)
 const SOAP = { x: 770, y: 300, r: 60 }; // the dish soap bottle by the sink (by the board too, washing it)
 const ASIDE = { x: 820, y: 520 };
@@ -139,6 +141,8 @@ export class Station {
         else if (obj === 'pieces') { g.source = { type: 'item', id: s.item, pieces: true }; g.subject = null; } // (off the board into its container)
         else if (obj === 'fromBox') { g.source = { type: 'item', id: s.item, fromBox: true }; g.subject = null; } // (out of its container onto the board)
         else if (obj === 'unit') { g.source = { type: 'item', id: s.item, unit: true }; g.subject = null; } // (the one just done, to the pile at the side)
+        else if (obj === 'newBox') { g.source = { type: 'newBox' }; g.subject = null; } // (an empty container off the stack)
+        else if (obj === 'oneOver') { g.source = { type: 'item', id: s.item, oneOver: true }; g.subject = null; } // (portioning: one from the bunch to the new container)
         const toMain = ph.to !== 'aside';
         const start = toMain ? { ...SIDE } : { ...MAIN };
         if (obj === 'lidOff') { start.x = MAIN.x; start.y = MAIN.y - 150; }
@@ -148,9 +152,14 @@ export class Station {
         if (obj === 'thing') { const at = this.storeLayout().get(s.thing); if (at) { start.x = at.x; start.y = at.y; } }
         if (obj === 'pieces' || obj === 'unit') { start.x = MAIN.x; start.y = MAIN.y - 30; }
         if (obj === 'pieces' && ph.pile) { const pa = this.targetFor('pile'); start.x = pa.x; start.y = pa.y; }
+        if (obj === 'newBox') { const sa = this.targetFor('stack'); start.x = sa.x; start.y = sa.y; }
+        if (obj === 'oneOver') { const pf = this.targetFor('portionFrom'); start.x = pf.x; start.y = pf.y; }
         if (obj === 'fromBox') { start.x = BOX_AT.x; start.y = BOX_AT.y - 10; }
         g.from = start; g.pos = { ...start };
         g.target = this.targetFor(ph.to);
+        // (cut from a bunch with more in it than the recipe takes: into an empty container from the stack)
+        const bunch = obj === 'pieces' && this.c.C.items[s.item] && this.c.C.items[s.item].extra > 0;
+        if (bunch) g.target = this.targetFor('stack');
         // a pan, a saucepan, a cezve, a kettle: you take it by the handle
         const sv = g.source && g.source.type === 'vessel' && this.c.C.vessels[g.source.id];
         const gr = sv && ph.tool !== 'pizzaPeel' && vesselGrip(sv.kind);
@@ -228,6 +237,9 @@ export class Station {
       case 'overVessel': return { ...TIP_AT, r: 130 }; // (held over the pot's rim, to tip it in)
       case 'board': return { x: MAIN.x, y: MAIN.y - 40, r: 140 };
       case 'pile': return (this.targetHook && this.targetHook('pile')) || { ...PILE_AT };
+      case 'stack': return (this.targetHook && this.targetHook('stack')) || { ...STACK_AT };
+      case 'portion': return (this.targetHook && this.targetHook('portion')) || { ...PORTION_TO };
+      case 'portionFrom': return (this.targetHook && this.targetHook('portionFrom')) || { ...PORTION_FROM, r: 100 };
       case 'aside': return { x: ASIDE.x, y: ASIDE.y, r: 150 };
       case 'hands': return { x: 500, y: 600, r: 120 };
       case 'bin': return { x: 500, y: 260, r: 130 };
@@ -1085,7 +1097,7 @@ export class Station {
     const f = this.c.f;
     const t = f.type;
     if (this.mode === 'store') return 'store';
-    if (this.c.def.chore) return { clear: 'scraps', knob: 'hob', scrub: 'sink', wipe: 'board', dw: 'dishwasher' }[this.c.def.do] || 'bin';
+    if (this.c.def.chore) return { clear: 'scraps', knob: 'hob', scrub: 'sink', wipe: 'board', dw: 'dishwasher', portion: 'board' }[this.c.def.do] || 'bin';
     if (t === 'sink') return 'sink';
     if (t === 'fridge') return 'chill';
     if (t === 'pizzaOven' || t === 'stoneOven') return 'dome';
@@ -1219,12 +1231,26 @@ export class Station {
       const it2 = D.items[s.item];
       const inBox = U ? U.left - (g && g.kind === 'drag' && g.source && g.source.fromBox ? 1 : 0) : 0;
       ctx.save(); ctx.translate(BOX_AT.x, BOX_AT.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back');
-      if (it2 && inBox > 0) drawIngredient(ctx, it2.kind, { ...it2, qty: inBox, cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
+      if (it2 && inBox > 0) drawIngredient(ctx, it2.kind, { ...it2, qty: inBox, extra: 0, cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
       if (g && g.source && g.source.pieces && this.k > 0 && it2) {
         if (it2.cut && (it2.k || 0) >= (it2.n || 0)) drawPieces(ctx, it2.kind, it2.cut, 7, 0, -12, 0.8, 3);
         else drawIngredient(ctx, it2.kind, it2, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
       }
       this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore();
+    }
+    // the stack of empty food containers on the worktop beside the board
+    ctx.save(); ctx.translate(STACK_AT.x, STACK_AT.y + 40); ctx.scale(0.5, 0.5);
+    for (let i = 0; i < 3; i++) { ctx.save(); ctx.translate(0, -i * 14); ctx.scale(1 - i * 0.08, 1 - i * 0.08); this.drawTub(ctx, 230, 120, 0, 'back'); this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore(); }
+    ctx.restore();
+    // portioning: the bunch's container, and the new one with those moved over so far
+    if (s.do === 'portion' && D.items[s.item]) {
+      const it3 = D.items[s.item], rest = D.items[`${s.item}~rest`], split = !(it3.extra > 0) && rest;
+      // (once it's split: what's needed in the new container, what's left in the bunch's)
+      const moved = split ? it3.qty || 1 : it3.moved || 0, carrying = !split && g && g.kind === 'drag' && g.source && g.source.oneOver ? 1 : 0;
+      const left = split ? rest.qty : (it3.qty || 1) + (it3.extra || 0) - moved - carrying;
+      const tub = (p, n, w) => { ctx.save(); ctx.translate(p.x, p.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back'); if (n > 0) drawIngredient(ctx, it3.kind, { ...it3, qty: n, extra: 0, cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it3.kind) * 0.7), this.t); this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore(); void w; };
+      tub(PORTION_FROM, left);
+      if (this.ph > 0 || split) tub(PORTION_TO, moved);
     }
     // the board's own tools, lying there – unless they're in my hand
     const ph = g && g.ph;
@@ -2089,7 +2115,12 @@ export class Station {
       const src = g.source;
       if (!src) return;
       if (g.kind === 'drag' && this.k > 0) return;
-      if (src.type === 'item' && src.unit) {
+      if (src.type === 'newBox') {
+        ctx.save(); ctx.translate(p.x, p.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back'); this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore();
+      } else if (src.type === 'item' && src.oneOver) {
+        const it = D.items[src.id];
+        if (it) drawIngredient(ctx, it.kind, { ...it, qty: 1, extra: 0 }, p.x, p.y, Math.min(1.1, this.itemScale(it.kind) * 0.7), this.t);
+      } else if (src.type === 'item' && src.unit) {
         // (the one just done, pushed along the board to the pile)
         const U = boardUnits(D.items[src.id]), c = U && U.cur;
         if (c && c.cut && (c.k || 0) >= (c.n || 0)) drawPieces(ctx, c.kind, c.cut, Math.max(2, Math.round(8 / U.q)), p.x, p.y, 0.8, 3);
@@ -2105,7 +2136,7 @@ export class Station {
         if (it) {
           const cut = it.cut && (it.k || 0) >= (it.n || 0);
           if (cut) drawPieces(ctx, it.kind, it.cut, 8, p.x, p.y, 0.9, 3);
-          else drawIngredient(ctx, it.kind, src.fromBox ? { ...it, qty: 1 } : it, p.x, p.y, Math.min(1.1, this.itemScale(it.kind) * 0.7), this.t); // (out of its container: one at a time)
+          else drawIngredient(ctx, it.kind, src.fromBox ? { ...it, qty: 1, extra: 0 } : it, p.x, p.y, Math.min(1.1, this.itemScale(it.kind) * 0.7), this.t); // (out of its container: one at a time)
           if (g.kind === 'dip') drawTool(ctx, 'tongs', p.x + 30, p.y - 60, 0.7, -0.4, !!g.drag);
           if (g.kind === 'dip' && g.inside) this.holdRing(ctx, p.x, p.y - 140, g.hold / (g.ph.hold || 1.6));
         }

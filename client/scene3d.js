@@ -978,7 +978,7 @@ export class Scene3D {
     // at work: the containers of what's out on the board, standing beside it, empty
     if (fp && this.work) for (const [k, b] of this.work.boxes || []) {
       const it = D.items[k];
-      if (it && boxable(it.kind)) food(`box:${k}`, it.kind, b.st || null, b.pos, b.yaw, { of: it, empty: !b.st, tilt: b.tilt, axis: b.axis });
+      if (it && boxable(it.kind)) food(`box:${k}`, it.kind, b.st || null, b.pos, b.yaw, { of: b.of || it, empty: !b.st, tilt: b.tilt, axis: b.axis });
     }
     // the empty food containers set down on the stove after their food was tipped into the pot –
     // nested in each other, the smaller inside the bigger
@@ -1374,7 +1374,7 @@ export class Scene3D {
     if (!W || !W.st || !W.st.on || !this.firstPerson || !W.frame) return;
     const st = W.st, g = st.g, w = W.frame;
     // (gathered into its container – the step's done: it stays where I dropped it in)
-    if (st.done && this.boxing) (this.boxedAt || (this.boxedAt = new Map())).set(this.boxing.id, this.boxing);
+    if (st.done && this.boxing) this.commitBoxing();
     this.boxing = null;
     if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
     const at = (p) => this.workWorld(w, p.x, p.y);
@@ -1458,8 +1458,31 @@ export class Scene3D {
             hand(oi, P.clone().addScaledVector(w.R, -0.019), 'palm', { curl: 0.55 });
           } else {
             // (held from above, the fingers round it – just the one)
-            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw, st: U ? { qty: 1, cut: null, k: 0, n: 0, peeled: 0 } : null });
+            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw, st: U ? { qty: 1, extra: 0, cut: null, k: 0, n: 0, peeled: 0 } : null });
             hand(wi, P.clone(), 'hand', { curl: 0.8 });
+          }
+          ring(g.target);
+          break;
+        }
+        if (g.source && (g.source.type === 'newBox' || g.source.oneOver)) {
+          // Portioning a bunch: an empty container off the stack, set on the board's right; then, one at a
+          // time, from the bunch's container on the left into it – those moved over so far in it.
+          const id = st.c.def.item, it = D && D.items[id];
+          if (!it) break;
+          const from = this.portionSpot(w, -1), to = this.portionSpot(w, 1), moved = it.moved || 0;
+          const carrying = g.source.oneOver && g.drag ? 1 : 0, left = (it.qty || 1) + (it.extra || 0) - moved - carrying;
+          const of = { ...it, extra: 0 };
+          out.ov.set(`i:${id}`, { pos: from.clone(), yaw: out.yaw, box: {}, st: { qty: Math.max(1, left), extra: 0 }, hide: left <= 0 });
+          const P = g.drag ? at(g.pos) : null;
+          if (P) P.y = Math.max(P.y, w.O.y + 0.05);
+          if (g.source.type === 'newBox') {
+            out.boxes.push([id, { pos: P ? P.clone().addScaledVector(UP, -0.03) : this.nestSpot(w).addScaledVector(UP, 0.02), yaw: out.yaw, st: null, of }]);
+            hand(wi, P || this.nestSpot(w).addScaledVector(UP, 0.09), 'grab', { curl: g.drag ? 0.9 : 0.4 });
+          } else {
+            out.boxes.push([id, { pos: to.clone(), yaw: out.yaw, st: moved > 0 ? { ...it, qty: moved, extra: 0 } : null, of }]);
+            if (P) out.sprites.push({ tex: null, kind: it.kind, st: { ...it, qty: 1, extra: 0 }, pos: P.clone().addScaledVector(UP, -0.03), size: 0.1 });
+            hand(wi, P || from.clone().addScaledVector(UP, 0.06), 'hand', { curl: g.drag ? 0.8 : 0.3 });
+            this.boxing = { id, fx: w.fx, pos: to.clone(), rest: { id: `${id}~rest`, fx: w.fx, pos: from.clone() } };
           }
           ring(g.target);
           break;
@@ -1485,10 +1508,13 @@ export class Scene3D {
           // Cut up, gathered into its container: the pieces lie where they were cut till
           // you take them; then they're a little heap in your two cupped hands, carried over
           // to the container standing beside the board, and dropped in (it stays there, in it).
-          const box = this.boxSpot(w);
-          out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
-          this.boxing = { id: g.source.id, fx: w.fx, pos: box.clone() };
-          if (st.k > 0) { (this.boxedAt || (this.boxedAt = new Map())).set(g.source.id, this.boxing); break; }
+          const box = this.boxSpot(w), gIt = D && D.items[g.source.id];
+          // (with the rest of its bunch still in its container: into an empty one off the stack – the bunch's
+          // container stays where it is, with what's left, to go back)
+          const into = gIt && gIt.extra > 0 ? this.nestSpot(w).addScaledVector(UP, 0.012) : box;
+          if (!(gIt && boardUnits(gIt))) out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
+          this.boxing = { id: g.source.id, fx: w.fx, pos: into.clone(), rest: gIt && gIt.extra > 0 ? { id: `${g.source.id}~rest`, fx: w.fx, pos: box.clone() } : null };
+          if (st.k > 0) { this.commitBoxing(); break; }
           if (!g.drag) {
             // (several done one at a time: they're all on the pile at the side)
             out.ov.set(k, ph.pile ? { pos: this.pileSpot(w), yaw: out.yaw, st: { spread: 0.035 } } : { pos: w.O.clone(), yaw: out.yaw + CUT_TURN });
@@ -1715,7 +1741,7 @@ export class Scene3D {
     if (U) {
       const left = U.left - (g.kind === 'drag' && g.source && g.source.fromBox && g.drag ? 1 : 0);
       out.boxes = out.boxes.filter(([id]) => id !== uId);
-      out.boxes.push([uId, { pos: this.boxSpot(w), yaw: out.yaw, st: left > 0 ? { ...uIt, qty: left, cut: null, k: 0, n: 0, peeled: 0 } : null }]);
+      out.boxes.push([uId, { pos: this.boxSpot(w), yaw: out.yaw, st: left > 0 ? { ...uIt, qty: left, extra: 0, cut: null, k: 0, n: 0, peeled: 0 } : null }]);
       if (U.pile && !(g.kind === 'drag' && g.source && g.source.pieces)) out.sprites.push({ tex: null, kind: uIt.kind, st: U.pile, pos: this.pileSpot(w), size: 0.12 });
       const ov = out.ov.get(`i:${uId}`);
       if (ov && !ov.hide && !(g.source && (g.source.fromBox || g.source.unit || g.source.pieces))) { if (U.cur) ov.st = { ...U.cur, ...(ov.st || {}) }; else ov.hide = true; }
@@ -1741,6 +1767,14 @@ export class Scene3D {
   // (where a food's container stands beside the board while it's out on it – and where it
   // stays, once what's cut up is gathered into it)
   boxSpot(w) { return w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1); }
+  // (the stack of empty food containers on the worktop beside the board)
+  nestSpot(w) {
+    const F = this.k3.fx[w.fx], n = F && F.anchors.nest;
+    return n ? n.clone() : w.O.clone().addScaledVector(w.R, 0.39).addScaledVector(w.N, -0.06).setY(w.O.y - 0.025);
+  }
+  // (portioning a bunch: its container in the middle of the board, the new one on its right – clear of
+  // the board's own tools on the left and the stack of empty containers beyond its right edge)
+  portionSpot(w, side) { return side < 0 ? w.O.clone() : w.O.clone().addScaledVector(w.R, 0.2).addScaledVector(w.N, 0.04); }
   // (several worked one at a time: where those done pile up, at the board's back right)
   pileSpot(w) { return w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, -0.085); }
   // the point on the board under this point of the work plane, as it's seen (what the pointer's over)
@@ -1755,6 +1789,14 @@ export class Scene3D {
     if (!o) return null;
     o.updateMatrixWorld(true);
     return o.localToWorld(t === 'knife' ? new THREE.Vector3(-0.0145, -0.006, 0) : t === 'grater' ? new THREE.Vector3(0, -0.012, 0) : new THREE.Vector3(0, -0.004, 0));
+  }
+
+  // what was just put in a container (and the bunch's own one, with what's left) stays where it was put
+  commitBoxing() {
+    const B = this.boxing, M = this.boxedAt || (this.boxedAt = new Map());
+    if (!B) return;
+    M.set(B.id, B);
+    if (B.rest) M.set(B.rest.id, B.rest);
   }
 
   // The knife in my hand: its edge at E (the middle of it), the blade pointing d

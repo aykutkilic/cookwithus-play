@@ -2627,14 +2627,14 @@ function ingLocal(c, kind, st, t) {
     return;
   }
   const S = sizeArt(a);
-  const q = clamp(num(st.qty, 1) | 0, 1, 8);
+  const q = clamp((num(st.qty, 1) + num(st.extra, 0)) | 0, 1, 8); // (a bunch: what the recipe takes and the rest)
   if (q > 1 && a.type === 'block' && a.shape === 'mince') {
     sub(c, 0, 0, Math.min(1.7, Math.pow(q, 0.35)), () => drawWholeArt(c, a, P, st, t, seed));
     if (st.washed) wetFx(c, S.w, S.h, t, seed);
     return;
   }
   if (q > 1 && a.type !== 'pile' && a.type !== 'leaf') {
-    const one = Object.assign({}, st, { qty: 1 });
+    const one = Object.assign({}, st, { qty: 1, extra: 0 });
     const pos = clusterPos(q, S);
     for (const p of pos) sub(c, p[0], p[1], p[2], () => drawWholeArt(c, a, P, one, t, seed + p[3]));
     if (st.washed) wetFx(c, S.w * 1.4, S.h * 1.1, t, seed);
