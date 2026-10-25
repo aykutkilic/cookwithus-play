@@ -109,7 +109,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -164,7 +164,7 @@ function gridFor(q, w, d, w0, d0) {
   return best;
 }
 export function boxSpec(kind, st) {
-  const q = clamp((num(st && st.qty, 1) + num(st && st.extra, 0)) | 0, 1, 12); // (a bunch: all of it)
+  const q = clamp(Math.max(num(st && st.qty, 1) + num(st && st.extra, 0), num(st && st.cap, 0)) | 0, 1, 12); // (a bunch: all it was filled with)
   const key = `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${q}`;
   let sp = SPECS.get(key);
   if (!sp) {
@@ -278,11 +278,10 @@ export function boxedFood(kind, st, of = st) {
   g.add(c);
   if (st) {
     // (st null: the container on its own, empty)
-    const f = buildFood(kind, { ...st, spread: 0, box: [b.w * 0.86, b.d * 0.86] });
-    const fb = new THREE.Box3().setFromObject(f);
-    const k = Math.min(1, (b.w * 0.92) / Math.max(1e-3, fb.max.x - fb.min.x), (b.d * 0.92) / Math.max(1e-3, fb.max.z - fb.min.z));
-    f.scale.setScalar(k);
-    f.position.set(-(fb.min.x + fb.max.x) / 2 * k, 0.004, -(fb.min.z + fb.max.z) / 2 * k);
+    // (laid out round the container's middle already – each in a place of its own, so taking one
+    // out moves none of the others; whole ones in, as they come)
+    const f = buildFood(kind, { ...st, spread: 0, box: [b.w * 0.86, b.d * 0.86], slots: Math.max(1, num(of && of.qty, 1) + num(of && of.extra, 0), num(of && of.cap, 0)) });
+    f.position.set(0, 0.004, 0);
     g.add(f);
   }
   const water = c.userData.water;
@@ -341,30 +340,39 @@ function foodLocal(g, kind, st) {
   if (a.type === 'egg' && (cut === 'cracked' || cut === 'beaten' || st.cracked)) return pieces(g, a, P, cut === 'beaten' ? 'beaten' : 'cracked', defaultCount(a, 'cracked', st), seed, st);
   if (cut && cut !== 'whole') return cutProgress(g, a, P, cut, st, seed, wet);
   const q = clamp((num(st.qty, 1) + num(st.extra, 0)) | 0, 1, 8); // (a bunch: what the recipe takes and the rest)
-  if (q > 1 && a.type !== 'pile' && a.type !== 'leaf' && !(a.type === 'block' && a.shape === 'mince')) return cluster(g, a, q, (h, i) => whole(h, a, P, { ...st, qty: 1 }, seed + i * 31, wet), num(st.spread), Array.isArray(st.box) ? st.box : null);
+  // (in a container that held more – a bunch – even the last one keeps its place)
+  const box = Array.isArray(st.box) ? st.box : null, slots = box ? clamp(num(st.slots, q) | 0, q, 12) : q;
+  if ((q > 1 || slots > 1) && a.type !== 'pile' && a.type !== 'leaf' && !(a.type === 'block' && a.shape === 'mince')) return cluster(g, a, q, (h, i) => whole(h, a, P, { ...st, qty: 1 }, seed + i * 31, wet), num(st.spread), box, slots);
   whole(g, a, P, st, seed, wet);
 }
 
 // several of a thing, side by side (a row; two rows for many) – or round a pan
 // (spread: its radius), or in a grid in a food container (box: its inside)
-function cluster(g, a, q, make, spread = 0, box = null) {
+function cluster(g, a, q, make, spread = 0, box = null, slots = q) {
   const S = sizeArt(a);
   const w = S.w * K, d = Math.min(S.w, S.h) * K;
   const long = S.w > S.h * 1.6;
-  // (in a container: in the rows and columns that let them lie there at their own size – long ones
-  // one behind the other – only shrunk if there's no way they fit)
+  // (in a container: each at its own size in a place of its own on its floor – long ones one behind the
+  // other – and those that don't fit there piled on top, askew; a bunch is taken from the top, so the
+  // rest never move. Shrunk only if not even one fits.)
   const deep = long ? d : Math.min(w, S.h * K * 1.2);
-  const grid = box ? gridFor(q, w, deep, box[0], box[1]) : { cols: 0, rows: 0, fit: 1 };
-  const cols = grid.cols, rows = grid.rows, fit = grid.fit;
-  const cw = box ? box[0] / cols : 0, cd = box ? box[1] / rows : 0;
+  const cols = box ? Math.max(1, Math.floor((box[0] * 0.96) / w)) : 0, rows = box ? Math.max(1, Math.floor((box[1] * 0.96) / deep)) : 0;
+  const fit = box ? Math.min(1, (box[0] * 0.96) / w, (box[1] * 0.96) / deep) : 1, per = cols * rows;
+  const cw = box ? box[0] / cols : 0, cd = box ? box[1] / rows : 0, layerH = S.h * K * 0.72 * fit;
+  // (the places it has – as many as it was filled with – in the middle of its floor)
+  const usedC = box ? Math.min(cols, slots) : 0, usedR = box ? Math.min(rows, Math.ceil(Math.min(slots, per) / cols)) : 0;
   for (let i = 0; i < q; i++) {
     const h = new THREE.Group();
     make(h, i);
     if (box) {
-      const c = i % cols, rI = Math.floor(i / cols), inRow = Math.min(cols, q - rI * cols);
-      h.position.set((c - (inRow - 1) / 2) * cw, 0, (rI - (rows - 1) / 2) * cd);
+      const L = Math.floor(i / per), j = i % per, c = j % cols, rI = Math.floor(j / cols);
+      // (on top: nestled between those below – half a place over – and turned a little)
+      const up = L > 0, nx = up && cols > 1 ? cw * 0.5 * (L % 2 ? 1 : -1) : 0, nz = up && rows > 1 ? cd * 0.5 * (L % 2 ? 1 : -1) : 0;
+      const x = Math.max(-box[0] / 2 + (w * fit) / 2, Math.min(box[0] / 2 - (w * fit) / 2, (c - (usedC - 1) / 2) * cw + nx + (slots > 1 ? (((i * 0.37) % 1) - 0.5) * cw * 0.15 : 0)));
+      const z = Math.max(-box[1] / 2 + (deep * fit) / 2, Math.min(box[1] / 2 - (deep * fit) / 2, (rI - (usedR - 1) / 2) * cd + nz));
+      h.position.set(x, L * layerH, z);
       h.scale.setScalar(fit);
-      h.rotation.y = (i * 1.7) % 0.5 - 0.25;
+      h.rotation.y = (slots > 1 ? ((i * 1.7) % 0.5) - 0.25 : 0) + (up ? (L % 2 ? 0.35 : -0.35) : 0);
     } else if (spread > 0) {
       const an = i * 2.4, rr = q > 1 ? Math.min(spread - w * 0.4, spread * 0.55) * (0.5 + 0.5 * ((i * 0.618) % 1)) : 0;
       h.position.set(Math.cos(an) * Math.max(0, rr), 0, Math.sin(an) * Math.max(0, rr));

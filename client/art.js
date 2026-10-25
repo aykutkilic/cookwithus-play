@@ -2633,9 +2633,10 @@ function ingLocal(c, kind, st, t) {
     if (st.washed) wetFx(c, S.w, S.h, t, seed);
     return;
   }
-  if (q > 1 && a.type !== 'pile' && a.type !== 'leaf') {
-    const one = Object.assign({}, st, { qty: 1, extra: 0 });
-    const pos = clusterPos(q, S);
+  const slots = Math.max(q, num(st.slots, 0) | 0);
+  if ((q > 1 || slots > 1) && a.type !== 'pile' && a.type !== 'leaf') {
+    const one = Object.assign({}, st, { qty: 1, extra: 0, slots: 0 });
+    const pos = clusterPos(q, S, slots);
     for (const p of pos) sub(c, p[0], p[1], p[2], () => drawWholeArt(c, a, P, one, t, seed + p[3]));
     if (st.washed) wetFx(c, S.w * 1.4, S.h * 1.1, t, seed);
     return;
@@ -2643,11 +2644,14 @@ function ingLocal(c, kind, st, t) {
   drawWholeArt(c, a, P, st, t, seed);
   if (st.washed) wetFx(c, S.w, S.h, t, seed);
 }
-function clusterPos(q, S) {
+// (slots: how many the place was filled with – a bunch keeps its size and places as it's taken from)
+function clusterPos(q, S, slots = q) {
   const long = S.w > S.h * 1.6;
+  // (round ones: laid out for all it was filled with – those taken simply aren't there)
+  if (!long && slots > q) return clusterPos(slots, S).slice(0, q);
   const out = [];
   if (long) {
-    const sc = q > 3 ? 0.8 : 0.9;
+    const sc = slots > 3 ? 0.8 : 0.9;
     for (let i = q - 1; i >= 0; i--) out.push([(i % 2 ? 0.08 : -0.06) * S.w, -i * S.h * 0.42 * sc, sc, i * 17]);
     return out;
   }

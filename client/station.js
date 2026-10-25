@@ -1231,7 +1231,7 @@ export class Station {
       const it2 = D.items[s.item];
       const inBox = U ? U.left - (g && g.kind === 'drag' && g.source && g.source.fromBox ? 1 : 0) : 0;
       ctx.save(); ctx.translate(BOX_AT.x, BOX_AT.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back');
-      if (it2 && inBox > 0) drawIngredient(ctx, it2.kind, { ...it2, qty: inBox, extra: 0, cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
+      if (it2 && inBox > 0) drawIngredient(ctx, it2.kind, { ...it2, qty: inBox, extra: 0, slots: (it2.qty || 1) + (it2.extra || 0), cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
       if (g && g.source && g.source.pieces && this.k > 0 && it2) {
         if (it2.cut && (it2.k || 0) >= (it2.n || 0)) drawPieces(ctx, it2.kind, it2.cut, 7, 0, -12, 0.8, 3);
         else drawIngredient(ctx, it2.kind, it2, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
@@ -1246,11 +1246,12 @@ export class Station {
     if (s.do === 'portion' && D.items[s.item]) {
       const it3 = D.items[s.item], rest = D.items[`${s.item}~rest`], split = !(it3.extra > 0) && rest;
       // (once it's split: what's needed in the new container, what's left in the bunch's)
-      const moved = split ? it3.qty || 1 : it3.moved || 0, carrying = !split && g && g.kind === 'drag' && g.source && g.source.oneOver ? 1 : 0;
+      const moved = split ? it3.qty || 1 : g && g.kind === 'drag' && g.source && g.source.oneOver ? this.k : 0, carrying = !split && g && g.kind === 'drag' && g.source && g.source.oneOver ? 1 : 0;
       const left = split ? rest.qty : (it3.qty || 1) + (it3.extra || 0) - moved - carrying;
-      const tub = (p, n, w) => { ctx.save(); ctx.translate(p.x, p.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back'); if (n > 0) drawIngredient(ctx, it3.kind, { ...it3, qty: n, extra: 0, cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it3.kind) * 0.7), this.t); this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore(); void w; };
-      tub(PORTION_FROM, left);
-      if (this.ph > 0 || split) tub(PORTION_TO, moved);
+      const tub = (p, n, slots) => { ctx.save(); ctx.translate(p.x, p.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back'); if (n > 0) drawIngredient(ctx, it3.kind, { ...it3, qty: n, extra: 0, slots, cut: null, k: 0, n: 0 }, 0, -10, Math.min(1.1, this.itemScale(it3.kind) * 0.7), this.t); this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore(); };
+      // (the bunch's container keeps its places as it empties; the new one is filled with just what's needed)
+      tub(PORTION_FROM, left, split ? rest.cap || (it3.qty || 1) + rest.qty : (it3.qty || 1) + (it3.extra || 0));
+      if (this.ph > 0 || split) tub(PORTION_TO, moved, it3.qty || 1);
     }
     // the board's own tools, lying there – unless they're in my hand
     const ph = g && g.ph;

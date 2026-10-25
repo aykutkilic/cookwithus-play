@@ -1469,7 +1469,7 @@ export class Scene3D {
           // time, from the bunch's container on the left into it – those moved over so far in it.
           const id = st.c.def.item, it = D && D.items[id];
           if (!it) break;
-          const from = this.portionSpot(w, -1), to = this.portionSpot(w, 1), moved = it.moved || 0;
+          const from = this.portionSpot(w, -1), to = this.portionSpot(w, 1), moved = g.source.oneOver ? st.k : 0;
           const carrying = g.source.oneOver && g.drag ? 1 : 0, left = (it.qty || 1) + (it.extra || 0) - moved - carrying;
           const of = { ...it, extra: 0 };
           out.ov.set(`i:${id}`, { pos: from.clone(), yaw: out.yaw, box: {}, st: { qty: Math.max(1, left), extra: 0 }, hide: left <= 0 });

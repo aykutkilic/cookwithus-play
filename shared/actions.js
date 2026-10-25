@@ -132,8 +132,9 @@ export function splitRest(S, id) {
   const it = S.items[id];
   if (!it || !(it.extra > 0)) return null;
   const rid = `${id}~rest`, r = S.items[rid];
-  if (r) r.qty += it.extra;
-  else S.items[rid] = { kind: it.kind, qty: it.extra, rest: id, washed: it.washed || 0, peeled: 0, cut: null, k: 0, n: 0, cook: 0, at: it.at, in: null, held: null, used: 0 };
+  // (cap: what the container was filled with – it's the same container, as big as before)
+  if (r) { r.qty += it.extra; r.cap = Math.max(r.cap || 0, it.qty + it.extra); }
+  else S.items[rid] = { kind: it.kind, qty: it.extra, cap: it.qty + it.extra, rest: id, washed: it.washed || 0, peeled: 0, cut: null, k: 0, n: 0, cook: 0, at: it.at, in: null, held: null, used: 0 };
   it.extra = 0;
   return rid;
 }
@@ -657,8 +658,7 @@ export const ACTIONS = {
     cap: 'board', verb: 'Portion', tool: 'hand', icon: '🫙', chore: true,
     phases: (s) => [
       { g: 'drag', obj: 'newBox', to: 'portion', hint: 'Take an empty container from the stack' },
-      { g: 'drag', obj: 'oneOver', to: 'portion', n: s.n || 1, hint: s.n > 1 ? `Move ${s.n} into it, one at a time` : 'Move one into it',
-        prog: (D, st, k) => { const it = D.items[st.item]; if (it) it.moved = k; } },
+      { g: 'drag', obj: 'oneOver', to: 'portion', n: s.n || 1, hint: s.n > 1 ? `Move ${s.n} into it, one at a time` : 'Move one into it' },
     ],
   },
   // the dishwasher, loaded with dirty things: shut it and start it (it runs by itself)
