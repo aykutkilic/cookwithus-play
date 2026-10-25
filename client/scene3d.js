@@ -21,7 +21,7 @@ import { FpArms } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
-import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
+import { mat, M, ball, cyl, lathe, ring, box, rod, v3, chefKnife } from './parts3d.js';
 import { SAKIR, phaseTarget } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
@@ -420,6 +420,8 @@ export class Scene3D {
     this.updateCamera(dt, view);
     this.workScene(view);
     this.updateFixtures(view);
+    // the boards' own knives: not lying there while they're in someone's hand
+    for (const [id, F] of Object.entries(this.k3.fx)) if (F.parts.knife) F.parts.knife.visible = !(view.knives && view.knives.has(id));
     this.updateCooks(view, dt); // first: things in their hands follow them
     this.updateArms(view, dt);
     this.updateStash(view);
@@ -1187,6 +1189,9 @@ export class Scene3D {
   // Where a thing in my hands goes, now it's been put down (roughly: the
   // place's spot for it) – null if it went nowhere to be seen.
   restPos(k, D) {
+    // (at work: where the work has it – a food in its container beside the board)
+    const ov = this.work && !this.work.idle && this.work.ov.get(k);
+    if (ov) return ov.pos.clone();
     const t = k[0] === 'v' ? D && D.vessels[k.slice(2)] : D && D.items[k.slice(2)];
     const fx = t && (k[0] === 'v' ? (t.at ? t.at.fx : t.held == null && t.home) : t.at);
     const F = fx && this.k3.fx[fx];
@@ -1381,14 +1386,15 @@ export class Scene3D {
     // the tool, as the close-up has it
     let tool = ph.tool || { chop: 'knife', peel: 'peeler', circle: 'spoon', paint: 'spoon' }[g.kind] || 'hand';
     if (['drag', 'scoop', 'dip', 'crack', 'knob', 'tap', 'pour', 'fill', 'place', 'flick', 'door'].includes(g.kind) || (g.kind === 'wrap' && g.stage === 0)) {
-      if (!['tongs', 'ladle', 'spoon', 'pizzaPeel', 'spatula'].includes(tool)) tool = 'hand';
+      if (!['tongs', 'ladle', 'spoon', 'pizzaPeel', 'spatula'].includes(tool) && !(tool === 'knife' && g.kind === 'tap')) tool = 'hand';
     }
     if (tool === 'grab') tool = 'hand';
     // (the hand already holding what's carried does it; else the free one)
     const srcKey = g.source && g.source.id ? `${g.source.type === 'vessel' ? 'v' : 'i'}:${g.source.id}` : null;
     const held = srcKey ? this.fpSlots.indexOf(srcKey) : -1;
     // (Q – the left hand – doing it, if it's free)
-    const wi = held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
+    // (the knife held at rest in my right hand meanwhile: the left does it)
+    const wi = ph.knife ? 0 : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
@@ -1410,14 +1416,40 @@ export class Scene3D {
     switch (g.kind) {
       case 'drag': {
         const k = vKey(g.source);
+        if (g.source && g.source.fromBox) {
+          // Out of its container onto the board: it stands in its container beside the board till
+          // you take it – a whole one in your hand, cut-up pieces as a heap in both cupped hands –
+          // and put it down on the board.
+          const box = this.boxSpot(w), it = D && D.items[g.source.id];
+          const bits = it && it.cut && (it.k || 0) >= (it.n || 0);
+          if (!g.drag) {
+            out.ov.set(k, { pos: box.clone(), yaw: out.yaw, box: {} });
+            hand(wi, at(st.grabPoint()).addScaledVector(UP, 0.05), 'hand', { curl: 0.3 });
+            ring({ ...g.from, r: 50 });
+            ring(g.target);
+            break;
+          }
+          out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
+          const P = at(g.pos);
+          P.y = Math.max(P.y, w.O.y + 0.05);
+          if (bits) {
+            out.ov.set(k, { pos: P.clone().addScaledVector(UP, 0.006), yaw: out.yaw, st: { spread: 0.022 } });
+            hand(wi, P.clone().addScaledVector(w.R, 0.019), 'palm', { curl: 0.55 });
+            hand(oi, P.clone().addScaledVector(w.R, -0.019), 'palm', { curl: 0.55 });
+          } else {
+            // (held from above, the fingers round it)
+            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw });
+            hand(wi, P.clone(), 'hand', { curl: 0.8 });
+          }
+          ring(g.target);
+          break;
+        }
         if (g.source && g.source.pieces) {
           // Cut up, gathered into its container: the pieces lie where they were cut till
           // you take them; then they're a little heap in your two cupped hands, carried over
           // to the container standing beside the board, and dropped in (it stays there, in it).
           const box = this.boxSpot(w);
           out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
-          // (the knife's put down on the board meanwhile)
-          out.knifeDown = { pos: w.O.clone().addScaledVector(w.N, 0.125).addScaledVector(w.R, -0.06).setY(w.O.y + 0.007), dir: w.N.clone().negate().addScaledVector(w.R, -0.35).normalize() };
           this.boxing = { id: g.source.id, fx: w.fx, pos: box.clone() };
           if (st.k > 0) { (this.boxedAt || (this.boxedAt = new Map())).set(g.source.id, this.boxing); break; }
           if (!g.drag) {
@@ -1595,6 +1627,12 @@ export class Scene3D {
         break;
       }
     }
+    // the knife held at rest (between knife work: turning the strips …) – its tip on the board, at the right
+    if (ph.knife && !out.tool && !out.hands[oi]) {
+      const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, 0.02).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.25).normalize(), 0.3);
+      out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: oi, off: K.K0.clone().sub(K.fist) };
+      hand(oi, K.fist, 'knife', { dir: K.xA });
+    }
     // a second finger on a touch screen is my other hand
     if (st.ptr2 && !out.hands[oi]) hand(oi, at(st.ptr2), 'hand', { curl: 0.7 });
     this.work = out;
@@ -1603,9 +1641,14 @@ export class Scene3D {
   // (where a food's container stands beside the board while it's out on it – and where it
   // stays, once what's cut up is gathered into it)
   boxSpot(w) { return w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1); }
+  // (the board's own knife, where it lies: its handle)
+  knifeSpot(w) {
+    const F = this.k3.fx[w.fx], k = F && F.parts.knife;
+    return k ? k.localToWorld(new THREE.Vector3(-0.0145, -0.006, 0)) : null;
+  }
 
   // The knife in my hand: its edge at E (the middle of it), the blade pointing d
-  // (level), its tip rocked down by tilt – the knife's own origin (fpKnife's)
+  // (level), its tip rocked down by tilt – the knife's own origin (chefKnife's)
   // and my fist on its handle there; xA: along it, tip-wards.
   knifeAt(E, d, tilt) {
     const xA = d.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(UP, -Math.sin(tilt)).normalize();
@@ -1665,23 +1708,17 @@ export class Scene3D {
       m.lookAt(this.camera.position);
       m.scale.setScalar(Math.max(0.02, r.r) * (1 + Math.sin(this.t * 6) * 0.06));
     });
-    // the tool in my hand (first person at work) – or the knife put down on the board
-    const T = W && (W.tool || (W.knifeDown && { kind: 'knife', down: W.knifeDown }));
+    // the tool in my hand (first person at work)
+    const T = W && W.tool;
     if (!T || !this.firstPerson) { if (fx.tool) fx.tool.visible = false; } else {
       if (!fx.tool || fx.toolKind !== T.kind) {
         if (fx.tool) this.scene.remove(fx.tool);
-        fx.tool = T.kind === 'knife' ? fpKnife() : toolMesh(T.kind);
+        fx.tool = T.kind === 'knife' ? chefKnife() : toolMesh(T.kind);
         fx.toolKind = T.kind;
         fx.tool.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         this.scene.add(fx.tool);
       }
       fx.tool.visible = true;
-      if (T.down) {
-        // (lying flat, its blade along dir)
-        const xA = T.down.dir, yA = new THREE.Vector3().crossVectors(UP, xA).normalize();
-        fx.tool.position.copy(T.down.pos);
-        fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, UP.clone()));
-      } else {
       // (in the fist itself – where the hand got to)
       fx.tool.position.copy(this.fpArms.group.visible ? this.fpArms.fist(T.hand) : T.grip);
       if (T.off) fx.tool.position.add(T.off);
@@ -1690,7 +1727,6 @@ export class Scene3D {
         const xA = T.dir.clone().normalize(), zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
         fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
       } else fx.tool.quaternion.setFromUnitVectors(UP, T.dir); // (hanging from the fist, leaning toward me)
-      }
     }
     const S = W && W.stream;
     fx.stream.visible = !!S;
@@ -2089,23 +2125,6 @@ function disposeTree(o) {
 // ------------------------------------------------------------------ vessel models
 
 const VCOL = { pot: '#c9ccd2', bigPot: '#c9ccd2', copperPot: '#d0804a', cocotte: '#c0412d', saucepan: '#c9ccd2', pan: '#3a3a42', paellaPan: '#4a4a52' };
-
-// First person's knife: a slim blade forward from the grip (x), its edge down,
-// a dark wooden handle back from it.
-function fpKnife() {
-  const g = new THREE.Group();
-  const sh = new THREE.Shape();
-  sh.moveTo(0.012, -0.022); sh.lineTo(0.1, -0.02); sh.quadraticCurveTo(0.13, -0.016, 0.135, 0.004); sh.lineTo(0.012, 0.006); sh.closePath();
-  const blade = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: 0.0018, bevelEnabled: false }), mat('#d8dde2', { metal: 0.85, rough: 0.22 }));
-  blade.position.z = -0.0009;
-  g.add(blade);
-  g.add(box(0.008, 0.02, 0.012, mat('#9aa0a6', { metal: 0.8, rough: 0.3 }), 0.009, -0.01, 0)); // (the bolster)
-  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.0068, 0.032, 4, 10), mat('#5a3a24', { rough: 0.5 }));
-  handle.rotation.z = Math.PI / 2;
-  handle.position.set(-0.0145, -0.006, 0);
-  g.add(handle);
-  return g;
-}
 
 function buildVessel(kind) {
   const g = new THREE.Group();

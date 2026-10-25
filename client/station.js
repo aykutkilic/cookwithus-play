@@ -27,6 +27,9 @@ const OVEN_KNOB = { x: 680, y: 145, r: 36 };
 const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 795, y: 470, r: 52 };
 const DW_BTN = { x: 640, y: 214, r: 40 }; // the dishwasher's start button, on its control strip
+// the board's knife, lying at its front left when it isn't in your hand; the food's container beside it
+const KNIFE_AT = { x: 236, y: 548, r: 70 };
+const BOX_AT = { x: 770, y: 500, r: 110 };
 const SOAP = { x: 770, y: 300, r: 60 }; // the dish soap bottle by the sink (by the board too, washing it)
 const ASIDE = { x: 820, y: 520 };
 const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
@@ -129,7 +132,8 @@ export class Station {
         else if (obj === 'lidOff') { g.source = { type: 'lid', on: true }; g.subject = { type: 'vessel', id: vId }; }
         else if (obj === 'scraps' || obj === 'bag' || obj === 'newBag') { g.source = { type: obj }; g.subject = null; }
         else if (obj === 'thing') { g.source = { type: s.thing[0] === 'v' ? 'vessel' : 'item', id: s.thing.slice(2) }; g.subject = null; }
-        else if (obj === 'pieces') { g.source = { type: 'item', id: s.item, pieces: true }; g.subject = null; } // (cut up, off the board into its container)
+        else if (obj === 'pieces') { g.source = { type: 'item', id: s.item, pieces: true }; g.subject = null; } // (off the board into its container)
+        else if (obj === 'fromBox') { g.source = { type: 'item', id: s.item, fromBox: true }; g.subject = null; } // (out of its container onto the board)
         const toMain = ph.to !== 'aside';
         const start = toMain ? { ...SIDE } : { ...MAIN };
         if (obj === 'lidOff') { start.x = MAIN.x; start.y = MAIN.y - 150; }
@@ -138,6 +142,7 @@ export class Station {
         if (obj === 'bag') { start.x = 500; start.y = 280; }
         if (obj === 'thing') { const at = this.storeLayout().get(s.thing); if (at) { start.x = at.x; start.y = at.y; } }
         if (obj === 'pieces') { start.x = MAIN.x; start.y = MAIN.y - 30; }
+        if (obj === 'fromBox') { start.x = BOX_AT.x; start.y = BOX_AT.y - 10; }
         g.from = start; g.pos = { ...start };
         g.target = this.targetFor(ph.to);
         // a pan, a saucepan, a cezve, a kettle: you take it by the handle
@@ -212,7 +217,8 @@ export class Station {
       case 'ovenMouth': return { x: 520, y: 420, r: 110 };
       case 'tandoorWall': return { x: 500, y: 330, r: 110 };
       case 'shelf': return { x: 500, y: 330, r: 160 };
-      case 'box': return { x: 770, y: 500, r: 110 }; // (the food's container, beside the board)
+      case 'box': return { ...BOX_AT }; // (the food's container, beside the board)
+      case 'board': return { x: MAIN.x, y: MAIN.y - 40, r: 140 };
       case 'aside': return { x: ASIDE.x, y: ASIDE.y, r: 150 };
       case 'hands': return { x: 500, y: 600, r: 120 };
       case 'bin': return { x: 500, y: 260, r: 130 };
@@ -925,6 +931,8 @@ export class Station {
       case 'pedal': return { x: 500, y: 590, r: 60 };
       case 'soap': return SOAP;
       case 'dwStart': return DW_BTN;
+      // (the board's knife – first person: where it really lies)
+      case 'knife': case 'knifeRest': return (this.targetHook && this.targetHook('knife')) || KNIFE_AT;
       default: return { x: 500, y: 300, r: 80 };
     }
   }
@@ -1186,13 +1194,19 @@ export class Station {
     }
     // the grater stands beside the food while grating
     if (g && g.ph.tool === 'grater') drawTool(ctx, 'grater', MAIN.x + 150, MAIN.y, 1.1, 0, false);
-    // gathering it up: its container stands beside the board (the pieces in it, once they're in)
-    if (g && g.kind === 'drag' && g.source && g.source.pieces && g.target) {
-      const tg = g.target, cut = D.items[g.source.id];
-      ctx.save(); ctx.translate(tg.x, tg.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back');
-      if (this.k > 0 && cut) drawPieces(ctx, cut.kind, cut.cut || 'slices', 7, 0, -12, 0.8, 3);
+    // taking it out / putting it back: its container stands beside the board (with it in, once it's in)
+    if (g && g.kind === 'drag' && g.source && (g.source.pieces || g.source.fromBox)) {
+      const it2 = D.items[g.source.id];
+      ctx.save(); ctx.translate(BOX_AT.x, BOX_AT.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back');
+      if (g.source.pieces && this.k > 0 && it2) {
+        if (it2.cut && (it2.k || 0) >= (it2.n || 0)) drawPieces(ctx, it2.kind, it2.cut, 7, 0, -12, 0.8, 3);
+        else drawIngredient(ctx, it2.kind, it2, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
+      }
       this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore();
     }
+    // the board's knife, lying there – unless it's in my hand
+    const ph = g && g.ph;
+    if (!(ph && (ph.tool === 'knife' || ph.knife))) drawTool(ctx, 'knife', KNIFE_AT.x, KNIFE_AT.y, 0.9, -1.15, false);
     // cleaning the board: its stains and crumbs, the suds, the dish soap
     if (s.do === 'wipe') {
       const { dirt, suds } = this.washLook();
@@ -2474,6 +2488,7 @@ export class Station {
     if (g.kind === 'drag' || g.kind === 'scoop' || g.kind === 'dip' || g.kind === 'crack' || (g.kind === 'wrap' && g.stage === 0)) tool = p.down ? 'grab' : 'hand';
     if (g.kind === 'knob' || g.kind === 'tap' || g.kind === 'pour' || g.kind === 'fill' || g.kind === 'place') tool = p.down ? 'grab' : 'hand';
     if (g.kind === 'flick') tool = 'grab';
+    if (g.kind === 'tap' && ph.tool === 'knife') tool = 'knife'; // (putting the knife down)
     if (g.kind === 'dip' && g.drag) tool = null; // the tongs are drawn with the food
     const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
     // the steadying hand

@@ -853,6 +853,13 @@ function openWork(sid, fx) {
   station.headless = true;
   // things put under the tap / in the colander go where the water falls in the basin
   station.targetHook = (to) => {
+    // (the board's own knife, where it lies)
+    if (to === 'knife') {
+      const w = workFrame(), k = w && scene.knifeSpot(w);
+      if (!k) return null;
+      const p = scene.workPoint(w, k);
+      return { x: p.x, y: p.y, r: Math.max(50, 0.04 / w.S) };
+    }
     // (the food's container, standing beside the board)
     if (to === 'box') {
       const w = workFrame();
@@ -1885,6 +1892,7 @@ function buildView(now, dt) {
   const guide = guideNow();
   const busy = new Map();
   const activeAt = new Map(), activeItems = new Map();
+  const knives = new Set(); // the boards whose knife is in someone's hand just now
   if (C && x) {
     for (const [sid, st] of Object.entries(C.steps)) {
       if (st.s !== 'active' || !st.fx) continue;
@@ -1892,6 +1900,10 @@ function buildView(now, dt) {
       if (m) busy.set(st.fx, m.color);
       const d = stepDef(x, sid);
       if (d && d.item) { activeAt.set(st.fx, d.item); activeItems.set(d.item, st.fx); }
+      // (mine: as far as I've got with it)
+      const phi = S.working && S.working.sid === sid && station.on && station.mode === 'step' ? station.ph : st.ph;
+      const ph = d && ACTIONS[d.do] && phasesOf(d, bakeKind(fixtureById(K, st.fx)))[phi];
+      if (ph && (ph.tool === 'knife' || ph.knife)) knives.add(st.fx);
       // (a board being cleaned: what stood on it is moved aside)
       if (sid.startsWith('#wipe@')) activeAt.set(st.fx, sid);
     }
@@ -1935,7 +1947,7 @@ function buildView(now, dt) {
     const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
     station.geo = scene.workGeo(wf, subj);
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, knives, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:

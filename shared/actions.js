@@ -27,7 +27,7 @@
 // 'vessel' (wherever the step's vessel currently is). `moves` puts the step's
 // vessel at the fixture where the step is done.
 
-import { INGREDIENTS } from './ingredients.js';
+import { INGREDIENTS, boxable } from './ingredients.js';
 
 const LIQUID_TINT = {
   water: null, broth: '#e3b860', milk: '#fbf7ee', cream: '#fbf3e0', passata: '#c8321e', redWine: '#7a1a2e',
@@ -68,9 +68,25 @@ export function stepHands(step) {
   return a && (a.cap === 'board' || BOTH_HANDS.has(step.do)) ? 2 : 1;
 }
 
-// Cut up, it's gathered up off the board in your hands and put in its food
-// container (beside the board) – it's kept and carried in that.
-const boxUp = () => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', hint: 'Gather it up in your hands and put it in its container' });
+// Loose food lives in its food container (boxable): a board job on it starts by
+// taking it out onto the board and ends by putting it back – cut up, gathered up
+// in both hands – where it stands beside the board. The knife is the board's own:
+// picked up off the board before the knife work and put back down on it after
+// (held meanwhile – `knife` – while the other hand does something in between).
+const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board' });
+const boxUp = (cut) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put it back in its container' });
+const pickKnife = () => ({ g: 'tap', hot: 'knife', tool: 'hand', hint: 'Pick up the knife' });
+const putKnife = () => ({ g: 'tap', hot: 'knifeRest', tool: 'knife', hint: 'Put the knife down on the board' });
+function onBoard(s, phases, cut = false) {
+  let out = phases;
+  const k0 = out.findIndex((p) => p.tool === 'knife');
+  if (k0 >= 0) {
+    let k1 = out.length - 1;
+    while (out[k1].tool !== 'knife') k1--;
+    out = [...out.slice(0, k0), pickKnife(), ...out.slice(k0, k1 + 1).map((p) => (p.tool === 'knife' ? p : { ...p, knife: true })), putKnife(), ...out.slice(k1 + 1)];
+  }
+  return s.itemKind && !boxable(s.itemKind) ? out : [takeOut(), ...out, boxUp(cut)];
+}
 
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)
 const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, fx) => { fx.door = to; } });
@@ -126,37 +142,36 @@ export const ACTIONS = {
   // ------------------------------------------------------------- board: knife work
   peel: {
     cap: 'board', verb: 'Peel', tool: 'peeler', icon: '🥔',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'peel', n: s.n || 6, tool: 'peeler', hint: 'Pull the peeler down along it',
         prog: (D, st, k, v, ph) => { item(D, st).peeled = k / ph.n; }, eff: (S, st) => { item(S, st).peeled = 1; } },
-    ],
+    ]),
   },
   skin: {
     cap: 'board', verb: 'Peel', tool: 'hand', icon: '🧅',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'peel', n: s.n || 3, tool: 'hand', hint: 'Pull the papery skin off',
         prog: (D, st, k, v, ph) => { item(D, st).peeled = k / ph.n; }, eff: (S, st) => { item(S, st).peeled = 1; } },
-    ],
+    ]),
   },
   shell: {
     cap: 'board', verb: 'Shell', tool: 'hand', icon: '🥚',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'peel', n: s.n || 4, tool: 'hand', hint: 'Crack and pull the shell off',
         prog: (D, st, k, v, ph) => { item(D, st).peeled = k / ph.n; }, eff: (S, st) => { item(S, st).peeled = 1; } },
-    ],
+    ]),
   },
   slice: {
     cap: 'board', verb: 'Slice', tool: 'knife', icon: '🔪',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'slice', n: s.n || 6, cut: s.cut || 'slices', tool: 'knife', hint: 'Knife down through it, then back up – one per slice',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   dice: {
     cap: 'board', verb: 'Dice', tool: 'knife', icon: '🔪',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'slice', n: s.n || 4, cut: 'strips', tool: 'knife', hint: 'Cut it into strips – down and up for each cut',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'strips', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'strips', k: ph.n, n: ph.n }); } },
@@ -164,75 +179,69 @@ export const ACTIONS = {
       { g: 'chop', mode: 'slice', n: s.n || 4, cut: 'dice', tool: 'knife', hint: 'Now cut across into little cubes',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'dice', k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   mince: {
     cap: 'board', verb: 'Mince', tool: 'knife', icon: '🔪',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'mince', n: s.n || 10, cut: 'mince', tool: 'knife', hint: 'Quick little chops all over it',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'mince', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'mince', k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   chop: {
     cap: 'board', verb: 'Chop', tool: 'knife', icon: '🔪',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'slice', n: s.n || 5, cut: s.cut || 'chunks', tool: 'knife', hint: 'Knife down and up – one per cut',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   slit: {
     cap: 'board', verb: 'Slit', tool: 'knife', icon: '🔪',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'strokes', axis: 'h', n: s.n || 2, tool: 'knife', once: true, hint: 'Draw the knife along it to open a pocket',
         prog: (D, st, k) => { if (k > 0) Object.assign(item(D, st), { cut: 'slit' }); },
         eff: (S, st) => { Object.assign(item(S, st), { cut: 'slit' }); } },
-    ],
+    ]),
   },
   grate: {
     cap: 'board', verb: 'Grate', tool: 'grater', icon: '🧀',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'strokes', axis: 'v', n: s.n || 8, tool: 'grater', hint: 'Rub it up and down the grater',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'grated', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'grated', k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   tear: {
     cap: 'board', verb: 'Tear', tool: 'hand', icon: '🤌',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'strokes', axis: 'h', n: s.n || 4, tool: 'grab', hint: 'Pull it apart into pieces',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'torn', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'torn', k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   crush: {
     cap: 'board', verb: 'Crush', tool: 'hand', icon: '👊',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'mince', n: s.n || 3, cut: 'crushed', tool: 'knife', flat: true, hint: 'Press down hard with the flat of the knife',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'crushed', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'crushed', k: ph.n, n: ph.n }); } },
-      boxUp(),
-    ],
+    ], true),
   },
   core: {
     cap: 'board', verb: 'Core', tool: 'knife', icon: '🔪',
-    phases: () => [
+    phases: (s) => onBoard(s, [
       { g: 'circle', n: 1, tool: 'knife', hint: 'Cut round the core with the knife tip', eff: (S, st) => { item(S, st).cored = 1; } },
-    ],
+    ]),
   },
   separate: {
     cap: 'board', verb: 'Separate', tool: 'hand', icon: '🥬',
-    phases: (s) => [
+    phases: (s) => onBoard(s, [
       { g: 'peel', n: s.n || 6, tool: 'hand', hint: 'Peel the leaves off one by one',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'leaves', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'leaves', k: ph.n, n: ph.n }); } },
-    ],
+    ], true),
   },
 
   // ------------------------------------------------------------- board: dough & hands

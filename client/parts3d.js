@@ -156,3 +156,20 @@ export function bake(root, { cast = true, receive = true } = {}) {
   }
   return out;
 }
+
+// A chef's knife: a slim blade forward from its origin (x), its edge down (-y),
+// a dark wooden handle back from it (the board's own, and in my hand in first person).
+export function chefKnife() {
+  const g = new THREE.Group();
+  const sh = new THREE.Shape();
+  sh.moveTo(0.012, -0.022); sh.lineTo(0.1, -0.02); sh.quadraticCurveTo(0.13, -0.016, 0.135, 0.004); sh.lineTo(0.012, 0.006); sh.closePath();
+  const blade = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: 0.0018, bevelEnabled: false }), mat('#d8dde2', { metal: 0.85, rough: 0.22 }));
+  blade.position.z = -0.0009;
+  g.add(blade);
+  g.add(box(0.008, 0.02, 0.012, mat('#9aa0a6', { metal: 0.8, rough: 0.3 }), 0.009, -0.01, 0)); // (the bolster)
+  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.0068, 0.032, 4, 10), mat('#5a3a24', { rough: 0.5 }));
+  handle.rotation.z = Math.PI / 2;
+  handle.position.set(-0.0145, -0.006, 0);
+  g.add(handle);
+  return g;
+}

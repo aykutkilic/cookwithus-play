@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { FIXTURES } from '../shared/kitchens.js';
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
-import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake } from './parts3d.js';
+import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, chefKnife } from './parts3d.js';
 
 export const COUNTER_H = 0.46;
 const SINK_DEPTH = 0.1;
@@ -116,6 +116,16 @@ export function buildKitchen3D(K) {
       case 'aga': aga(g, ctx, d); break;
       case 'piano': piano(g, ctx, d); break;
       default: break;
+    }
+    // a board's own knife, lying flat at its front left – when it isn't in someone's hand
+    if (d.anchors.board) {
+      const b = d.anchors.board, dir = v3(-0.35, 0, -1).normalize();
+      const k = chefKnife();
+      k.userData.live = true; // (shown and hidden: not baked in)
+      k.position.set(b.x - 0.12, b.y + 0.007, b.z + 0.125);
+      k.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(dir, new THREE.Vector3().crossVectors(v3(0, 1, 0), dir), v3(0, 1, 0)));
+      g.add(k);
+      d.parts.knife = k;
     }
     // place: local front is +z; face 'e' fronts turn to +x
     const cx = f.x + f.w / 2, cz = f.y + f.h / 2;

@@ -14,7 +14,7 @@
 // is 80 px tall: 6 cm-ish next to the cook's hand).
 import * as THREE from 'three';
 import { artOf, artPal, normCut, sizeArt, defaultCount, pieceCol, roundDims, tubeOf, BLOCK_SIZE, mixHex, doughFlatGeom, artHash } from './art.js';
-import { ingName } from '../shared/ingredients.js';
+import { ingName, PACKED } from '../shared/ingredients.js';
 
 export const FOOD_K = 0.00075;
 const K = FOOD_K;
@@ -147,7 +147,6 @@ export function hasCuts(root) {
 // plastic or coloured plastic, from nesting sets of three (the small one fits
 // in the middle one, that in the big one). What comes in its own pack – a
 // bottle, carton, can, jar, sack, shaker – doesn't; nor does dough.
-const PACKED = new Set(['bottle', 'carton', 'can', 'jar', 'sack', 'shaker', 'tea', 'jug', 'dough']);
 export function boxable(kind) { const a = artOf(kind); return !!a && !PACKED.has(a.type); }
 // (inside at the rim: w × d, h deep; the walls lean out a little, so they stack)
 const BOX_SIZES = [{ w: 0.12, d: 0.09, h: 0.055 }, { w: 0.16, d: 0.12, h: 0.065 }, { w: 0.21, d: 0.155, h: 0.08 }];

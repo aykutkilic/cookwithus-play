@@ -172,6 +172,11 @@ export const VESSELS = {
 export const ING_KINDS = Object.keys(INGREDIENTS);
 export const VESSEL_KINDS = Object.keys(VESSELS);
 
+// Loose food is kept, carried and put down in a food container; what comes in
+// its own pack (a bottle, a carton, a can, a jar, a sack, a shaker …) and dough don't.
+export const PACKED = new Set(['bottle', 'carton', 'can', 'jar', 'sack', 'shaker', 'tea', 'jug', 'dough']);
+export function boxable(kind) { const i = INGREDIENTS[kind]; return !!i && !PACKED.has(i.art.type); }
+
 export function ingName(kind, n = 1) {
   const i = INGREDIENTS[kind];
   if (!i) return kind;

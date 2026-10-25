@@ -79,6 +79,7 @@ export function expandRecipe(r, cap = 1) {
   for (const s of steps) s.after = s.after.flatMap((a) => splitOf[a] || [a]);
   for (const s of steps) {
     s.name = stepTitle(s, names) + (s.part ? ` (${s.part[0]}/${s.part[1]})` : '');
+    if (s.item && ing[s.item]) s.itemKind = ing[s.item].kind; // (what it is: kept in a food container or not)
   }
   return { ...r, ing, ves, names, steps };
 }
