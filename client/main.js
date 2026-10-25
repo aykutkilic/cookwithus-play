@@ -848,6 +848,7 @@ function openWork(sid, fx) {
     return { x: p.x, y: p.y, r: 110 };
   };
   $('cross').hidden = true;
+  for (const h of hands) { h.ox = h.oy = 0; } // (the hand starts over the middle of the work)
   $('fwIcon').textContent = (ACTIONS[s.do] && ACTIONS[s.do].icon) || '🍳';
   $('fwName').textContent = s.name;
   $('fpWork').hidden = false;
@@ -1012,14 +1013,16 @@ function handAt(i) {
 }
 function mouseMoved(mx, my) {
   if (Math.abs(mx) > 600 || Math.abs(my) > 600) return; // (a browser's stray jump)
-  const h = moving >= 0 && hands[moving];
-  if (h && h.down) {
-    // a hand holds on: the mouse moves it (the view stays put)
+  // a hand holds on – or, at work (the camera looking down on it), the hand over it: the mouse moves it
+  const atWork = !!(S.working && S.working.fp);
+  const i = moving >= 0 && hands[moving].down ? moving : atWork ? hover : -1;
+  const h = i >= 0 && hands[i];
+  if (h) {
     const c = scene.viewCenter(), r = canvas.getBoundingClientRect();
     h.ox = Math.max(r.left + 4, Math.min(r.right - 4, c.x + h.ox + mx)) - c.x;
     h.oy = Math.max(r.top + 4, Math.min(r.bottom - 4, c.y + h.oy + my)) - c.y;
-    const p = handAt(moving);
-    if (h.act === 'work') workPtr('move', p);
+    const p = handAt(i);
+    if (atWork) workPtr('move', p);
     else if (h.act === 'grab' && S.fpDrag && S.fpDrag.pid === p.pointerId) fpDragTo(p.clientX, p.clientY);
     return;
   }
@@ -1036,8 +1039,9 @@ function handDown(i) {
   sfx.unlock();
   if (!$('modal').hidden) return;
   if (S.working && S.working.fp) {
-    // at work: the hand goes down on the work where I look
-    Object.assign(h, { down: true, ox: 0, oy: 0, act: 'work' });
+    // at work: the hand goes down on the work where the mouse has it
+    const at = hands[hover];
+    Object.assign(h, { down: true, ox: at.ox, oy: at.oy, act: 'work' });
     moving = i; hover = i;
     workPtr('down', handAt(i));
     return;
@@ -1073,12 +1077,13 @@ function handUp(i) {
   }
   h.act = null;
 }
-// each frame: a hand let go drifts back to the dot; at work the free hand hovers where I look
+// each frame: a hand let go drifts back to the dot (at work it stays where the mouse left it, and hovers there)
 function handsFrame(dt) {
   if (!locked()) return;
+  const atWork = !!(S.working && S.working.fp);
   for (const [i, h] of hands.entries()) {
     if (h.down && ((h.act === 'work' && !(S.working && S.working.fp)) || (h.act === 'grab' && !(S.fpDrag && S.fpDrag.pid === HAND_ID[i])))) { h.down = false; h.act = null; if (moving === i) moving = hands[1 - i].down ? 1 - i : -1; }
-    if (h.down || (!h.ox && !h.oy)) continue;
+    if (h.down || (!h.ox && !h.oy) || atWork) continue;
     const k = Math.exp(-dt * 12);
     h.ox *= k; h.oy *= k;
     if (Math.hypot(h.ox, h.oy) < 0.5) h.ox = h.oy = 0;

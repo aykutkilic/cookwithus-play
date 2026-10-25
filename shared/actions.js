@@ -289,7 +289,7 @@ export const ACTIONS = {
     phases: (s) => [
       { g: 'crack', n: s.n || 2, tool: 'hand', hint: 'Knock the egg on the rim, then pull the shell apart',
         prog: (D, st, k) => { if (k > 0) addContent(ves(D, st.into), 'egg', 'cracked'); },
-        eff: (S, st) => { useItem(S, st.item, st.into); } },
+        eff: (S, st) => { const it = S.items[st.item]; if (it) it.cracked = 1; useItem(S, st.item, st.into); } },
     ],
   },
   stuff: {

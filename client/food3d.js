@@ -7,7 +7,8 @@
 // (ball / flat, sauce, toppings), leaf rolls, a head's leaves.
 //
 // buildFood(kind, st) → a THREE.Group: its origin is the middle of its
-// bottom, +y up, its length along x. Sizes are art.js's px × FOOD_K (an egg
+// bottom, +y up, its length along x. st.spread (a radius): in a pot or pan –
+// the pieces scattered over its floor, slices lying flat, eggs cracked across it. Sizes are art.js's px × FOOD_K (an egg
 // is 80 px tall: 6 cm-ish next to the cook's hand).
 import * as THREE from 'three';
 import { artOf, artPal, normCut, sizeArt, defaultCount, pieceCol, roundDims, tubeOf, BLOCK_SIZE, mixHex, doughFlatGeom, artHash } from './art.js';
@@ -103,7 +104,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -144,19 +145,23 @@ function foodLocal(g, kind, st) {
   if (a.type === 'egg' && (cut === 'cracked' || cut === 'beaten' || st.cracked)) return pieces(g, a, P, cut === 'beaten' ? 'beaten' : 'cracked', defaultCount(a, 'cracked', st), seed, st);
   if (cut && cut !== 'whole') return cutProgress(g, a, P, cut, st, seed, wet);
   const q = clamp(num(st.qty, 1) | 0, 1, 8);
-  if (q > 1 && a.type !== 'pile' && a.type !== 'leaf' && !(a.type === 'block' && a.shape === 'mince')) return cluster(g, a, q, (h, i) => whole(h, a, P, { ...st, qty: 1 }, seed + i * 31, wet));
+  if (q > 1 && a.type !== 'pile' && a.type !== 'leaf' && !(a.type === 'block' && a.shape === 'mince')) return cluster(g, a, q, (h, i) => whole(h, a, P, { ...st, qty: 1 }, seed + i * 31, wet), num(st.spread));
   whole(g, a, P, st, seed, wet);
 }
 
-// several of a thing, side by side (a row; two rows for many)
-function cluster(g, a, q, make) {
+// several of a thing, side by side (a row; two rows for many) – or round a pan (spread: its radius)
+function cluster(g, a, q, make, spread = 0) {
   const S = sizeArt(a);
   const w = S.w * K, d = Math.min(S.w, S.h) * K;
   const long = S.w > S.h * 1.6;
   for (let i = 0; i < q; i++) {
     const h = new THREE.Group();
     make(h, i);
-    if (long) h.position.set((i % 2 ? 0.1 : -0.06) * w, 0, (i - (q - 1) / 2) * d * 0.95);
+    if (spread > 0) {
+      const an = i * 2.4, rr = q > 1 ? Math.min(spread - w * 0.4, spread * 0.55) * (0.5 + 0.5 * ((i * 0.618) % 1)) : 0;
+      h.position.set(Math.cos(an) * Math.max(0, rr), 0, Math.sin(an) * Math.max(0, rr));
+      h.rotation.y = an;
+    } else if (long) h.position.set((i % 2 ? 0.1 : -0.06) * w, 0, (i - (q - 1) / 2) * d * 0.95);
     else {
       const perRow = q <= 3 ? q : Math.ceil(q / 2), row = Math.floor(i / perRow), col = i % perRow;
       h.position.set((col - (Math.min(perRow, q - row * perRow) - 1) / 2) * w * 0.82, 0, (row - 0.5 * (q > perRow)) * d * 0.9);
@@ -505,14 +510,16 @@ function pieces(g, a, P, cut, count, seed, st) {
   count = clamp(count | 0, 1, 40);
   const S = sizeArt(a);
   const W = Math.max(0.04, S.w * K);
+  const spread = num(st && st.spread);
   if (cut === 'cracked' || cut === 'beaten') {
     // in a pan / bowl: whites and yolks, or beaten yellow
     const ck = clamp(num(st && st.cook), 0, 1);
     for (let i = 0; i < count; i++) {
-      const x = (i - (count - 1) / 2) * 0.05;
-      if (cut === 'beaten') { part(g, GEO.cyl, fm(mixHex('#f8d55a', '#e8a840', ck), { rough: 0.5 }), x, 0.002, 0, 0.035, 0.004, 0.03); continue; }
-      part(g, GEO.sphere, fm(ck > 0.2 ? '#fbfaf4' : '#f4f2ea', { rough: 0.3, opacity: ck > 0.2 ? 1 : 0.85 }), x, 0.002, 0, 0.032, 0.004, 0.028);
-      part(g, GEO.sphere, fm(mixHex(P.c3, '#f0a020', ck * 0.4), { rough: 0.3 }), x + 0.004, 0.006, -0.002, 0.012, 0.007, 0.012);
+      let x = (i - (count - 1) / 2) * 0.05, z = 0;
+      if (spread > 0) { const an = i * 2.4 + 0.5, d = count > 1 ? Math.max(0, spread - 0.035) * (0.45 + 0.5 * ((i * 0.618) % 1)) : 0; x = Math.cos(an) * d; z = Math.sin(an) * d; }
+      if (cut === 'beaten') { part(g, GEO.cyl, fm(mixHex('#f8d55a', '#e8a840', ck), { rough: 0.5 }), x, 0.002, z, spread > 0 ? spread * 0.9 : 0.035, 0.004, spread > 0 ? spread * 0.9 : 0.03); if (spread > 0) break; continue; }
+      part(g, GEO.sphere, fm(ck > 0.2 ? '#fbfaf4' : '#f4f2ea', { rough: 0.3, opacity: ck > 0.2 ? 1 : 0.85 }), x, 0.002, z, 0.032, 0.004, 0.028);
+      part(g, GEO.sphere, fm(mixHex(P.c3, '#f0a020', ck * 0.4), { rough: 0.3 }), x + 0.004, 0.006, z - 0.002, 0.012, 0.007, 0.012);
     }
     return;
   }
@@ -521,21 +528,22 @@ function pieces(g, a, P, cut, count, seed, st) {
     return;
   }
   if (cut === 'leaves') { for (let i = 0; i < Math.min(count, 6); i++) leafShape(g, a, P, i, 0.6); return; }
-  // slices / rings fan out in a row; the rest make a little heap
+  // slices / rings fan out in a row; the rest make a little heap – in a pan, all over its floor
   const row = cut === 'slices' || cut === 'rings' || cut === 'halves' || cut === 'wedges';
   // (slices lean on each other in a row; small bits make a heap, higher in the middle)
   const heapR = 0.016 + Math.sqrt(count) * 0.0065;
   for (let i = 0; i < count; i++) {
     let x, z, y = 0;
-    if (row) { x = (i - (count - 1) / 2) * Math.min(0.016, W / Math.max(1, count)); z = (r() - 0.5) * 0.008; } else { const an = r() * TAU, d = Math.sqrt(r()); x = Math.cos(an) * d * heapR; z = Math.sin(an) * d * heapR * 0.8; y = (1 - d) * heapR * 0.45; }
+    if (spread > 0) { const an = r() * TAU, d = Math.sqrt(r()) * spread; x = Math.cos(an) * d; z = Math.sin(an) * d; } else if (row) { x = (i - (count - 1) / 2) * Math.min(0.016, W / Math.max(1, count)); z = (r() - 0.5) * 0.008; } else { const an = r() * TAU, d = Math.sqrt(r()); x = Math.cos(an) * d * heapR; z = Math.sin(an) * d * heapR * 0.8; y = (1 - d) * heapR * 0.45; }
     const h = new THREE.Group();
-    piece(h, a, P, cut, 0, 0, r, 1, i, count);
+    piece(h, a, P, cut, 0, 0, r, 1, i, count, spread > 0);
     h.position.set(x, y, z);
+    if (spread > 0) h.rotation.y = r() * TAU;
     g.add(h);
   }
 }
 // one piece (its colour: the flesh, or the skin for small bits of some)
-function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1) {
+function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1, lying = false) {
   const flesh = fm(cut === 'dice' || cut === 'mince' || cut === 'chunks' || cut === 'strips' || cut === 'grated' || cut === 'torn' || cut === 'crushed' ? pieceCol(a, P) : P.c2, { rough: 0.5 });
   const skin = fm(P.c1, { rough: 0.5 });
   let R = 0.026;
@@ -549,11 +557,14 @@ function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1) {
   switch (cut) {
     case 'slices': {
       const t = Math.max(0.003, R * 0.12);
-      const tilt = 1.05 + r() * 0.2; // (lying, leaning on the next one)
+      // (leaning on the next one in a row; in a pan, lying flat)
+      if (lying) { part(g, GEO.cyl, [skin, flesh, flesh], x, t * 0.6, z, R, t, R, (r() - 0.5) * 0.2, 0, (r() - 0.5) * 0.2); break; }
+      const tilt = 1.05 + r() * 0.2;
       part(g, GEO.cyl, [skin, flesh, flesh], x, R * Math.cos(tilt) + t, z, R, t, R, tilt, 0, -0.15 + r() * 0.3);
       break;
     }
-    case 'rings': part(g, GEO.torus, flesh, x, 0.004, z, R * 0.9, R * 0.9, 0.006, Math.PI / 2 - 0.25, 0, 0); break;
+    // (a hollow thing's ring is its skin – a pepper's green; an onion's is its flesh)
+    case 'rings': part(g, GEO.torus, a.type === 'long' ? skin : flesh, x, 0.004, z, R * 0.9, R * 0.9, 0.006, Math.PI / 2 - (lying ? 0.02 : 0.25), 0, 0); break;
     case 'halves': {
       const h = new THREE.Group();
       part(h, GEO.hemi, skin, 0, 0, 0, R, R, R * 0.95);

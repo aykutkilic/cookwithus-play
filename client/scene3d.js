@@ -14,7 +14,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
-import { VESSELS, twoHanded } from '../shared/ingredients.js';
+import { VESSELS, twoHanded, INGREDIENTS } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
 import { FpArms } from './fparms3d.js';
@@ -107,8 +107,12 @@ export class Scene3D {
     this.dt = 0;
     this.zoom = 1;
     this.firstPerson = false;
-    this.scene.add(this.camera); // (its children – my arms in first person – are drawn too)
-    this.fpArms = new FpArms(this.camera);
+    this.scene.add(this.camera);
+    // first person: my eyes – my arms hang from them (its children are drawn too). The view is
+    // seen from them, except at work: then a camera of its own looks down on the work
+    this.eye = new THREE.PerspectiveCamera(80, 1, 0.03, 200);
+    this.scene.add(this.eye);
+    this.fpArms = new FpArms(this.eye);
     this.fpSlots = [null, null]; // what my left and right hands hold (first person)
     this.fpWant = new Map();     // (a thing being taken → the hand taking it)
     this.fpHold = new Map();     // thing -> how it's held ('handle', 'palm', 'side')
@@ -239,6 +243,7 @@ export class Scene3D {
   // F2: looking through my cook's eyes, or at the whole room
   setFirstPerson(on) {
     this.firstPerson = on;
+    this.workCamK = 0;
     this.camera.fov = on ? 80 : 32;
     this.fpCam = null; // (start right at my eyes)
     this.camera.near = on ? 0.03 : 0.1;
@@ -450,10 +455,31 @@ export class Scene3D {
       const lean = Math.max(this.fpArms.lean(), this.workLean);
       const eye = this.eyeAt(me.x, me.y, yaw, view.eyeOff || 0, lean);
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
-      this.camera.position.copy(eye);
+      this.eye.position.copy(eye);
       this.camTarget.copy(eye).add(dir);
-      this.camera.lookAt(this.camTarget);
-      this.camPos.copy(eye);
+      this.eye.lookAt(this.camTarget);
+      this.eye.updateMatrixWorld(true);
+      // at work the view leaves my eyes for a camera of its own, almost straight down on
+      // the work (and in front of the knob, the tap's lever) – my arms stay at my
+      // shoulders: I see them reach in. It glides there and back.
+      const wc = this.work && !this.work.idle && this.work.cam;
+      if (wc) this.workCamAt = wc;
+      this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6));
+      if (!wc && this.workCamK < 0.003) this.workCamK = 0;
+      const wk = this.workCamK * this.workCamK * (3 - 2 * this.workCamK);
+      if (wk > 0 && this.workCamAt) {
+        const Wc = this.workCamAt;
+        const q1 = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(Wc.pos, Wc.look, UP));
+        this.camera.position.copy(eye).lerp(Wc.pos, wk);
+        this.camera.quaternion.copy(this.eye.quaternion).slerp(q1, wk);
+      } else {
+        this.camera.position.copy(eye);
+        this.camera.quaternion.copy(this.eye.quaternion);
+      }
+      const fov = 80 + (WORK_FOV - 80) * wk;
+      if (Math.abs(this.camera.fov - fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
+      this.camera.updateMatrixWorld(true);
+      this.camPos.copy(this.camera.position);
       return;
     }
     const R = Math.hypot(W, H) / 2 + 0.6;
@@ -525,7 +551,8 @@ export class Scene3D {
           const heat = v ? v.heat || 0 : lit || 0; // (an empty burner left on burns too)
           fr.visible = heat > 0;
           if (heat > 0) {
-            fr.scale.set(1, 0.6 + heat * 0.35, 1);
+            // (a pan on it: the flames spread out under its bottom – they never come up through it)
+            if (v) fr.scale.set(1.2, 0.28 + heat * 0.04, 1.2); else fr.scale.set(1, 0.6 + heat * 0.35, 1);
             fr.children.forEach((c, i) => { c.scale.y = 0.8 + Math.sin(this.t * 22 + i * 1.7) * 0.25; });
           }
           if (P.knobs && P.knobs[slot]) P.knobs[slot].rotation.z = -heat * 0.9;
@@ -708,7 +735,9 @@ export class Scene3D {
         // (at work, first person: tipped to pour, tossed …)
         if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
         if (ov) rec.group.position.copy(ov.pos);
-        updateVessel(rec, v, this.t);
+        updateVessel(rec, v, this.t, this.firstPerson);
+        // first person: what's in it, in 3D (what's runny is its surface)
+        rec.inside = this.firstPerson && !v.lid ? Object.entries(D.items).filter(([, it]) => it.in === id && !it.hidden && solidIn(it, v)) : null;
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');
         if (v.heat > 0 && (v.kind === 'pan' || v.kind === 'paellaPan') && v.contents && v.contents.length && Math.random() < dt * 12) this.puff(p.clone().setY(p.y + 0.05), 'sizzle');
         // food lying on trays / plates
@@ -827,6 +856,20 @@ export class Scene3D {
         const at = fp ? rec.group.position.clone().add(v3((k - (rec.items.length - 1) / 2) * 0.07, rec.h + 0.002, 0)) : rec.group.position.clone().add(v3((k - (rec.items.length - 1) / 2) * 0.12, rec.h * 0.6, 0));
         put(`on:${vid}:${k}`, i.st.kind, i.st, () => this.spriteFor(i.st.kind, i.st), at, 0.28, rec.group.rotation.y);
       });
+    }
+    // first person: what's in the pots and pans, in 3D – scattered over the floor
+    if (fp) {
+      for (const [vid, rec] of this.vessels) {
+        if (!rec.group.visible || !rec.inside || !rec.inside.length) continue;
+        const spread = Math.round(rec.r * 0.62 * 1000) / 1000;
+        const v = D.vessels[vid];
+        rec.inside.forEach(([iid, it], k) => {
+          // (the pot knows how it went in: an egg cracked into it, not dropped in whole)
+          const c = v && v.contents.find((q) => q.kind === it.kind);
+          const pos = rec.group.localToWorld(v3(Math.cos(k * 2.4) * rec.r * 0.1, 0.01 + k * 0.002, Math.sin(k * 2.4) * rec.r * 0.1));
+          food(`in:${vid}:${iid}`, it.kind, { ...it, cut: (c && c.cut) || it.cut, spread }, pos, rec.group.rotation.y + k * 1.1);
+        });
+      }
     }
     // scraps on counters
     const C = view.C;
@@ -980,7 +1023,7 @@ export class Scene3D {
       if (dest) this.fpArms.reach(i, { key: k, take: false, hold: this.fpHold.get(k), ...gripAt(k, i, dest, 0) });
     }
     // (a point in the world, for the hand on side s: in the right hand's camera space)
-    const handAt = (w, s) => { const p = this.camera.worldToLocal(w.clone()); if (s < 0) p.x = -p.x; return p; };
+    const handAt = (w, s) => { const p = this.eye.worldToLocal(w.clone()); if (s < 0) p.x = -p.x; return p; };
     const holds = slots.map((k, i) => {
       if (!k) return null;
       const h = this.fpHold.get(k) || 'palm';
@@ -996,7 +1039,7 @@ export class Scene3D {
         if (!h) return;
         // (a direction for the hand, in the right hand's camera space)
         let dir = null;
-        if (h.dir) { dir = h.dir.clone().transformDirection(this.camera.matrixWorldInverse); if (!i) dir.x = -dir.x; }
+        if (h.dir) { dir = h.dir.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) dir.x = -dir.x; }
         holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
       });
     }
@@ -1120,6 +1163,18 @@ export class Scene3D {
     }
     return null;
   }
+  // The camera at work: almost straight down on the work, from just my side of it,
+  // close enough to see what's happening; for the knob on the stove's front / the
+  // tap's lever, from in front and a little above (the pan in view too).
+  workCam(w, st) {
+    const real = this.workReal(w, st);
+    if (real) {
+      const look = real.w.clone().lerp(w.O, 0.4);
+      return { look, pos: look.clone().addScaledVector(w.N, 0.42).addScaledVector(UP, 0.62) };
+    }
+    const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, 0.03);
+    return { look, pos: look.clone().addScaledVector(w.N, 0.21).addScaledVector(UP, 0.5) };
+  }
   // the screen shift (px) from the real thing to where the close-up has it
   workOffset(w, st) {
     const r = this.workReal(w, st);
@@ -1147,7 +1202,7 @@ export class Scene3D {
     if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
-    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st) };
+    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st) };
     // the food worked on stands right on the work spot (under the tap, on the board), as big as the gesture has it
     if (g.subject && g.subject.type === 'item' && D && D.items[g.subject.id] && !['drag', 'dip'].includes(g.kind)) {
       const b = st.subjectBox();
@@ -1517,7 +1572,8 @@ export class Scene3D {
         const hob = F.anchors.burners && F.anchors.burners[v.at.slot] && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner');
         const p = hob ? F.anchors.burners[v.at.slot] : F.anchors.inside || F.anchors.mouth || F.anchors.top;
         if (!p) continue;
-        cands.push({ pos: p.clone().setY(p.y + (hob ? 0.05 : 0.15)), color: hob ? '#6a9aff' : '#ff8a3a', power: hob ? 0.35 + v.heat * 0.12 : 1.4, reach: hob ? 1 : 1.8, prio: hob ? 1 : 2.2, flicker: true });
+        // (the flame is under the pan: it lights the pan, not the food in it)
+        cands.push({ pos: p.clone().setY(p.y + (hob ? -0.01 : 0.15)), color: hob ? '#6a9aff' : '#ff8a3a', power: hob ? 0.35 + v.heat * 0.12 : 1.4, reach: hob ? 1 : 1.8, prio: hob ? 1 : 2.2, flicker: true });
       }
     }
     // the most important first; nearest to the camera's focus breaks ties
@@ -1593,6 +1649,8 @@ export class Scene3D {
 }
 
 // ======================================================================= helpers
+
+const WORK_FOV = 50; // (the camera at work sees less, closer)
 
 // The glow: a thing's own surfaces again, lit along the rims (where they turn
 // away from me) with a faint wash on what faces me, added over it.
@@ -1739,23 +1797,25 @@ function buildVessel(kind) {
 }
 
 const CONTENT_COL = { water: '#8fc8ea' };
-function updateVessel(rec, v, t) {
+// (solid: first person, where what's in it is drawn in 3D – only what's runny is the surface)
+function updateVessel(rec, v, t, solid = false) {
   const r = rec.r;
   const level = Math.max(0, Math.min(1, v.water || 0));
-  const hasFood = v.contents && v.contents.some((c) => c.kind !== 'water');
+  const wet = (v.contents || []).filter((c) => c.kind !== 'water' && (!solid || runny(c.kind, v)));
+  const hasFood = wet.length > 0 || (solid && !!v.liquid);
   const show = level > 0.02 || hasFood;
   rec.liquid.visible = show && !v.lid;
   if (show) {
-    rec.liquid.position.y = 0.008 + (level > 0.02 ? level : 0.25) * rec.h * 0.9;
-    const col = v.liquid || (level > 0.02 ? CONTENT_COL.water : mainColor(v));
+    rec.liquid.position.y = 0.008 + (level > 0.02 ? level : solid ? 0.03 : 0.25) * rec.h * 0.9;
+    const col = v.liquid || (level > 0.02 ? CONTENT_COL.water : wet.length ? bitColor(wet[0].kind) : mainColor(v));
     rec.liquid.material.color.set(col);
-    rec.liquid.material.opacity = level > 0.02 && !v.liquid ? 0.72 : 0.96;
+    rec.liquid.material.opacity = level > 0.02 && !v.liquid ? 0.72 : solid && !v.liquid ? 0.55 : 0.96;
     if (v.cook) rec.liquid.material.color.lerp(new THREE.Color('#8a4a1a'), Math.min(0.5, v.cook * 0.4));
   }
   rec.lid.visible = !!v.lid;
   rec.towel.visible = !!v.towel;
   // bits of what's inside, bobbing
-  const kinds = (v.contents || []).filter((c) => c.kind !== 'water');
+  const kinds = solid ? [] : (v.contents || []).filter((c) => c.kind !== 'water');
   rec.bits.forEach((b, i) => {
     const c = kinds[i % Math.max(1, kinds.length)];
     b.visible = !!c && !v.lid && i < kinds.length * 2;
@@ -1772,6 +1832,20 @@ function updateVessel(rec, v, t) {
     b.position.set(Math.cos(i * 2.1) * r * 0.5, rec.liquid.position.y + 0.004, Math.sin(i * 2.1) * r * 0.5);
     b.scale.setScalar(0.4 + ph * v.boil);
   });
+}
+
+// poured (oil, milk, stock …) or melted on the heat (butter): the surface, not a thing in it
+function runny(kind, v) {
+  const I = INGREDIENTS[kind];
+  return !!I && (!!I.liquid || ((kind === 'butter' || kind === 'ghee') && (v.heat > 0 || v.cook > 0)));
+}
+// a thing in a pot drawn in 3D: not what's runny, nor what came out of a bottle, jar, sack or shaker
+// (rice, lentils, peas are a heap in it)
+const CONTAINERS = new Set(['bottle', 'carton', 'can', 'jar', 'sack', 'shaker', 'tea', 'jug']);
+function solidIn(it, v) {
+  const I = INGREDIENTS[it.kind];
+  if (!I || runny(it.kind, v)) return false;
+  return !(I.art && CONTAINERS.has(I.art.type));
 }
 
 function bitColor(kind) {
