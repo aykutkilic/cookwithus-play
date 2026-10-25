@@ -12,6 +12,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
 import { VESSELS, twoHanded } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
@@ -129,6 +130,10 @@ export class Scene3D {
   setKitchen(size, cuisine) {
     if (this.K && this.K.size === size && this.K.cuisine === cuisine) return this.K;
     if (this.k3) { this.scene.remove(this.k3.root); disposeTree(this.k3.root); }
+    // (the old kitchen's glowing copies)
+    for (const g of (this.ghosts || new Map()).values()) if (g) { this.guides.remove(g); g.geometry.dispose(); }
+    this.ghosts = new Map();
+    this.glowing = null;
     for (const v of this.vessels.values()) this.dynamic.remove(v.group);
     this.vessels.clear();
     for (const s of this.sprites.values()) this.dynamic.remove(s);
@@ -1410,7 +1415,8 @@ export class Scene3D {
 
   updateMarker(view) {
     const m = this.marker;
-    const F = view.target && this.k3.fx[view.target];
+    // (first person: no marker over what I face – the dot in the middle is enough)
+    const F = !this.firstPerson && view.target && this.k3.fx[view.target];
     if (F) {
       const f = F.f;
       const h = topHeight(f);
@@ -1419,19 +1425,82 @@ export class Scene3D {
       m.children[1].position.y = -(h + 0.35) + 0.01;
       m.children[1].scale.setScalar(Math.max(f.w, f.h) * 0.9);
     } else m.visible = false;
-    // where the step you picked can be done: golden arrows
-    const want = view.guide ? [...view.guide] : [];
-    while (this.guides.children.length < want.length) {
-      const a = cyl(0, 0.06, 0.1, mat('#ffe070', { emissive: '#ffd040', ei: 1.6 }), 0, 0, 0, 10);
-      a.rotation.x = Math.PI;
-      this.guides.add(a);
+    this.updateGlow(view);
+  }
+
+  // What's next glows a little: the equipment (the fridge, the sink, the
+  // stove …) and the things (the pan on the shelf, the eggs in the fridge) –
+  // their own surfaces lit along the rims, breathing. view.guide: fixture ids
+  // and thing keys ('v:pan', 'i:egg').
+  updateGlow(view) {
+    const want = view.guide || new Set();
+    GLOW_MAT.uniforms.uK.value = GLOW_THING.uniforms.uK.value = 0.6 + 0.4 * Math.sin(this.t * 2.6);
+    const on = new Set(), things = new Set();
+    for (const key of want) {
+      const F = this.k3.fx[key];
+      if (F) {
+        const g = this.fixtureGhost(key, F);
+        if (g) on.add(g);
+        for (const o of F.live || []) on.add(o);
+        continue;
+      }
+      // things in 3D (the room view's cartoon food is a standee: its place glows instead)
+      const obj = key[0] === 'v' ? this.vessels.get(key.slice(2))?.group : this.firstPerson ? this.foods.get(`item:${key.slice(2)}`)?.g : null;
+      if (obj && obj.visible) { on.add(obj); things.add(obj); }
     }
-    this.guides.children.forEach((a, i) => {
-      const fid = want[i];
-      const G = fid && this.k3.fx[fid];
-      a.visible = !!G && fid !== view.target;
-      if (G) a.position.set(G.f.x + G.f.w / 2, topHeight(G.f) + 0.55 + Math.sin(this.t * 4 + i) * 0.06, G.f.y + G.f.h / 2);
-    });
+    for (const o of this.glowing || []) if (!on.has(o)) setGhost(o, false);
+    for (const o of on) setGhost(o, true, things.has(o) ? GLOW_THING : GLOW_MAT);
+    this.glowing = on;
+  }
+  // a fixture's static meshes (baked in with the room) as one rim-lit copy, made the first time it glows
+  fixtureGhost(id, F) {
+    this.ghosts = this.ghosts || new Map();
+    if (this.ghosts.has(id)) return this.ghosts.get(id);
+    let ghost = null;
+    if (F.src) {
+      const geos = [];
+      F.src.updateMatrixWorld(true);
+      F.src.traverse((o) => {
+        if (!o.isMesh || o.isInstancedMesh || o.userData.glow) return;
+        const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+        for (const n of Object.keys(geo.attributes)) if (n !== 'position' && n !== 'normal') geo.deleteAttribute(n);
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+        geo.clearGroups();
+        geo.applyMatrix4(o.matrixWorld);
+        geos.push(geo);
+      });
+      const merged = geos.length ? mergeGeometries(geos, false) : null;
+      for (const g of geos) g.dispose();
+      if (merged) {
+        ghost = new THREE.Mesh(merged, GLOW_MAT);
+        ghost.userData.glow = true;
+        ghost.renderOrder = 4;
+        ghost.raycast = () => {};
+        ghost.visible = false;
+        this.guides.add(ghost);
+      }
+    }
+    this.ghosts.set(id, ghost);
+    return ghost;
+  }
+
+  // first person: where my hand touches a fixture (where I look, on its top, in reach) – or the air before me
+  touchPoint(fid) {
+    const F = fid && this.k3.fx[fid];
+    const c = this.viewCenter();
+    const ray = this.rayAt(c.x, c.y);
+    if (!F) return ray.at(0.45, new THREE.Vector3());
+    const f = F.f, top = topHeight(f);
+    let p = null;
+    if (top < this.camera.position.y - 0.1 && ray.direction.y < -0.05) {
+      const t = (top - ray.origin.y) / ray.direction.y;
+      if (t > 0 && t < 1.6) p = ray.at(t, new THREE.Vector3());
+    }
+    if (!p) return ray.at(0.5, new THREE.Vector3()); // (a tall thing: its front, where I look)
+    p.x = Math.max(f.x + 0.06, Math.min(f.x + f.w - 0.06, p.x));
+    p.z = Math.max(f.y + 0.06, Math.min(f.y + f.h - 0.06, p.z));
+    p.y = top + 0.015;
+    return p;
   }
 
   // ------------------------------------------------------------------ lights
@@ -1524,6 +1593,38 @@ export class Scene3D {
 }
 
 // ======================================================================= helpers
+
+// The glow: a thing's own surfaces again, lit along the rims (where they turn
+// away from me) with a faint wash on what faces me, added over it.
+// (equipment gently – big surfaces; a thing to fetch a little brighter, so it stands out on its shelf)
+const glowMat = (rim, wash) => new THREE.ShaderMaterial({
+  uniforms: { uK: { value: 1 }, uColor: { value: new THREE.Color('#ffc23a') } },
+  vertexShader: `varying vec3 vN; varying vec3 vV;
+void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = -mv.xyz; gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform float uK; uniform vec3 uColor; varying vec3 vN; varying vec3 vV;
+void main() { float f = 1.0 - abs(dot(normalize(vN), normalize(vV))); gl_FragColor = vec4(uColor, (pow(f, 2.5) * ${rim.toFixed(2)} + ${wash.toFixed(2)}) * uK); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
+});
+const GLOW_MAT = glowMat(0.5, 0.06), GLOW_THING = glowMat(0.85, 0.14);
+// lit or not: a mesh's glowing copy rides along as its child (doors, knobs, a pan all move)
+function setGhost(o, on, mat = GLOW_MAT) {
+  if (o.userData.glow) { o.visible = on; return; }
+  o.traverse((m) => {
+    if (!m.isMesh || m.isInstancedMesh || m.userData.glow) return;
+    let g = m.userData.ghost;
+    if (!g) {
+      if (!on) return;
+      g = new THREE.Mesh(m.geometry, mat);
+      g.userData.glow = true;
+      g.renderOrder = 4;
+      g.raycast = () => {};
+      m.userData.ghost = g;
+      m.add(g);
+    }
+    g.visible = on;
+  });
+}
 
 export function topHeight(f) {
   switch (f.type) {

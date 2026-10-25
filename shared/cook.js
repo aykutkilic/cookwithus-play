@@ -25,7 +25,9 @@ import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStor
 import { RECIPES } from './recipes.js';
 
 export const SPEEDS = [1, 2, 4, 8, 16];
-export const SCRAP_LIMIT = 3; // scraps on a counter before it's too messy to start another job there
+export const SCRAP_LIMIT = 3; // scraps on a counter before it's messy (a tidy cook clears them)
+const EARLY_Q = 0.85;    // a step done before the ones the recipe puts first (it's up to you – it shows a little)
+const MISSED_Q = 0.3;    // a step left out (what it needed went into something else)
 export const HANDS = 2;       // one thing in each hand; a heavy pot, a tray, a stack of plates takes both
 const OVER_GRACE = 45;   // seconds a finished timer can run over before it costs
 const DONE_HOLD = 1;     // seconds
@@ -561,14 +563,23 @@ function putSpot(C, x, K, m, place, keys = null) {
   return spots.length ? spots[0].id : null;
 }
 
-// Unlock steps whose prerequisites are done; timers start by themselves (the
-// heat was turned on by a cook – waiting is the only thing that isn't a gesture).
+// Are the steps the recipe puts before this one done? (A timer that has run
+// out counts, for what follows it.)
+export function inOrder(C, s) {
+  return s.after.every((a) => C.steps[a] && (C.steps[a].s === 'done' || (C.steps[a].s === 'ready' && s.do !== 'wait')));
+}
+
+// Steps are open from the start: cook them in any order you like – the
+// recipe's order is its advice, and a step done early costs a little in the
+// stars. Only a timer waits for what it times (it starts by itself: waiting is
+// the only thing that isn't a gesture), and serving for everything else.
 export function refresh(C, x) {
   let changed = false;
   for (const s of x.steps) {
     const st = C.steps[s.id];
     if (st.s !== 'locked') continue;
-    if (!s.after.every((a) => C.steps[a] && C.steps[a].s === 'done' || (C.steps[a] && C.steps[a].s === 'ready' && s.do !== 'wait'))) continue;
+    if (s.do === 'wait' && !inOrder(C, s)) continue;
+    if (s.do === 'serve' && !x.steps.every((o) => o.id === s.id || ['done', 'ready'].includes(C.steps[o.id].s))) continue;
     // a step after a timer opens when the timer is ready
     st.s = s.do === 'wait' ? 'running' : 'open';
     st.t = 0;
@@ -672,17 +683,21 @@ export function openStep(C, x, K, sid, place, memberId) {
   }
   const busy = placeBusy(C, x, K, s, pl, memberId);
   if (busy) return busy;
-  if (!s.chore && st.ph === 0 && st.k === 0 && C.scraps[pl.fx] && C.scraps[pl.fx].n >= SCRAP_LIMIT) return 'Too messy here – clear the scraps off first 🧹';
   if (!s.chore) {
-    // what it needs has to be here – or in your hands (and nothing else in them)
+    // what it needs has to be here – or in your hands
     const need = needsOf(C, s);
-    const extra = heldBy(C, memberId).filter((k) => !need.includes(k) && !holdsNeeded(C, k, need));
-    // what you hold for something else stays in one hand – if this needs only the other
-    if (extra.length && (stepHands(s) === 2 || extra.reduce((n, k) => n + handsFor(C, k), 0) >= HANDS)) {
-      return `Put the ${thingName(C, x, extra[0])} down first – you need ${stepHands(s) === 2 ? 'both hands' : 'a free hand'} for this`;
-    }
     const miss = need.filter((k) => !atPlace(C, K, k, pl.fx, memberId));
     if (miss.length) return bringMsg(C, x, K, miss);
+    // what you hold for something else stays in one hand if this needs only
+    // the other – else you set it down here first, as anyone would
+    const extra = heldBy(C, memberId).filter((k) => !need.includes(k) && !holdsNeeded(C, k, need));
+    if (extra.length && (stepHands(s) === 2 || extra.reduce((n, k) => n + handsFor(C, k), 0) >= HANDS)) {
+      const f = fixtureById(K, pl.fx);
+      if (putBlocked(C, x, K, extra, f)) return `Put the ${thingName(C, x, extra[0])} down first – you need ${stepHands(s) === 2 ? 'both hands' : 'a free hand'} for this`;
+      for (const k of extra) putDown(C, x, K, memberId, pl.fx, k);
+    }
+    // started before the steps the recipe puts first: your call (it shows a little)
+    if (st.ph === 0 && st.k === 0 && st.s === 'open' && !inOrder(C, s)) st.early = 1;
   }
   // one step at a time per cook
   for (const o of allDefs(C, x)) if (o.id !== sid && C.steps[o.id] && C.steps[o.id].s === 'active' && C.steps[o.id].by === memberId) closeStep(C, x, o.id, memberId);
@@ -829,12 +844,30 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
   if (s.makes2) for (const id of s.makes2) if (C.items[id]) { C.items[id].hidden = 0; C.items[id].at = st.fx; }
   applySets(C, s);
   st.s = 'done';
+  if (st.early) st.q = Math.min(st.q, EARLY_Q);
   if (!st.who.includes(st.by)) st.who.push(st.by);
   credit(C, st.by, 'steps');
   st.by = null;
   ev.push({ k: 'step', sid: s.id });
+  leftOut(C, x);
+  // (a timer whose steps after it are all done stops here)
+  for (const o of x.steps) {
+    const ot = C.steps[o.id];
+    if (ot.s === 'ready' && x.steps.filter((q) => q.after.includes(o.id)).every((q) => q.do === 'wait' || C.steps[q.id].s === 'done')) finishWait(C, x, o.id);
+  }
   if (s.do === 'serve' || x.steps.every((o) => C.steps[o.id].s === 'done')) finish(C, x, ev);
   refresh(C, x);
+}
+
+// Steps that can't be done any more – what they work with has gone into
+// something else for good (laid on the tray, …) – are left out.
+function leftOut(C, x) {
+  for (const s of x.steps) {
+    const st = C.steps[s.id];
+    if (st.s !== 'open' && st.s !== 'locked') continue;
+    const gone = needsOf(C, s).some((k) => { const it = k[0] === 'i' && C.items[k.slice(2)]; return it && it.used && !it.in && !it.at && it.held == null; });
+    if (gone) { st.s = 'done'; st.q = MISSED_Q; st.missed = 1; }
+  }
 }
 
 function moveVessel(C, s, st) {
@@ -858,7 +891,7 @@ function credit(C, id, what) {
 }
 
 function finish(C, x, ev) {
-  for (const s of x.steps) { const st = C.steps[s.id]; if (st.s !== 'done') { st.s = 'done'; } }
+  for (const s of x.steps) { const st = C.steps[s.id]; if (st.s !== 'done') { st.s = 'done'; if (s.do !== 'wait' && s.do !== 'serve') { st.q = Math.min(st.q, MISSED_Q); st.missed = 1; } } }
   const qs = x.steps.map((s) => C.steps[s.id].q);
   const q = qs.reduce((a, b) => a + b, 0) / Math.max(1, qs.length);
   C.stars = q >= 0.95 ? 5 : q >= 0.85 ? 4 : q >= 0.7 ? 3 : q >= 0.5 ? 2 : 1;
@@ -938,7 +971,7 @@ export function tickCook(C, x, K, dt) {
         applySets(C, s);
         // nothing a cook has to do follows: done at once
         const next = x.steps.filter((o) => o.after.includes(s.id));
-        if (!next.length || next.every((o) => o.do === 'wait')) finishWait(C, x, s.id);
+        if (!next.length || next.every((o) => o.do === 'wait' || ['done', 'active'].includes(C.steps[o.id].s))) finishWait(C, x, s.id);
         else refresh(C, x);
       }
     } else if (st.s === 'ready') {

@@ -135,7 +135,8 @@ export function buildKitchen3D(K) {
     const toWorld = (v) => v.clone().applyMatrix4(g.matrixWorld);
     const A = {};
     for (const [k, v] of Object.entries(d.anchors)) A[k] = Array.isArray(v) ? v.map(toWorld) : toWorld(v);
-    fx[f.id] = { anchors: A, parts: d.parts, f, front: f.face === 'e' ? v3(1, 0, 0) : v3(0, 0, 1) };
+    // (src, live: its own meshes, kept for the glow on what's next – the bake only copies them)
+    fx[f.id] = { anchors: A, parts: d.parts, f, src: g, live, front: f.face === 'e' ? v3(1, 0, 0) : v3(0, 0, 1) };
     // what's on the back walls above it
     const tall = ['fridge', 'shelf', 'pizzaOven', 'stoneOven', 'tandoor', 'aga', 'piano', 'paellaBurner'].includes(f.type);
     if (f.y === 0 && f.x > 0) for (let x = f.x; x < f.x + f.w; x++) { if (tall) blockedN.add(x); }

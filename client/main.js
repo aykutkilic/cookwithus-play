@@ -16,8 +16,8 @@ import { SIZES, SIZE_ORDER, CUISINES, CUISINE_ORDER, FIXTURES, buildKitchen, kit
 import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
-  choreId, carrying, binHolds, SCRAP_LIMIT, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
-  handsFree, canPut, HANDS, handsUsed,
+  choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
+  handsFree, canPut, HANDS, handsUsed, inOrder,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS } from '../shared/actions.js';
 import { foodWidth } from './food3d.js';
@@ -336,6 +336,9 @@ function renderSheet() {
   const html = [];
   for (const { s, st } of list) {
     const cls = [st.s];
+    // (open, but the recipe puts other steps first: yours to do whenever – it just says what usually comes first)
+    const later = st.s === 'open' && st.ph === 0 && st.k === 0 && !inOrder(C, s);
+    if (later) cls.push('later');
     if (fresh.includes(s.id)) cls.push('just');
     if (st.claim.includes(S.myId) || st.by === S.myId) cls.push('mine');
     if (S.sel === s.id) cls.push('mine');
@@ -348,10 +351,11 @@ function renderSheet() {
     let sub = '';
     if (st.s === 'active') { const m = memberById(st.by); sub = m ? `${esc(m.name)} is on it…` : ''; }
     else if (st.s === 'open' && (st.ph > 0 || st.k > 0)) sub = 'half done – pick it up!';
+    else if (later) { const need = s.after.filter((a) => C.steps[a] && C.steps[a].s !== 'done').map((a) => stepDef(x, a)).filter(Boolean); sub = need.length ? `usually after: ${esc(need[0].name)}${need.length > 1 ? ` +${need.length - 1}` : ''}` : ''; }
     else if (st.s === 'open') sub = esc(planNote(planStep(C, x, S.K, s.id, S.myId)));
     else if (st.s === 'running') sub = `⏳ ${fmtTime(Math.max(0, stepDuration(C, x, S.K, s) - st.t))} left${C.speed > 1 ? ` · ${C.speed}×` : ''}`;
     else if (st.s === 'ready') sub = '⏰ ready!';
-    else if (st.s === 'locked') { const need = s.after.filter((a) => C.steps[a] && C.steps[a].s !== 'done').map((a) => stepDef(x, a)).filter(Boolean); sub = need.length ? `after: ${esc(need[0].name)}${need.length > 1 ? ` +${need.length - 1}` : ''}` : ''; }
+    else if (st.s === 'locked') { const need = (s.do === 'serve' ? x.steps.filter((o) => o.id !== s.id) : s.after.map((a) => stepDef(x, a))).filter((o) => o && C.steps[o.id] && !['done', 'ready'].includes(C.steps[o.id].s)); sub = need.length ? `after: ${esc(need[0].name)}${need.length > 1 ? ` +${need.length - 1}` : ''}` : ''; }
     const canAct = st.s === 'open' || (st.s === 'active' && st.by === S.myId);
     const acts = [];
     if (st.s !== 'done' && s.do !== 'wait') acts.push(`<button data-claim="${s.id}" class="${st.claim.includes(S.myId) ? 'on' : ''}" title="I’ll do this">✋</button>`);
@@ -588,10 +592,16 @@ function useNow(hand = -1) {
   if (!$('menu').hidden) { const bs = [...$('menu').querySelectorAll('button:not([disabled])')]; const b = bs[S.menuSel] || bs[0]; if (b) b.click(); return; }
   if (S.working || !$('modal').hidden) return;
   const f = S.target;
-  if (!f) { toast('Walk up to a counter, the sink, the stove … and use it'); return; }
-  const pick = bestJob(f);
+  const pick = f && bestJob(f);
   if (pick) { runJob(pick, f, hand); return; }
-  toast(`Nothing to do at the ${FIXTURES[f.type].name.toLowerCase()} right now`);
+  // nothing comes of it: (first person) the hand just reaches out and touches what's there
+  if (S.fp) touchThere(f, hand);
+}
+function touchThere(f, hand) {
+  const sl = scene.fpSlots;
+  const i = hand >= 0 && sl[hand] == null ? hand : sl[1] == null ? 1 : sl[0] == null ? 0 : -1;
+  const w = i >= 0 && scene.touchPoint(f && f.id);
+  if (w) scene.fpArms.reach(i, { key: null, take: false, hold: 'hand', world: w });
 }
 
 // Q / ⋯: every option where I stand
@@ -600,8 +610,7 @@ function moreNow() {
   if (!$('menu').hidden) { closeMenu(); return; }
   if (S.working || !$('modal').hidden) return;
   const f = S.target;
-  if (!f) { toast('Walk up to a counter, the sink, the stove … first'); return; }
-  openMenu(f);
+  if (f && jobsAt(f).length) openMenu(f);
 }
 
 // What E does here, without asking (Q – ⋯ on a touch screen – lists every
@@ -625,7 +634,8 @@ function bestJob(f, all = jobsAt(f)) {
     }
   }
   const held = C ? heldBy(C, S.myId) : [];
-  const steps = jobs.filter((j) => j.sid && j.sid[0] !== '#').sort((a, b) => a.idx - b.idx);
+  // (a step ahead of the recipe's order only if I've brought what it's for – never by surprise)
+  const steps = jobs.filter((j) => j.sid && j.sid[0] !== '#' && (!j.early || j.uses)).sort((a, b) => a.early - b.early || a.idx - b.idx);
   const using = steps.filter((j) => j.uses);
   if (held.length && using.length) return using[0];
   // a burner left on: off it goes (with the free hand – the pan can stay in the other)
@@ -1143,18 +1153,17 @@ function jobsAtNow(f) {
       if (!stepPlaces(C, x, K, s, me).some((p) => p.fx === f.id)) continue;
       const mine = st.claim.includes(me);
       const others = st.claim.filter((id) => id !== me).map(memberById).filter(Boolean);
-      const messy = st.ph === 0 && st.k === 0 && C.scraps[f.id] && C.scraps[f.id].n >= SCRAP_LIMIT;
       const busy = placeBusy(C, x, K, s, { fx: f.id, slot: 0 }, me);
       const need = needsOf(C, s);
       const miss = st.s === 'active' ? [] : need.filter((k) => !here(k));
-      const extra = held.filter((k) => !need.includes(k));
-      const why = hands ? ' (hands full)' : messy ? ' (clear the scraps first)' : busy ? ' (busy)'
-        : miss.length ? ` (${miss.map((k) => `${thingEmoji(C, k)} ${thingName(C, x, k)}`).slice(0, 2).join(', ')} not here)`
-          : extra.length && st.s !== 'active' ? ' (hands full)' : '';
+      const why = hands ? ' (hands full)' : busy ? ' (busy)'
+        : miss.length ? ` (${miss.map((k) => `${thingEmoji(C, k)} ${thingName(C, x, k)}`).slice(0, 2).join(', ')} not here)` : '';
       const uses = need.some((k) => held.includes(k));
-      out.push({ sid: s.id, label: `${stepIcon(s)} ${s.name}${why}`, mine, others, off: !!why, sel: S.sel === s.id, uses, idx: x.steps.indexOf(s) });
+      // (before the steps the recipe puts first: you may – it shows a little in the stars)
+      const early = st.s === 'open' && st.ph === 0 && st.k === 0 && !inOrder(C, s);
+      out.push({ sid: s.id, label: `${stepIcon(s)} ${s.name}${early && !why ? ' (early)' : ''}${why}`, mine, others, off: !!why, sel: S.sel === s.id, uses, early, idx: x.steps.indexOf(s) });
     }
-    out.sort((a, b) => (b.sel - a.sel) || (a.off - b.off) || (b.uses - a.uses) || (b.mine - a.mine) || (a.others.length - b.others.length));
+    out.sort((a, b) => (b.sel - a.sel) || (a.off - b.off) || (b.uses - a.uses) || (a.early - b.early) || (b.mine - a.mine) || (a.others.length - b.others.length));
     // the fridge / pantry: open it up and look (take things, put things back, inside)
     if (isStore(f)) {
       const fridge = f.type === 'fridge';
@@ -1321,12 +1330,44 @@ function renderNudge() {
 }
 
 // a step that's ready to go with what I'm holding (for the hint and the arrows)
+// What glows a little, to help: for the step I picked (📍), else the one
+// what I hold is for, else the recipe's next step I can get going (one I said
+// I'd do ✋ first) – the fridge / shelf and the thing to fetch from it, where
+// to put things down, or where to do it; the bins for scraps in my hands.
+// (Fixture ids and thing keys; worked out again only when the kitchen changes.)
+function guideNow() {
+  const C = S.M.cook, x = S.x, K = S.K;
+  if (!C || !x || C.finished) return new Set();
+  if (S.sel && (!C.steps[S.sel] || C.steps[S.sel].s === 'done')) S.sel = null;
+  const key = `${S.M.ver}|${S.sel}|${S.working ? 1 : 0}|${S.myId}`;
+  if (S.guideCache && S.guideCache.key === key) return S.guideCache.out;
+  const out = new Set();
+  if (carrying(C, S.myId)) {
+    const bins = K.fixtures.filter((f) => f.caps.includes('bin'));
+    const free = bins.filter((f) => (C.bins[f.id] || { fill: 0 }).fill < binHolds(f));
+    for (const f of free.length ? free : bins) out.add(f.id);
+  } else if (!S.working) {
+    const go = (sid) => { const p = planStep(C, x, K, sid, S.myId); return p && p.fx && p.do !== 'wait' && p.do !== 'bin' ? p : null; };
+    let p = S.sel && ['open', 'active'].includes(C.steps[S.sel].s) ? go(S.sel) : null;
+    if (!p && !S.sel) { const sid = stepForHeld(); p = sid && go(sid); }
+    if (!p && !S.sel) {
+      const next = x.steps.filter((s) => C.steps[s.id].s === 'open' && inOrder(C, s));
+      next.sort((a, b) => C.steps[b.id].claim.includes(S.myId) - C.steps[a.id].claim.includes(S.myId));
+      for (const s of next) if ((p = go(s.id))) break;
+    }
+    // (the fridge / pantry glows till its door is open – then just the thing in it)
+    if (p) { if (!(p.do === 'take' && p.store && C.fx[p.fx] && C.fx[p.fx].door)) out.add(p.fx); if (p.do === 'take' && p.key) out.add(p.key); }
+  }
+  S.guideCache = { key, out };
+  return out;
+}
 function stepForHeld() {
   const C = S.M.cook, x = S.x;
   if (!C || !x) return null;
   const held = heldBy(C, S.myId);
   if (!held.length) return null;
-  for (const s of x.steps) {
+  // (the recipe's order first: a step ahead of it only if nothing else is)
+  for (const s of [...x.steps].sort((a, b) => inOrder(C, b) - inOrder(C, a))) {
     if (C.steps[s.id].s !== 'open' || !needsOf(C, s).some((k) => held.includes(k))) continue;
     const p = planStep(C, x, S.K, s.id, S.myId);
     if (p && p.do === 'go') return s.id;
@@ -1763,26 +1804,11 @@ function buildView(now, dt) {
     if (b && b.until > now) c.bubble = b.text; else if (b) S.bubbles.delete(m.id);
     cooks.push(c);
   }
-  // golden arrows: where the step I picked can be done, or the bins for my scraps
-  const guide = new Set();
+  // what glows: the equipment and the things for what's next
+  const guide = guideNow();
   const busy = new Map();
   const activeAt = new Map(), activeItems = new Map();
   if (C && x) {
-    if (carrying(C, S.myId)) {
-      const bins = K.fixtures.filter((f) => f.caps.includes('bin'));
-      const free = bins.filter((f) => (C.bins[f.id] || { fill: 0 }).fill < binHolds(f));
-      for (const f of free.length ? free : bins) guide.add(f.id);
-    } else if (S.sel && C.steps[S.sel] && ['open', 'active'].includes(C.steps[S.sel].s)) {
-      // the next move: the fridge / shelf, where to put things down, or where to do it
-      const p = planStep(C, x, K, S.sel, S.myId);
-      if (p && p.fx && p.do !== 'wait') guide.add(p.fx);
-    } else if (S.sel && C.steps[S.sel] && C.steps[S.sel].s === 'done') S.sel = null;
-    else if (!S.sel && !S.working) {
-      // holding something: where it's needed
-      if (!S.heldAt || now - S.heldAt.t > 400) S.heldAt = { t: now, sid: stepForHeld() };
-      const p = S.heldAt.sid && planStep(C, x, K, S.heldAt.sid, S.myId);
-      if (p && p.do === 'go') guide.add(p.fx);
-    }
     for (const [sid, st] of Object.entries(C.steps)) {
       if (st.s !== 'active' || !st.fx) continue;
       const m = memberById(st.by);
@@ -1865,8 +1891,8 @@ function drawTags(view) {
   // the prompt over what I'm facing
   const pr = $('prompt');
   const f = S.target;
-  if (f && !S.working && $('menu').hidden && $('modal').hidden) {
-    const all = jobsAt(f);
+  const all = f && !S.working && $('menu').hidden && $('modal').hidden ? jobsAt(f) : [];
+  if (all.some((j) => !j.off)) {
     const jobs = all.filter((j) => !j.off);
     const look = S.fp && isStore(f) ? fpStoreLook(f) : null;
     const pick = bestJob(f, all);
