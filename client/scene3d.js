@@ -925,13 +925,22 @@ export class Scene3D {
       if (it.hidden || it.in) continue;
       const ov = this.work && this.work.ov.get(`i:${id}`);
       // (at work: on the board out of its container – which stands beside it; in it, under the tap, being tipped into the pan)
-      if (ov) { put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, ov.yaw ?? (this.work.yaw || 0), ov.box ? { ...ov.box, of: it } : null); continue; }
+      if (ov) {
+        put(`item:${id}`, it.kind, ov.st ? { ...it, ...ov.st } : it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, ov.yaw ?? (this.work.yaw || 0), ov.box ? { ...ov.box, of: it } : null);
+        // (where it is now, for where it goes next to glide from – not where it was before the work)
+        this.glides.set(`i:${id}`, { sig: 'work', pos: ov.pos.clone(), from: null, t: 1 });
+        continue;
+      }
+      // (gathered into its container beside the board: it stays just there till it's taken)
+      const bx = this.boxedAt && this.boxedAt.get(id);
+      if (bx && it.at !== bx.fx) this.boxedAt.delete(id);
       // where it lies on a counter, the sink, a table … (its spot there)
       const lie = () => {
         if (it.used && !it.at) return null;
         const fxId = it.at || (view.activeItems && view.activeItems.get(id));
         const F = fxId && this.k3.fx[fxId];
         if (!F || F.anchors.shelfL) return null;
+        if (bx && bx.fx === fxId) return { pos: bx.pos, fxId, active: false };
         const n = perFx.get(fxId) || 0;
         perFx.set(fxId, n + 1);
         const A = F.anchors;
@@ -1340,6 +1349,9 @@ export class Scene3D {
     const W = view.work;
     if (!W || !W.st || !W.st.on || !this.firstPerson || !W.frame) return;
     const st = W.st, g = st.g, w = W.frame;
+    // (gathered into its container – the step's done: it stays where I dropped it in)
+    if (st.done && this.boxing) (this.boxedAt || (this.boxedAt = new Map())).set(this.boxing.id, this.boxing);
+    this.boxing = null;
     if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
@@ -1364,7 +1376,7 @@ export class Scene3D {
       const F = this.k3.fx[w.fx];
       if (w.kind === 'sink' && g.kind === 'strokes' && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: basin ? basin.clone().addScaledVector(UP, 0.05) : at({ x: b.cx, y: b.y0 }), color: '#cfe8f8' };
       // out on the board: its container stands beside it, empty
-      if (!washing && w.kind !== 'sink') out.boxes.push([g.subject.id, { pos: w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1), yaw: Math.atan2(w.N.x, w.N.z) }]);
+      if (!washing && w.kind !== 'sink') out.boxes.push([g.subject.id, { pos: this.boxSpot(w), yaw: out.yaw }]);
     }
     // the tool, as the close-up has it
     let tool = ph.tool || { chop: 'knife', peel: 'peeler', circle: 'spoon', paint: 'spoon' }[g.kind] || 'hand';
@@ -1398,6 +1410,30 @@ export class Scene3D {
     switch (g.kind) {
       case 'drag': {
         const k = vKey(g.source);
+        if (g.source && g.source.pieces) {
+          // Cut up, gathered into its container: the pieces lie where they were cut till
+          // you take them; then they're a little heap in your two cupped hands, carried over
+          // to the container standing beside the board, and dropped in (it stays there, in it).
+          const box = this.boxSpot(w);
+          out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
+          // (the knife's put down on the board meanwhile)
+          out.knifeDown = { pos: w.O.clone().addScaledVector(w.N, 0.125).addScaledVector(w.R, -0.06).setY(w.O.y + 0.007), dir: w.N.clone().negate().addScaledVector(w.R, -0.35).normalize() };
+          this.boxing = { id: g.source.id, fx: w.fx, pos: box.clone() };
+          if (st.k > 0) { (this.boxedAt || (this.boxedAt = new Map())).set(g.source.id, this.boxing); break; }
+          if (!g.drag) {
+            out.ov.set(k, { pos: w.O.clone(), yaw: out.yaw + CUT_TURN });
+            hand(wi, at(st.grabPoint()).addScaledVector(UP, 0.035), 'hand', { curl: 0.3 });
+            ring(g.target);
+            break;
+          }
+          const P = at(g.pos);
+          P.y = Math.max(P.y, w.O.y + 0.05); // (carried a little above the board)
+          out.ov.set(k, { pos: P.clone().addScaledVector(UP, 0.006), yaw: out.yaw, st: { spread: 0.022 } });
+          hand(wi, P.clone().addScaledVector(w.R, 0.019), 'palm', { curl: 0.55 });
+          hand(oi, P.clone().addScaledVector(w.R, -0.019), 'palm', { curl: 0.55 });
+          ring(g.target);
+          break;
+        }
         const pos = at(g.pos);
         // (a thing in its container: carried over in it)
         if (k) out.ov.set(k, { pos: this.firstPerson ? pos.clone() : k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z), box: k[0] === 'i' ? {} : null });
@@ -1564,6 +1600,10 @@ export class Scene3D {
     this.work = out;
   }
 
+  // (where a food's container stands beside the board while it's out on it – and where it
+  // stays, once what's cut up is gathered into it)
+  boxSpot(w) { return w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1); }
+
   // The knife in my hand: its edge at E (the middle of it), the blade pointing d
   // (level), its tip rocked down by tilt – the knife's own origin (fpKnife's)
   // and my fist on its handle there; xA: along it, tip-wards.
@@ -1625,8 +1665,8 @@ export class Scene3D {
       m.lookAt(this.camera.position);
       m.scale.setScalar(Math.max(0.02, r.r) * (1 + Math.sin(this.t * 6) * 0.06));
     });
-    // the tool in my hand (first person at work)
-    const T = W && W.tool;
+    // the tool in my hand (first person at work) – or the knife put down on the board
+    const T = W && (W.tool || (W.knifeDown && { kind: 'knife', down: W.knifeDown }));
     if (!T || !this.firstPerson) { if (fx.tool) fx.tool.visible = false; } else {
       if (!fx.tool || fx.toolKind !== T.kind) {
         if (fx.tool) this.scene.remove(fx.tool);
@@ -1636,6 +1676,12 @@ export class Scene3D {
         this.scene.add(fx.tool);
       }
       fx.tool.visible = true;
+      if (T.down) {
+        // (lying flat, its blade along dir)
+        const xA = T.down.dir, yA = new THREE.Vector3().crossVectors(UP, xA).normalize();
+        fx.tool.position.copy(T.down.pos);
+        fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, UP.clone()));
+      } else {
       // (in the fist itself – where the hand got to)
       fx.tool.position.copy(this.fpArms.group.visible ? this.fpArms.fist(T.hand) : T.grip);
       if (T.off) fx.tool.position.add(T.off);
@@ -1644,6 +1690,7 @@ export class Scene3D {
         const xA = T.dir.clone().normalize(), zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
         fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
       } else fx.tool.quaternion.setFromUnitVectors(UP, T.dir); // (hanging from the fist, leaning toward me)
+      }
     }
     const S = W && W.stream;
     fx.stream.visible = !!S;

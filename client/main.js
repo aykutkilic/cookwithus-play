@@ -853,6 +853,13 @@ function openWork(sid, fx) {
   station.headless = true;
   // things put under the tap / in the colander go where the water falls in the basin
   station.targetHook = (to) => {
+    // (the food's container, standing beside the board)
+    if (to === 'box') {
+      const w = workFrame();
+      if (!w) return null;
+      const p = scene.workPoint(w, scene.boxSpot(w));
+      return { x: p.x, y: p.y, r: Math.max(60, 0.075 / w.S) };
+    }
     if (to !== 'underTap' && to !== 'colander') return null;
     const w = workFrame();
     const F = w && scene.k3.fx[w.fx];
@@ -892,7 +899,8 @@ function workFrame() {
   if (it && !['drag', 'dip'].includes(g.kind)) {
     const { cut, k, n, ...whole } = it; void cut; void k; void n;
     scale = Math.max(0.00025, Math.min(0.0012, foodWidth(it.kind, whole) / Math.max(40, station.subjectBox().w)));
-  }
+    S.workScale = { sid: S.working.sid, scale };
+  } else if (S.workScale && S.workScale.sid === S.working.sid) scale = S.workScale.scale; // (the same all through the step: gathering it up, between phases)
   return scene.workFrame(S.working.fx, station.sceneKind(), st ? st.slot || 0 : 0, scale);
 }
 

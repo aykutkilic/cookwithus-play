@@ -129,6 +129,7 @@ export class Station {
         else if (obj === 'lidOff') { g.source = { type: 'lid', on: true }; g.subject = { type: 'vessel', id: vId }; }
         else if (obj === 'scraps' || obj === 'bag' || obj === 'newBag') { g.source = { type: obj }; g.subject = null; }
         else if (obj === 'thing') { g.source = { type: s.thing[0] === 'v' ? 'vessel' : 'item', id: s.thing.slice(2) }; g.subject = null; }
+        else if (obj === 'pieces') { g.source = { type: 'item', id: s.item, pieces: true }; g.subject = null; } // (cut up, off the board into its container)
         const toMain = ph.to !== 'aside';
         const start = toMain ? { ...SIDE } : { ...MAIN };
         if (obj === 'lidOff') { start.x = MAIN.x; start.y = MAIN.y - 150; }
@@ -136,6 +137,7 @@ export class Station {
         if (obj === 'scraps' && ph.to === 'bin') { start.x = 500; start.y = 540; }
         if (obj === 'bag') { start.x = 500; start.y = 280; }
         if (obj === 'thing') { const at = this.storeLayout().get(s.thing); if (at) { start.x = at.x; start.y = at.y; } }
+        if (obj === 'pieces') { start.x = MAIN.x; start.y = MAIN.y - 30; }
         g.from = start; g.pos = { ...start };
         g.target = this.targetFor(ph.to);
         // a pan, a saucepan, a cezve, a kettle: you take it by the handle
@@ -210,6 +212,7 @@ export class Station {
       case 'ovenMouth': return { x: 520, y: 420, r: 110 };
       case 'tandoorWall': return { x: 500, y: 330, r: 110 };
       case 'shelf': return { x: 500, y: 330, r: 160 };
+      case 'box': return { x: 770, y: 500, r: 110 }; // (the food's container, beside the board)
       case 'aside': return { x: ASIDE.x, y: ASIDE.y, r: 150 };
       case 'hands': return { x: 500, y: 600, r: 120 };
       case 'bin': return { x: 500, y: 260, r: 130 };
@@ -1183,6 +1186,13 @@ export class Station {
     }
     // the grater stands beside the food while grating
     if (g && g.ph.tool === 'grater') drawTool(ctx, 'grater', MAIN.x + 150, MAIN.y, 1.1, 0, false);
+    // gathering it up: its container stands beside the board (the pieces in it, once they're in)
+    if (g && g.kind === 'drag' && g.source && g.source.pieces && g.target) {
+      const tg = g.target, cut = D.items[g.source.id];
+      ctx.save(); ctx.translate(tg.x, tg.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back');
+      if (this.k > 0 && cut) drawPieces(ctx, cut.kind, cut.cut || 'slices', 7, 0, -12, 0.8, 3);
+      this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore();
+    }
     // cleaning the board: its stains and crumbs, the suds, the dish soap
     if (s.do === 'wipe') {
       const { dirt, suds } = this.washLook();

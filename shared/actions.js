@@ -68,6 +68,10 @@ export function stepHands(step) {
   return a && (a.cap === 'board' || BOTH_HANDS.has(step.do)) ? 2 : 1;
 }
 
+// Cut up, it's gathered up off the board in your hands and put in its food
+// container (beside the board) – it's kept and carried in that.
+const boxUp = () => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', hint: 'Gather it up in your hands and put it in its container' });
+
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)
 const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, fx) => { fx.door = to; } });
 
@@ -147,6 +151,7 @@ export const ACTIONS = {
       { g: 'chop', mode: 'slice', n: s.n || 6, cut: s.cut || 'slices', tool: 'knife', hint: 'Knife down through it, then back up – one per slice',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   dice: {
@@ -159,6 +164,7 @@ export const ACTIONS = {
       { g: 'chop', mode: 'slice', n: s.n || 4, cut: 'dice', tool: 'knife', hint: 'Now cut across into little cubes',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'dice', k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   mince: {
@@ -167,6 +173,7 @@ export const ACTIONS = {
       { g: 'chop', mode: 'mince', n: s.n || 10, cut: 'mince', tool: 'knife', hint: 'Quick little chops all over it',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'mince', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'mince', k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   chop: {
@@ -175,6 +182,7 @@ export const ACTIONS = {
       { g: 'chop', mode: 'slice', n: s.n || 5, cut: s.cut || 'chunks', tool: 'knife', hint: 'Knife down and up – one per cut',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   slit: {
@@ -191,6 +199,7 @@ export const ACTIONS = {
       { g: 'strokes', axis: 'v', n: s.n || 8, tool: 'grater', hint: 'Rub it up and down the grater',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'grated', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'grated', k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   tear: {
@@ -199,6 +208,7 @@ export const ACTIONS = {
       { g: 'strokes', axis: 'h', n: s.n || 4, tool: 'grab', hint: 'Pull it apart into pieces',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'torn', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'torn', k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   crush: {
@@ -207,6 +217,7 @@ export const ACTIONS = {
       { g: 'chop', mode: 'mince', n: s.n || 3, cut: 'crushed', tool: 'knife', flat: true, hint: 'Press down hard with the flat of the knife',
         prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'crushed', k, n: ph.n }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'crushed', k: ph.n, n: ph.n }); } },
+      boxUp(),
     ],
   },
   core: {
