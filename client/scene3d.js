@@ -19,7 +19,7 @@ import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
 import { FpArms } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
-import { buildFood, foodKey } from './food3d.js';
+import { buildFood, foodKey, boxedFood, boxable, boxSpec } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
@@ -789,18 +789,24 @@ export class Scene3D {
     s.userData.seen = this.t;
   }
 
-  // first person: a food in 3D at a slot (rebuilt only when its look changes)
-  placeFood(slot, kind, st, pos, yaw = 0) {
-    const key = foodKey(kind, st);
+  // first person: a food in 3D at a slot (rebuilt only when its look changes) – in
+  // its container if it has one and box is given ({of: the thing, water 0..1, tilt,
+  // axis; empty: the container alone})
+  placeFood(slot, kind, st, pos, yaw = 0, box = null) {
+    const boxed = !!box && boxable(kind);
+    const sp = boxed ? boxSpec(kind, box.of || st) : null;
+    const key = (boxed && box.empty ? `${kind}|empty` : foodKey(kind, st)) + (boxed ? `|box${sp.size}${sp.style}` : '');
     let f = this.foods.get(slot);
     if (!f || f.key !== key) {
       if (f) this.dynamic.remove(f.g);
-      f = { key, g: buildFood(kind, st) };
+      if (boxed) { const bf = boxedFood(kind, box.empty ? null : st, box.of || st); f = { key, g: bf.g, setWater: bf.setWater }; } else f = { key, g: buildFood(kind, st) };
       this.foods.set(slot, f);
       this.dynamic.add(f.g);
     }
     f.g.position.copy(pos);
     f.g.rotation.set(0, yaw, 0);
+    if (boxed && box.tilt) f.g.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(box.axis || UP, box.tilt));
+    if (f.setWater) f.setWater(boxed ? box.water || 0 : 0);
     f.g.visible = true;
   }
 
@@ -812,19 +818,20 @@ export class Scene3D {
     // first person: the food itself, in 3D (the room view keeps its cartoon standees)
     const fp = this.firstPerson;
     const usedFood = new Set();
-    const food = (slot, kind, st, pos, yaw = 0) => { this.placeFood(slot, kind, st, pos, yaw); usedFood.add(slot); };
-    const put = (slot, kind, st, tex, pos, size, yaw = 0) => (fp ? food(slot, kind, st, pos, yaw) : show(slot, tex(), pos, size));
+    const food = (slot, kind, st, pos, yaw = 0, box = null) => { this.placeFood(slot, kind, st, pos, yaw, box); usedFood.add(slot); };
+    const put = (slot, kind, st, tex, pos, size, yaw = 0, box = null) => (fp ? food(slot, kind, st, pos, yaw, box) : show(slot, tex(), pos, size));
     const yawAt = (fxId) => { const F = fxId && this.k3.fx[fxId]; return F ? Math.atan2(F.front.x, F.front.z) : 0; };
     // what's being worked on, and prepped piles waiting
     const perFx = new Map();
     for (const [id, it] of Object.entries(D.items)) {
       if (it.hidden || it.in) continue;
       const ov = this.work && this.work.ov.get(`i:${id}`);
-      if (ov) { put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, this.work.yaw || 0); continue; }
+      // (at work: on the board out of its container – which stands beside it; in it, under the tap, being tipped into the pan)
+      if (ov) { put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, this.work.yaw || 0, ov.box ? { ...ov.box, of: it } : null); continue; }
       const kept = this.stashAt && this.stashAt.get(`i:${id}`);
       if (kept) {
-        // in the fridge / on the shelf, or in someone's hands
-        put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17, kept.yaw || 0);
+        // in the fridge / on the shelf, or in someone's hands – in its container
+        put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17, kept.yaw || 0, { of: it });
         continue;
       }
       if (it.used && !it.at) continue;
@@ -843,7 +850,12 @@ export class Scene3D {
       const tex = () => (done && !active ? this.spriteFor(it.kind, null, it.cut) : this.spriteFor(it.kind, it));
       const at = this.glide(`i:${id}`, `a:${fxId}`, pos), g = this.glides.get(`i:${id}`);
       const size = active ? 0.34 : 0.24;
-      put(`item:${id}`, it.kind, done && !active ? { cut: it.cut, k: it.n, n: it.n, cook: it.cook } : it, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size, yawAt(fxId));
+      put(`item:${id}`, it.kind, done && !active ? { cut: it.cut, k: it.n, n: it.n, cook: it.cook } : it, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size, yawAt(fxId), active ? null : { of: it });
+    }
+    // at work: the containers of what's out on the board, standing beside it, empty
+    if (fp && this.work) for (const [k, b] of this.work.boxes || []) {
+      const it = D.items[k];
+      if (it && boxable(it.kind)) food(`box:${k}`, it.kind, null, b.pos, b.yaw, { of: it, empty: true });
     }
     // at work (first person): what's in my hand that isn't a thing of its own (an egg to crack, a topping, a spoonful)
     if (this.work) this.work.sprites.forEach((q, i) => put(`work:${i}`, q.kind, q.st, () => q.tex, q.pos, q.size, this.work.yaw || 0));
@@ -986,7 +998,8 @@ export class Scene3D {
     this.fpMe = me && me.id;
     const holding = (rec && rec.holding) || [];
     const vk = (k) => (k && k[0] === 'v' && D && D.vessels[k.slice(2)] ? D.vessels[k.slice(2)].kind : null);
-    const holdOf = (k) => { const kd = vk(k); return !kd ? 'palm' : twoHanded(kd) ? 'side' : GRIP3D[kd] ? 'handle' : 'palm'; };
+    // (food in its container: carried on the palm, out at the waist)
+    const holdOf = (k) => { const kd = vk(k); if (!kd) { const it = k[0] === 'i' && D && D.items[k.slice(2)]; return it && boxable(it.kind) ? 'tub' : 'palm'; } return twoHanded(kd) ? 'side' : GRIP3D[kd] ? 'handle' : 'palm'; };
     const slots = this.fpSlots, came = [], gone = [];
     for (let i = 0; i < 2; i++) if (slots[i] && !holding.includes(slots[i])) { gone.push([i, slots[i]]); slots[i] = null; }
     for (const k of holding) {
@@ -1202,14 +1215,23 @@ export class Scene3D {
     if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
-    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st) };
+    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st), boxes: [] };
+    // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
+    const washing = st.c && st.c.def && st.c.def.do === 'wash';
+    const F0 = this.k3.fx[w.fx];
+    const basin = washing && F0 && F0.anchors.basin ? F0.anchors.basin.clone() : null;
+    const wantWater = !washing ? 0 : st.ph === 0 ? 0 : g.kind === 'pour' ? 0.7 * (1 - Math.min(1, g.v || 0)) : 0.7;
+    this.washWater = (this.washWater || 0) + (wantWater - (this.washWater || 0)) * Math.min(1, (this.dt || 0.016) * (wantWater > (this.washWater || 0) ? 1.6 : 6));
     // the food worked on stands right on the work spot (under the tap, on the board), as big as the gesture has it
     if (g.subject && g.subject.type === 'item' && D && D.items[g.subject.id] && !['drag', 'dip'].includes(g.kind)) {
       const b = st.subjectBox();
-      out.ov.set(`i:${g.subject.id}`, { pos: this.firstPerson ? at({ x: b.cx, y: b.y1 }) : at({ x: b.cx, y: b.y1 }).addScaledVector(UP, -0.1 * b.h * w.S), size: Math.max(0.12, Math.min(0.32, Math.max(b.w, b.h) * w.S * 1.15)) });
-      // washing: the tap runs on it
+      const pos = basin || (this.firstPerson ? at({ x: b.cx, y: b.y1 }) : at({ x: b.cx, y: b.y1 }).addScaledVector(UP, -0.1 * b.h * w.S));
+      out.ov.set(`i:${g.subject.id}`, { pos, size: Math.max(0.12, Math.min(0.32, Math.max(b.w, b.h) * w.S * 1.15)), box: washing ? { water: this.washWater } : null });
+      // washing: the tap runs into its container
       const F = this.k3.fx[w.fx];
-      if (w.kind === 'sink' && g.kind === 'strokes' && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: at({ x: b.cx, y: b.y0 }), color: '#cfe8f8' };
+      if (w.kind === 'sink' && g.kind === 'strokes' && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: basin ? basin.clone().addScaledVector(UP, 0.05) : at({ x: b.cx, y: b.y0 }), color: '#cfe8f8' };
+      // out on the board: its container stands beside it, empty
+      if (!washing && w.kind !== 'sink') out.boxes.push([g.subject.id, { pos: at({ x: 870, y: MAIN.y + 60 }), yaw: Math.atan2(w.N.x, w.N.z) }]);
     }
     // the tool, as the close-up has it
     let tool = ph.tool || { chop: 'knife', peel: 'peeler', circle: 'spoon', paint: 'spoon' }[g.kind] || 'hand';
@@ -1245,7 +1267,8 @@ export class Scene3D {
       case 'drag': {
         const k = vKey(g.source);
         const pos = at(g.pos);
-        if (k) out.ov.set(k, { pos: this.firstPerson ? pos.clone() : k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z) });
+        // (a thing in its container: carried over in it)
+        if (k) out.ov.set(k, { pos: this.firstPerson ? pos.clone() : k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z), box: k[0] === 'i' ? {} : null });
         hand(wi, at(st.grabPoint()), g.grip ? 'grab' : 'hand', { curl: g.drag ? 0.85 : 0.35 });
         if (!g.drag) ring(g.pos, 50);
         ring(g.target);
@@ -1274,7 +1297,16 @@ export class Scene3D {
         break;
       }
       case 'pour': case 'fill': {
-        if (g.kind === 'pour') {
+        if (g.kind === 'pour' && washing && g.subject && g.subject.type === 'item') {
+          // the washing water tipped out of the container, into the basin – tipped on its edge, the
+          // other side lifted (not so far the food falls out)
+          const base = basin || w.O.clone();
+          const tilt = g.pouring ? 0.6 : 0.08, hw = 0.09;
+          const pos = base.clone().addScaledVector(w.R, hw * (Math.cos(tilt) - 1)).addScaledVector(UP, hw * Math.sin(tilt));
+          out.ov.set(`i:${g.subject.id}`, { pos, size: 0.2, box: { water: this.washWater, tilt, axis: w.N } });
+          hand(wi, base.clone().addScaledVector(w.R, hw * Math.cos(tilt) * 2 - hw).addScaledVector(UP, 0.05 + hw * 2 * Math.sin(tilt)), 'grab', { curl: 0.9 });
+          if (g.pouring && this.washWater > 0.03) out.stream = { from: base.clone().addScaledVector(w.R, -hw).addScaledVector(UP, 0.03), to: base.clone().addScaledVector(w.R, -hw - 0.05).addScaledVector(UP, -0.005), color: '#cfe8f8' };
+        } else if (g.kind === 'pour') {
           // the jug / pan / bag in my hand, tipped over the pot
           // (held on my right – a pan by its handle, the handle away from the pour – tipped left into the pot)
           const k = vKey(g.source);

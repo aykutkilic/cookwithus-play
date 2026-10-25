@@ -43,6 +43,8 @@ const THUMB = { base: v(-0.006, 0.036, -0.012), open: [v(-0.02, 0.058, -0.05), v
 const HOLDS = {
   handle: { at: v(0.12, -0.16, -0.25), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1 },
   palm: { at: v(0.1, -0.13, -0.26), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
+  // a food container on the palm, carried out in front at the waist
+  tub: { at: v(0.06, -0.25, -0.4), grip: PALM, a: v(-1, 0, 0), b: v(-0.1, 1, 0.05), c: Z, pref: v(0.2, -0.5, 1), curl: 0.35 },
   side: { at: v(0.16, -0.17, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-1, 0.35, 0), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.55 },
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85 }, // a door's handle
   // at work (first person): a tool upright in the fist, or the open hand palm down
@@ -162,7 +164,7 @@ export class FpArms {
     const grip0 = (HOLDS[r.hold] || HOLDS.palm).grip.clone().multiplyScalar(HS).length();
     if (toT.length() > REACH - grip0) right.copy(sh).add(toT.setLength(REACH - grip0));
     let q;
-    if (r.hold === 'palm') {
+    if (r.hold === 'palm' || r.hold === 'tub') {
       // food, a plate: from above, the fingers toward it, palm down
       const from = SHOULDER.clone();
       q = aim(v(0, 0, -1), right.clone().sub(from), v(-1, 0, 0), v(0, -1, -0.2));

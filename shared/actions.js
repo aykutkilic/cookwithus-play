@@ -82,12 +82,14 @@ const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, f
 
 export const ACTIONS = {
   // ------------------------------------------------------------- sink
+  // (in its container, in the basin: the tap fills it, you scrub it in the water, and tip the water out)
   wash: {
     cap: 'sink', verb: 'Wash', tool: 'hand', icon: '💧',
     phases: (s) => [
-      { g: 'tap', hot: 'faucet', hint: 'Turn on the tap', eff: (S, st, v, fx) => { fx.tap = 1; } },
-      { g: 'strokes', axis: 'h', n: s.n || 5, tool: 'hand', hint: 'Scrub it under the water', prog: (D, st, k) => { if (k > 0) item(D, st).washed = 1; }, eff: (S, st) => { item(S, st).washed = 1; } },
+      { g: 'tap', hot: 'faucet', hint: 'Turn on the tap – fill its container', eff: (S, st, v, fx) => { fx.tap = 1; } },
+      { g: 'strokes', axis: 'h', n: s.n || 5, tool: 'hand', hint: 'Scrub it in the water', prog: (D, st, k) => { if (k > 0) item(D, st).washed = 1; }, eff: (S, st) => { item(S, st).washed = 1; } },
       { g: 'tap', hot: 'faucet', hint: 'Turn off the tap', eff: (S, st, v, fx) => { fx.tap = 0; } },
+      { g: 'pour', band: [0.9, 1.01], drain: true, box: true, hint: 'Hold to tip the water out of the container' },
     ],
   },
   rinse: {

@@ -153,7 +153,8 @@ export class Station {
       }
       case 'pour': {
         g.source = s.from ? { type: 'vessel', id: s.from } : s.item ? { type: 'item', id: s.item } : null;
-        if (ph.drain) { g.source = { type: 'vessel', id: s.vessel }; g.subject = { type: 'colander' }; }
+        if (ph.drain && ph.box) { g.source = null; g.subject = { type: 'item', id: s.item }; } // (washing water out of the food's container)
+        else if (ph.drain) { g.source = { type: 'vessel', id: s.vessel }; g.subject = { type: 'colander' }; }
         else g.subject = { type: 'vessel', id: s.into };
         g.v = 0;
         break;
@@ -1797,7 +1798,20 @@ export class Station {
     if (g && g.subject && g.subject.type === 'item' && it) {
       const s2 = this.itemScale(it.kind) * 0.85;
       const shake = g.kind === 'strokes' && this.ptr.down ? (this.ptr.x - 500) * 0.15 : 0;
-      drawIngredient(ctx, it.kind, it, 440 + shake, 520, s2, this.t);
+      // washing: in its container in the basin – the tap fills it, and it's tipped out at the end
+      const tub = s.do === 'wash';
+      const tilt = tub && g.kind === 'pour' ? (g.pouring ? 0.9 : 0.15) : 0;
+      const water = !tub || this.ph === 0 ? 0 : g.kind === 'pour' ? 0.7 * (1 - Math.min(1, g.v || 0)) : 0.7;
+      if (tub) { ctx.save(); ctx.translate(440, 575); ctx.rotate(-tilt); this.drawTub(ctx, 230, 120, water, 'back'); ctx.translate(0, -55); }
+      drawIngredient(ctx, it.kind, it, (tub ? 0 : 440) + shake, tub ? 0 : 520, s2, this.t);
+      if (tub) {
+        ctx.translate(0, 55); this.drawTub(ctx, 230, 120, water, 'front'); ctx.restore();
+        if (g.kind === 'pour' && g.pouring && water > 0.03) {
+          const lx = 440 - Math.cos(tilt) * 115 - Math.sin(tilt) * 120, ly = 575 + Math.sin(tilt) * 115 - Math.cos(tilt) * 120;
+          ctx.strokeStyle = 'rgba(150,205,245,0.85)'; ctx.lineWidth = 12 + Math.sin(this.t * 20) * 2; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(lx, ly); ctx.quadraticCurveTo(lx - 30, ly + 40, 330, 585); ctx.stroke(); ctx.lineCap = 'butt';
+        }
+      }
       if (tapOn && it.washed) this.fx.length < 120 && Math.random() < 0.2 && this.bubbles(440, 450);
     }
     if (s.do === 'fill' || s.do === 'drain') this.drawSource(ctx);
@@ -2123,6 +2137,19 @@ export class Station {
       ctx.lineCap = 'butt';
       if (Math.random() < 0.4) this.fx.push({ kind: 'drop', x: tgt.x + (Math.random() - 0.5) * 40, y: tgt.y, vx: (Math.random() - 0.5) * 120, vy: -80, life: 0, max: 0.4, col });
     }
+  }
+
+  // A see-through food container, its bottom middle at (0, 0): 'back' (the inside),
+  // 'front' (the water in it, the near wall and its outline)
+  drawTub(ctx, w, h, water, part) {
+    const wb = w * 0.86;
+    const shape = (top, wt) => { ctx.beginPath(); ctx.moveTo(-wt / 2, top); ctx.lineTo(wt / 2, top); ctx.lineTo(wb / 2, 0); ctx.lineTo(-wb / 2, 0); ctx.closePath(); };
+    if (part === 'back') { shape(-h, w); ctx.fillStyle = 'rgba(214,236,242,0.4)'; ctx.fill(); return; }
+    if (water > 0.02) { shape(-h * water, wb + (w - wb) * water); ctx.fillStyle = 'rgba(150,205,245,0.5)'; ctx.fill(); }
+    shape(-h, w);
+    ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(-w / 2 + 14, -h + 10); ctx.lineTo(-wb / 2 + 12, -10); ctx.stroke();
   }
 
   pourColor() {
