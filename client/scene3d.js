@@ -32,6 +32,7 @@ const REACH_S = 0.55;  // and the cook reaches out for it
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
 const UP = new THREE.Vector3(0, 1, 0);
 const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
+const CLAW_GAP = 0.05; // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
@@ -1527,11 +1528,13 @@ export class Scene3D {
         const K = this.knifeAt(E, blade, 0.05 + 0.2 * Math.min(1, lift));
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA });
-        // (on a touch screen it's held where the second finger is – not at all without one)
-        let hold = C.next - 0.05;
+        out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
+        // (on a touch screen it's held where the second finger is – not at all without one;
+        // never nearer the blade than CLAW_GAP, even at the very end of it)
+        let hold = ck.x - CLAW_GAP;
         if (st.touchy) { const s2 = st.steadies() && st.steadyAt(); hold = s2 ? Math.min(hold, (s2.x - MAIN.x) * w.S) : null; }
         if (hold != null) {
-          hold = Math.max(C.xL + 0.02, hold);
+          hold = Math.min(ck.x - CLAW_GAP, Math.max(C.xL - 0.03, hold));
           const H = ov.pos.clone().addScaledVector(ax, hold).setY(ov.pos.y + C.top + 0.013);
           hand(oi, H, 'claw', { dir: ax.clone().addScaledVector(UP, -0.35).normalize(), curl: 0.9 });
         }

@@ -654,7 +654,7 @@ function topping(h, kind, ck, r) {
 // left end (a pepper's stem) is what the other hand holds, and is left over.
 // Its cross-section at x: {y (the middle's height), ry, rz (half height, half
 // depth)} – no sec for things that aren't cut in clean slices (a head, herbs …).
-const KEEP = 0.16; // (how much of it is left over)
+const KEEP = 0.16; // (how much of it is left over – at least enough for the holding hand's fingertips)
 function cutGeom(a) {
   if (a.type === 'round') {
     const { rx, ry } = roundDims(a);
@@ -680,7 +680,10 @@ function cutGeom(a) {
   return { xL: (-S.w * K) / 2, xR: (S.w * K) / 2, top: S.h * K, sec: null };
 }
 // the k-th of n cuts' line (k = 0: the right end)
-const cutAt = (C, k, n) => C.xR - (C.xR - C.xL) * (1 - KEEP) * clamp(k / Math.max(1, n), 0, 1);
+const cutAt = (C, k, n) => {
+  const L = C.xR - C.xL, keep = clamp(0.032, L * KEEP, L * 0.4);
+  return C.xR - (L - keep) * clamp(k / Math.max(1, n), 0, 1);
+};
 // For the knife in first person: on a thing being cut, k of n cuts made, where
 // the next cut goes and where the cut face is now (x, as buildFood lays it
 // out), and how tall it is.
