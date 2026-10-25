@@ -972,7 +972,7 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene.zoomBy(e.del
 // the key the mouse moves that hand instead of the view; let go and it lets
 // go. Esc frees the mouse.
 const locked = () => document.pointerLockElement === canvas;
-const LOOK = 0.0023; // (radians a pixel of mouse)
+const LOOK = 0.004; // (radians a pixel of mouse)
 const HAND_ID = ['kq', 'ke']; // (the left, the right hand: their pointer ids)
 const hands = [{ down: false, ox: 0, oy: 0, act: null }, { down: false, ox: 0, oy: 0, act: null }];
 let moving = -1; // the hand the mouse moves (-1: the view)
@@ -980,11 +980,10 @@ let hover = 1;   // the hand last used (it hovers where I look)
 let lockFails = 0;
 function lockMouse() {
   if (!canvas.requestPointerLock) { lockFails = 2; return; }
-  const fail = () => { lockFails++; };
-  // (raw mouse movement where the browser can, without the desktop's acceleration)
+  // (the mouse moves as the desktop's pointer does: its speed and acceleration)
   let r;
-  try { r = canvas.requestPointerLock({ unadjustedMovement: true }); } catch { r = null; }
-  if (r && r.then) r.then(() => { lockFails = 0; }, () => { let r2; try { r2 = canvas.requestPointerLock(); } catch { fail(); return; } if (r2 && r2.catch) r2.then(() => { lockFails = 0; }, fail); });
+  try { r = canvas.requestPointerLock(); } catch { lockFails++; return; }
+  if (r && r.then) r.then(() => { lockFails = 0; }, () => { lockFails++; });
 }
 let unlockT = 0;
 document.addEventListener('pointerlockchange', () => {
