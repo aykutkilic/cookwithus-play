@@ -173,3 +173,53 @@ export function chefKnife() {
   g.add(handle);
   return g;
 }
+
+// A swivel peeler: its handle in the fist at the origin, the steel fork and the
+// slotted blade across its end below (-y) – as a tool hangs from the fist.
+export function peelerMesh() {
+  const g = new THREE.Group();
+  const steel = mat('#cfd4da', { metal: 0.85, rough: 0.25 });
+  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.0065, 0.038, 4, 10), mat('#5aa83c', { rough: 0.45 }));
+  handle.position.y = -0.004;
+  g.add(handle);
+  for (const s of [-1, 1]) g.add(box(0.0022, 0.034, 0.003, steel, s * 0.0085, -0.044, 0)); // (the fork)
+  g.add(box(0.019, 0.0022, 0.003, steel, 0, -0.03, 0));
+  const blade = box(0.017, 0.006, 0.0012, steel, 0, -0.058, 0);
+  blade.rotation.x = 0.35;
+  g.add(blade);
+  g.add(box(0.012, 0.0008, 0.0016, mat('#3a3e44', { metal: 0.6, rough: 0.4 }), 0, -0.058, 0.0004)); // (its slot)
+  return g;
+}
+
+// A box grater: four steel faces full of little holes, narrowing up to a handle on
+// top – held by that handle at the origin, standing on its open foot 0.115 below.
+let HOLES = null;
+export function boxGrater() {
+  const g = new THREE.Group();
+  if (!HOLES) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const x = c.getContext('2d');
+    x.fillStyle = '#d6dbe0'; x.fillRect(0, 0, 64, 64);
+    x.fillStyle = '#4a4f56';
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { x.beginPath(); x.ellipse(4 + i * 8 + (j % 2) * 4, 4 + j * 8, 2.2, 1.4, 0, 0, Math.PI * 2); x.fill(); }
+    HOLES = new THREE.CanvasTexture(c);
+    HOLES.wrapS = HOLES.wrapT = THREE.RepeatWrapping;
+    HOLES.repeat.set(4, 3);
+    HOLES.colorSpace = THREE.SRGBColorSpace;
+  }
+  const faces = new THREE.MeshStandardMaterial({ map: HOLES, metalness: 0.7, roughness: 0.35, side: THREE.DoubleSide });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.036, 0.1, 4, 1, true), faces);
+  body.rotation.y = Math.PI / 4;
+  body.scale.set(1.25, 1, 1);
+  body.position.y = -0.065;
+  g.add(body);
+  const steel = mat('#cfd4da', { metal: 0.85, rough: 0.25 });
+  const lid = box(0.044, 0.002, 0.035, steel, 0, -0.015, 0);
+  g.add(lid);
+  // (the handle: a loop over the top)
+  const loop = ring(0.014, 0.0035, mat('#2e2e34', { rough: 0.5 }), 0, -0.014, 0, 16, Math.PI);
+  loop.rotation.set(0, 0, 0); // (an arch standing up over the top)
+  g.add(loop);
+  return g;
+}

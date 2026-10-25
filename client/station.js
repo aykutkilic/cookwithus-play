@@ -27,9 +27,12 @@ const OVEN_KNOB = { x: 680, y: 145, r: 36 };
 const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 795, y: 470, r: 52 };
 const DW_BTN = { x: 640, y: 214, r: 40 }; // the dishwasher's start button, on its control strip
-// the board's knife, lying at its front left when it isn't in your hand; the food's container beside it
-const KNIFE_AT = { x: 236, y: 548, r: 70 };
+// the board's own tools where they lie when they aren't in your hand – the knife and the
+// peeler at its front left, the grater standing at its back left; the food's container beside it
+const TOOL_AT = { knife: { x: 236, y: 548, r: 70, ang: -1.15, s: 0.9 }, peeler: { x: 335, y: 582, r: 60, ang: -1.45, s: 0.85 }, grater: { x: 248, y: 372, r: 75, ang: 0, s: 0.7 } };
+const BOARD_TOOLS = Object.keys(TOOL_AT);
 const BOX_AT = { x: 770, y: 500, r: 110 };
+const TIP_AT = { x: MAIN.x + 80, y: MAIN.y - 165 }; // (a food's container held over the pot's rim, to be tipped in)
 const SOAP = { x: 770, y: 300, r: 60 }; // the dish soap bottle by the sink (by the board too, washing it)
 const ASIDE = { x: 820, y: 520 };
 const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
@@ -167,6 +170,7 @@ export class Station {
         if (ph.drain && ph.box) { g.source = null; g.subject = { type: 'item', id: s.item }; } // (washing water out of the food's container)
         else if (ph.drain) { g.source = { type: 'vessel', id: s.vessel }; g.subject = { type: 'colander' }; }
         else g.subject = { type: 'vessel', id: s.into };
+        if (ph.tip) g.source = { type: 'item', id: ph.tip }; // (tipped out of its container)
         g.v = 0;
         break;
       }
@@ -218,6 +222,7 @@ export class Station {
       case 'tandoorWall': return { x: 500, y: 330, r: 110 };
       case 'shelf': return { x: 500, y: 330, r: 160 };
       case 'box': return { ...BOX_AT }; // (the food's container, beside the board)
+      case 'overVessel': return { ...TIP_AT, r: 130 }; // (held over the pot's rim, to tip it in)
       case 'board': return { x: MAIN.x, y: MAIN.y - 40, r: 140 };
       case 'aside': return { x: ASIDE.x, y: ASIDE.y, r: 150 };
       case 'hands': return { x: 500, y: 600, r: 120 };
@@ -266,6 +271,9 @@ export class Station {
   }
 
   advance() {
+    // (finished mid-motion – the last cut, stroke or turn – with the button still held: the next
+    // gesture waits for a fresh press, so the rest of that motion isn't taken for it)
+    if (this.ptr.down && this.g && ['chop', 'strokes', 'circle', 'peel', 'flick'].includes(this.g.kind)) this.freshPress = true;
     this.ph++;
     this.k = 0;
     this.v = 0;
@@ -314,6 +322,7 @@ export class Station {
         return;
       }
       Object.assign(this.ptr, p, { id, down: true, seen: true, vx: 0, vy: 0, t: performance.now() });
+      this.freshPress = false;
       this.onDown(p);
     } else if (type === 'move') {
       if (this.ptr2 && id === this.ptr2.id) { Object.assign(this.ptr2, p); this.idle = 0; this.onMove2(p); return; }
@@ -324,11 +333,12 @@ export class Station {
       this.ptr.vy = (p.y - this.ptr.y) / dt * 1000;
       const prev = { x: this.ptr.x, y: this.ptr.y };
       Object.assign(this.ptr, p, { seen: true, t: now });
-      if (this.ptr.down) { this.idle = 0; this.onMove(p, prev); }
+      if (this.ptr.down && !this.freshPress) { this.idle = 0; this.onMove(p, prev); }
     } else {
       if (this.ptr2 && id === this.ptr2.id) { this.ptr2 = null; this.onUp2(p, id); return; }
       if (!this.ptr.down || (this.ptr.id !== undefined && id !== this.ptr.id)) return;
       this.ptr.down = false;
+      if (this.freshPress) { this.freshPress = false; return; } // (that press belonged to the last gesture)
       this.onUp(p);
     }
   }
@@ -931,8 +941,8 @@ export class Station {
       case 'pedal': return { x: 500, y: 590, r: 60 };
       case 'soap': return SOAP;
       case 'dwStart': return DW_BTN;
-      // (the board's knife – first person: where it really lies)
-      case 'knife': case 'knifeRest': return (this.targetHook && this.targetHook('knife')) || KNIFE_AT;
+      // (the board's own knife, peeler or grater – first person: where it really lies)
+      case 'pick': case 'rest': return (this.targetHook && this.targetHook(`tool:${g.ph.takes}`)) || TOOL_AT[g.ph.takes];
       default: return { x: 500, y: 300, r: 80 };
     }
   }
@@ -975,7 +985,7 @@ export class Station {
     // continuous gestures
     if (g && !this.done) {
       if ((g.kind === 'pour' || g.kind === 'fill') && g.pouring) {
-        const rate = g.kind === 'fill' ? 0.32 : g.ph.drain ? 0.45 : 0.38;
+        const rate = g.kind === 'fill' ? 0.32 : g.ph.drain ? 0.45 : g.ph.tip ? 0.55 : 0.38;
         g.v = Math.min(1.2, g.v + rate * dt);
         this.value(g.v, false);
         this.report();
@@ -1204,9 +1214,9 @@ export class Station {
       }
       this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore();
     }
-    // the board's knife, lying there – unless it's in my hand
+    // the board's own tools, lying there – unless they're in my hand
     const ph = g && g.ph;
-    if (!(ph && (ph.tool === 'knife' || ph.knife))) drawTool(ctx, 'knife', KNIFE_AT.x, KNIFE_AT.y, 0.9, -1.15, false);
+    for (const t of BOARD_TOOLS) if (!(ph && (ph.tool === t || ph.held === t))) { const a = TOOL_AT[t]; drawTool(ctx, t, a.x, a.y, a.s, a.ang, false); }
     // cleaning the board: its stains and crumbs, the suds, the dish soap
     if (s.do === 'wipe') {
       const { dirt, suds } = this.washLook();
@@ -2067,7 +2077,13 @@ export class Station {
       const src = g.source;
       if (!src) return;
       if (g.kind === 'drag' && this.k > 0) return;
-      if (src.type === 'item') {
+      if (src.type === 'item' && g.ph.tip) {
+        // (in its container)
+        const it = D.items[src.id];
+        ctx.save(); ctx.translate(p.x, p.y + 50); ctx.scale(0.6, 0.6); this.drawTub(ctx, 230, 120, 0, 'back');
+        if (it) this.drawFoodIn(ctx, it, 0, -14, 1.1);
+        this.drawTub(ctx, 230, 120, 0, 'front'); ctx.restore();
+      } else if (src.type === 'item') {
         const it = D.items[src.id];
         if (it) {
           const cut = it.cut && (it.k || 0) >= (it.n || 0);
@@ -2093,7 +2109,8 @@ export class Station {
       }
       return;
     }
-    if (g.kind === 'pour' && !this.ptr.down) {
+    if (g.kind === 'pour' && g.ph.tip) { if (this.sceneKind() !== 'hob') this.drawPourer(ctx, false); } // (the hob draws it itself)
+    else if (g.kind === 'pour' && !this.ptr.down) {
       this.drawContainer(ctx, SIDE.x, SIDE.y, 0);
     }
     if (g.kind === 'crack') {
@@ -2152,7 +2169,14 @@ export class Station {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(tilt);
-    if (s.from) {
+    const tip = this.g && this.g.ph.tip;
+    if (tip) {
+      // a food's container, tipped – empty once it's slid out
+      const it = this.D.items[tip];
+      ctx.translate(0, 50); ctx.scale(0.6, 0.6); this.drawTub(ctx, 230, 120, 0, 'back');
+      if (it && !((this.g.v || 0) > 0.55)) this.drawFoodIn(ctx, it, 0, -14, 1.1);
+      this.drawTub(ctx, 230, 120, 0, 'front');
+    } else if (s.from) {
       const v = this.D.vessels[s.from];
       if (v) drawVessel(ctx, v.kind, this.vesselView(v), 0, 0, this.vesselScale(v.kind) * 0.75, this.t);
     } else if (s.item) {
@@ -2168,6 +2192,17 @@ export class Station {
     if (!g || g.kind !== 'pour') return;
     const pouring = g.pouring;
     const tgt = drain ? { x: 500, y: 470 } : this.geo ? { x: this.geo.mouthX, y: this.geo.mouthY } : { x: MAIN.x, y: MAIN.y - 100 };
+    if (g.ph.tip) {
+      // a food's container, held over the rim where it was brought, tipped further the longer it's held –
+      // the food sliding out and dropping in
+      const T = TIP_AT, v = Math.min(1, g.v || 0);
+      this.drawContainer(ctx, T.x, T.y - 50, (pouring || v > 0 ? -1.6 * v : 0) - 0.1);
+      if (pouring && v > 0.15 && v < 0.85 && Math.random() < 0.5) {
+        const it = this.D.items[g.ph.tip], col = it && INGREDIENTS[it.kind] ? INGREDIENTS[it.kind].art.c1 : '#e0a050';
+        this.fx.push({ kind: 'drop', x: T.x - 70 + (Math.random() - 0.5) * 30, y: T.y - 10, vx: -40 + (Math.random() - 0.5) * 60, vy: 60, life: 0, max: 0.45, col });
+      }
+      return;
+    }
     if (!pouring && !drain) return;
     const hx = tgt.x - (drain ? 60 : 150), hy = tgt.y - (drain ? 120 : 190);
     const tilt = pouring ? (drain ? 1.1 : 1.3) : drain ? 0.3 : 0;
@@ -2182,6 +2217,12 @@ export class Station {
       ctx.lineCap = 'butt';
       if (Math.random() < 0.4) this.fx.push({ kind: 'drop', x: tgt.x + (Math.random() - 0.5) * 40, y: tgt.y, vx: (Math.random() - 0.5) * 120, vy: -80, life: 0, max: 0.4, col });
     }
+  }
+
+  // a food in its container (cut up: its pieces)
+  drawFoodIn(ctx, it, x, y, s) {
+    if (it.cut && (it.k || 0) >= (it.n || 0)) drawPieces(ctx, it.kind, it.cut, 7, x, y, 0.8 * s, 3);
+    else drawIngredient(ctx, it.kind, it, x, y, Math.min(1.1, this.itemScale(it.kind) * 0.7) * s, this.t);
   }
 
   // A see-through food container, its bottom middle at (0, 0): 'back' (the inside),
@@ -2488,7 +2529,7 @@ export class Station {
     if (g.kind === 'drag' || g.kind === 'scoop' || g.kind === 'dip' || g.kind === 'crack' || (g.kind === 'wrap' && g.stage === 0)) tool = p.down ? 'grab' : 'hand';
     if (g.kind === 'knob' || g.kind === 'tap' || g.kind === 'pour' || g.kind === 'fill' || g.kind === 'place') tool = p.down ? 'grab' : 'hand';
     if (g.kind === 'flick') tool = 'grab';
-    if (g.kind === 'tap' && ph.tool === 'knife') tool = 'knife'; // (putting the knife down)
+    if (g.kind === 'tap' && BOARD_TOOLS.includes(ph.tool)) tool = ph.tool; // (putting the knife, peeler, grater down)
     if (g.kind === 'dip' && g.drag) tool = null; // the tongs are drawn with the food
     const look = this.c.look || { skin: '#eab88a', shirt: '#3a5a9a' };
     // the steadying hand

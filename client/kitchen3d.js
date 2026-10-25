@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { FIXTURES } from '../shared/kitchens.js';
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
-import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, chefKnife } from './parts3d.js';
+import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, chefKnife, peelerMesh, boxGrater } from './parts3d.js';
 
 export const COUNTER_H = 0.46;
 const SINK_DEPTH = 0.1;
@@ -117,15 +117,19 @@ export function buildKitchen3D(K) {
       case 'piano': piano(g, ctx, d); break;
       default: break;
     }
-    // a board's own knife, lying flat at its front left – when it isn't in someone's hand
+    // a board's own tools – when they aren't in someone's hand: the knife and the peeler lying
+    // flat at its front left, the box grater standing at its back left
     if (d.anchors.board) {
-      const b = d.anchors.board, dir = v3(-0.35, 0, -1).normalize();
-      const k = chefKnife();
-      k.userData.live = true; // (shown and hidden: not baked in)
-      k.position.set(b.x - 0.12, b.y + 0.007, b.z + 0.125);
-      k.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(dir, new THREE.Vector3().crossVectors(v3(0, 1, 0), dir), v3(0, 1, 0)));
-      g.add(k);
-      d.parts.knife = k;
+      const b = d.anchors.board, up = v3(0, 1, 0);
+      const flat = (o, dir, along) => { const a = dir.clone().normalize(); o.quaternion.setFromRotationMatrix(along === 'x' ? new THREE.Matrix4().makeBasis(a, new THREE.Vector3().crossVectors(up, a), up) : new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(a, up), a, up)); };
+      const knife = chefKnife(), peeler = peelerMesh(), grater = boxGrater();
+      knife.position.set(b.x - 0.12, b.y + 0.007, b.z + 0.125);
+      flat(knife, v3(-0.35, 0, -1), 'x');
+      peeler.position.set(b.x - 0.035, b.y + 0.0065, b.z + 0.145);
+      flat(peeler, v3(0.25, 0, 1), 'y'); // (its handle toward me)
+      grater.position.set(b.x - 0.2, b.y + 0.115, b.z - 0.11);
+      d.parts.tools = { knife, peeler, grater };
+      for (const o of [knife, peeler, grater]) { o.userData.live = true; g.add(o); } // (shown and hidden: not baked in)
     }
     // place: local front is +z; face 'e' fronts turn to +x
     const cx = f.x + f.w / 2, cz = f.y + f.h / 2;

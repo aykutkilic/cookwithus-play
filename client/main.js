@@ -19,7 +19,7 @@ import {
   choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
   handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR,
 } from '../shared/cook.js';
-import { phasesOf, ACTIONS } from '../shared/actions.js';
+import { phasesOf, ACTIONS, BOARD_TOOLS } from '../shared/actions.js';
 import { foodWidth } from './food3d.js';
 import {
   randomProfile, sanitizeProfile, isProfane, cleanName, QUICK_CHAT, SKINS, HAIR_COLORS, HAIR_STYLES, HATS, HAT_COLORS,
@@ -853,12 +853,13 @@ function openWork(sid, fx) {
   station.headless = true;
   // things put under the tap / in the colander go where the water falls in the basin
   station.targetHook = (to) => {
-    // (the board's own knife, where it lies)
-    if (to === 'knife') {
-      const w = workFrame(), k = w && scene.knifeSpot(w);
+    // (the board's own knife, peeler, grater, where it lies)
+    // (as the pointer has it, over it on the screen – the grater stands up at the back of the board)
+    if (to.startsWith('tool:')) {
+      const w = workFrame(), k = w && scene.toolSpot(w, to.slice(5));
       if (!k) return null;
-      const p = scene.workPoint(w, k);
-      return { x: p.x, y: p.y, r: Math.max(50, 0.04 / w.S) };
+      const s = scene.screenOf(k), p = scene.workAt(w, s.x, s.y);
+      return p ? { x: p.x, y: p.y, r: Math.max(50, 0.04 / w.S) } : null;
     }
     // (the food's container, standing beside the board)
     if (to === 'box') {
@@ -1892,7 +1893,7 @@ function buildView(now, dt) {
   const guide = guideNow();
   const busy = new Map();
   const activeAt = new Map(), activeItems = new Map();
-  const knives = new Set(); // the boards whose knife is in someone's hand just now
+  const inHand = new Map(); // a board's own tools in someone's hand just now: fx → Set of 'knife', 'peeler', 'grater'
   if (C && x) {
     for (const [sid, st] of Object.entries(C.steps)) {
       if (st.s !== 'active' || !st.fx) continue;
@@ -1903,7 +1904,8 @@ function buildView(now, dt) {
       // (mine: as far as I've got with it)
       const phi = S.working && S.working.sid === sid && station.on && station.mode === 'step' ? station.ph : st.ph;
       const ph = d && ACTIONS[d.do] && phasesOf(d, bakeKind(fixtureById(K, st.fx)))[phi];
-      if (ph && (ph.tool === 'knife' || ph.knife)) knives.add(st.fx);
+      const t = ph && (ph.held || (BOARD_TOOLS.includes(ph.tool) && !(ph.g === 'tap' && ph.hot === 'pick') ? ph.tool : null));
+      if (t) (inHand.get(st.fx) || inHand.set(st.fx, new Set()).get(st.fx)).add(t);
       // (a board being cleaned: what stood on it is moved aside)
       if (sid.startsWith('#wipe@')) activeAt.set(st.fx, sid);
     }
@@ -1947,7 +1949,7 @@ function buildView(now, dt) {
     const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
     station.geo = scene.workGeo(wf, subj);
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, knives, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:

@@ -109,7 +109,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -694,6 +694,8 @@ export function cutLine(kind, k, n) {
 }
 
 function cutProgress(g, a, P, cut, st, seed, wet) {
+  // (just what's come off it so far, in a heap – grated shreds under the grater: bits, 0 … 1)
+  if (st.bits != null) return pieces(g, a, P, cut, Math.max(1, Math.round(defaultCount(a, cut, st) * clamp(num(st.bits), 0, 1))), seed, st);
   const n = num(st.n, 0), k = num(st.k, n);
   const done = !(n > 0 && k < n);
   if (!['round', 'long', 'bulb', 'egg', 'mushroom', 'head', 'leaf', 'herb', 'block', 'dough'].includes(a.type)) {

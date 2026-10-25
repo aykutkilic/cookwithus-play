@@ -70,20 +70,23 @@ export function stepHands(step) {
 
 // Loose food lives in its food container (boxable): a board job on it starts by
 // taking it out onto the board and ends by putting it back – cut up, gathered up
-// in both hands – where it stands beside the board. The knife is the board's own:
-// picked up off the board before the knife work and put back down on it after
-// (held meanwhile – `knife` – while the other hand does something in between).
+// in both hands – where it stands beside the board. The board's own tools – its
+// knife, peeler and grater – lie on it: the one a job needs is picked up off the
+// board before the work with it and put back down on it after (held meanwhile –
+// `held` – while the other hand does something in between).
+export const BOARD_TOOLS = ['knife', 'peeler', 'grater'];
 const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board' });
 const boxUp = (cut) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put it back in its container' });
-const pickKnife = () => ({ g: 'tap', hot: 'knife', tool: 'hand', hint: 'Pick up the knife' });
-const putKnife = () => ({ g: 'tap', hot: 'knifeRest', tool: 'knife', hint: 'Put the knife down on the board' });
+const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
+const putTool = (t) => ({ g: 'tap', hot: 'rest', takes: t, tool: t, hint: `Put the ${t} down on the board` });
 function onBoard(s, phases, cut = false) {
   let out = phases;
-  const k0 = out.findIndex((p) => p.tool === 'knife');
-  if (k0 >= 0) {
+  const t = BOARD_TOOLS.find((q) => out.some((p) => p.tool === q));
+  if (t) {
+    const k0 = out.findIndex((p) => p.tool === t);
     let k1 = out.length - 1;
-    while (out[k1].tool !== 'knife') k1--;
-    out = [...out.slice(0, k0), pickKnife(), ...out.slice(k0, k1 + 1).map((p) => (p.tool === 'knife' ? p : { ...p, knife: true })), putKnife(), ...out.slice(k1 + 1)];
+    while (out[k1].tool !== t) k1--;
+    out = [...out.slice(0, k0), pickTool(t), ...out.slice(k0, k1 + 1).map((p) => (p.tool === t ? p : { ...p, held: t })), putTool(t), ...out.slice(k1 + 1)];
   }
   return s.itemKind && !boxable(s.itemKind) ? out : [takeOut(), ...out, boxUp(cut)];
 }
@@ -330,11 +333,23 @@ export const ACTIONS = {
   },
 
   // ------------------------------------------------------------- bowls, pots & pans
+  // Food out of a food container is brought over the pot in it and tipped in – it's
+  // tipped further the longer you hold, and slides out – and the empty container is set
+  // down by the stove (fx.empties: they stand there nested in each other); what comes
+  // in its own pack is just dropped in.
   add: {
     cap: 'vessel', verb: 'Add', tool: 'grab', icon: '🫳',
-    phases: (s) => (s.items || [s.item]).map((id) => ({
-      g: 'drag', obj: `item:${id}`, to: 'vessel', hint: 'Drag it into the {into}', eff: (S, st) => useItem(S, id, st.into || st.vessel),
-    })),
+    phases: (s) => (s.items || [s.item]).flatMap((id) => {
+      const kind = (s.itemKinds && s.itemKinds[id]) || (id === s.item ? s.itemKind : null);
+      const into = (S, st) => useItem(S, id, st.into || st.vessel);
+      if (kind && !boxable(kind)) return [{ g: 'drag', obj: `item:${id}`, to: 'vessel', hint: 'Drag it into the {into}', eff: into }];
+      return [
+        { g: 'drag', obj: `item:${id}`, to: 'overVessel', tip: id, hint: 'Bring its container over the {into}' },
+        { g: 'pour', tip: id, band: [0.85, 1.21], hint: 'Hold to tip it into the {into}',
+          prog: (D, st, k, v) => { if (v > 0.55) useItem(D, id, st.into || st.vessel); },
+          eff: (S, st, v, fx) => { into(S, st); fx.empties = [...(fx.empties || []), id]; } },
+      ];
+    }),
   },
   pour: {
     cap: 'vessel', verb: 'Pour', tool: 'grab', icon: '🫗',
