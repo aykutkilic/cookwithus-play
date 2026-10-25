@@ -861,6 +861,13 @@ function openWork(sid, fx) {
       const s = scene.screenOf(k), p = scene.workAt(w, s.x, s.y);
       return p ? { x: p.x, y: p.y, r: Math.max(50, 0.04 / w.S) } : null;
     }
+    // (several worked one at a time: the pile of those done, at the board's back right – as the pointer has it)
+    if (to === 'pile') {
+      const w = workFrame();
+      if (!w) return null;
+      const s = scene.screenOf(scene.pileSpot(w)), p = scene.workAt(w, s.x, s.y);
+      return p ? { x: p.x, y: p.y, r: Math.max(60, 0.06 / w.S) } : null;
+    }
     // (the food's container, standing beside the board)
     if (to === 'box') {
       const w = workFrame();

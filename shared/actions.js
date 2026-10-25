@@ -75,22 +75,72 @@ export function stepHands(step) {
 // board before the work with it and put back down on it after (held meanwhile –
 // `held` – while the other hand does something in between).
 export const BOARD_TOOLS = ['knife', 'peeler', 'grater'];
-// (several of them: one at a time – one in the hand – `out` of them on the board so far)
-const takeOut = (q) => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', n: q, hint: q > 1 ? 'Take them out of their container onto the board, one at a time' : 'Take it out of its container, onto the board',
-  prog: (D, st, k) => { const it = item(D, st); if (it) it.out = k; } });
-const boxUp = (cut) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put it back in its container' });
+const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board' });
+const boxUp = (cut, pile = false) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
+  eff: (S, st) => { const it = item(S, st); if (it) { delete it.out; delete it.aside; delete it.pile; } } });
 const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
 const putTool = (t) => ({ g: 'tap', hot: 'rest', takes: t, tool: t, hint: `Put the ${t} down on the board` });
+// Several of a thing are worked one at a time: one taken out onto the board, worked
+// (its share of the cuts, strokes …), and moved to the side of the board – pushed
+// there with the knife – where a pile builds up; then the next. it.out: how many
+// have been taken out, it.aside: how many are on the pile (it.pile: as what).
+const takeOne = (u, q) => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', unit: u, hint: `Take one out of its container, onto the board (${u + 1} of ${q})`,
+  prog: (D, st) => { const it = item(D, st); if (it && it.out == null) it.out = u; }, // (the first: from its start, one at a time)
+  eff: (S, st) => { const it = item(S, st); if (it) it.out = u + 1; } });
+const toSide = (u, tool) => ({ g: 'drag', obj: 'unit', to: 'pile', tool, unit: u, hint: tool === 'knife' ? 'Push it to the side of the board with the knife' : 'Move it to the side of the board',
+  eff: (S, st) => { const it = item(S, st); if (it) { it.aside = u + 1; it.pile = it.cut || null; } } });
+// a gesture's share for one of q (its count split among them; what it does to the thing told as of all of them)
+function shareOf(p, u, q) {
+  if (!p.n || (p.g === 'circle' && p.n < 1)) return { ...p };
+  const b = (j) => Math.round((j * p.n) / q), before = b(u), mine = Math.max(1, b(u + 1) - before), all = { n: p.n };
+  return {
+    ...p, n: mine,
+    prog: p.prog && ((D, st, k, v, ph) => p.prog(D, st, before + k, v, { ...ph, ...all })),
+    eff: p.eff && ((S, st, v, fx, ph, extra) => {
+      p.eff(S, st, v, fx, { ...ph, ...all }, extra);
+      const it = item(S, st);
+      if (it && before + mine < p.n) { if (it.k === p.n) it.k = before + mine; if (it.peeled === 1) it.peeled = (before + mine) / p.n; }
+    }),
+  };
+}
 function onBoard(s, phases, cut = false) {
-  let out = phases;
-  const t = BOARD_TOOLS.find((q) => out.some((p) => p.tool === q));
+  const boxed = !(s.itemKind && !boxable(s.itemKind));
+  const q = boxed ? Math.max(1, Math.min(8, s.itemQty || 1)) : 1;
+  const t = BOARD_TOOLS.find((x) => phases.some((p) => p.tool === x));
+  let out;
+  if (q === 1) out = [...(boxed ? [takeOut()] : []), ...phases];
+  else {
+    out = [];
+    for (let u = 0; u < q; u++) out.push(takeOne(u, q), ...phases.map((p) => shareOf(p, u, q)), toSide(u, t === 'knife' ? 'knife' : 'hand'));
+  }
+  // the board's tool: picked up for its first use, put down after its last, held in between
   if (t) {
     const k0 = out.findIndex((p) => p.tool === t);
     let k1 = out.length - 1;
     while (out[k1].tool !== t) k1--;
     out = [...out.slice(0, k0), pickTool(t), ...out.slice(k0, k1 + 1).map((p) => (p.tool === t ? p : { ...p, held: t })), putTool(t), ...out.slice(k1 + 1)];
   }
-  return s.itemKind && !boxable(s.itemKind) ? out : [takeOut(Math.max(1, Math.min(8, s.itemQty || 1))), ...out, boxUp(cut)];
+  return boxed ? [...out, boxUp(cut, q > 1)] : out;
+}
+// Where the parts of a thing worked several at a time are just now (null: it isn't): the
+// one being worked on (its own state – its share of the cuts), what's on the pile at the
+// side of the board, how many are still in the container.
+export function boardUnits(it) {
+  const q = Math.max(1, (it && it.qty) || 1);
+  if (!it || q < 2 || it.out == null) return null;
+  const out = it.out, aside = Math.min(it.aside || 0, out);
+  const one = { ...it, qty: 1 };
+  delete one.out; delete one.aside; delete one.pile;
+  let cur = null;
+  if (out > aside) {
+    cur = { ...one };
+    const n = it.n || 0, b = (j) => Math.round((j * n) / q);
+    if (it.cut && n) { cur.n = Math.max(1, b(aside + 1) - b(aside)); cur.k = Math.max(0, Math.min(cur.n, (it.k || 0) - b(aside))); }
+    if (it.peeled) cur.peeled = Math.max(0, Math.min(1, it.peeled * q - aside));
+  }
+  const cutAs = it.pile || it.cut;
+  const pile = aside < 1 ? null : cutAs ? { ...one, cut: cutAs, k: it.n || 1, n: it.n || 1, bits: aside / q, spread: 0.03 } : { ...one, qty: aside, cut: null, peeled: it.peeled ? 1 : 0 };
+  return { cur, pile, left: q - out, aside, q };
 }
 
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)

@@ -22,7 +22,7 @@ import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3, chefKnife, peelerMesh, boxGrater } from './parts3d.js';
-import { BOARD_TOOLS } from '../shared/actions.js';
+import { BOARD_TOOLS, boardUnits } from '../shared/actions.js';
 import { SAKIR, phaseTarget } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
@@ -932,6 +932,7 @@ export class Scene3D {
       const ov = this.work && this.work.ov.get(`i:${id}`);
       // (at work: on the board out of its container – which stands beside it; in it, under the tap, being tipped into the pan)
       if (ov) {
+        if (ov.hide) continue;
         put(`item:${id}`, it.kind, ov.st ? { ...it, ...ov.st } : it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, ov.yaw ?? (this.work.yaw || 0), ov.box ? { ...ov.box, of: it } : null, ov.scale);
         // (where it is now, for where it goes next to glide from – not where it was before the work)
         this.glides.set(`i:${id}`, { sig: 'work', pos: ov.pos.clone(), from: null, t: 1 });
@@ -1206,7 +1207,10 @@ export class Scene3D {
   restPos(k, D) {
     // (at work: where the work has it – a food in its container beside the board)
     const ov = this.work && !this.work.idle && this.work.ov.get(k);
-    if (ov) return ov.pos.clone();
+    if (ov && ov.pos) return ov.pos.clone();
+    // (not drawn where the work is – several worked one at a time: its container beside the board)
+    const bx = ov && (this.work.boxes || []).find(([id]) => `i:${id}` === k);
+    if (ov) return bx ? bx[1].pos.clone() : null;
     const t = k[0] === 'v' ? D && D.vessels[k.slice(2)] : D && D.items[k.slice(2)];
     const fx = t && (k[0] === 'v' ? (t.at ? t.at.fx : t.held == null && t.home) : t.at);
     const F = fx && this.k3.fx[fx];
@@ -1435,19 +1439,17 @@ export class Scene3D {
           // Out of its container onto the board: it stands in its container beside the board till
           // you take it – a whole one in your hand, cut-up pieces as a heap in both cupped hands –
           // and put it down on the board.
-          const box = this.boxSpot(w), it = D && D.items[g.source.id];
-          const bits = it && it.cut && (it.k || 0) >= (it.n || 0);
-          // (several whole ones: one at a time – those out so far lie on the board, the rest wait in it)
-          const q = it && !bits ? Math.max(1, it.qty || 1) : 1, done = Math.min(st.k, q - 1);
-          if (q > 1 && done > 0) out.sprites.push({ tex: null, kind: it.kind, st: { ...it, qty: done }, pos: w.O.clone(), size: 0.2 });
+          const box = this.boxSpot(w), it = D && D.items[g.source.id], U = it && boardUnits(it);
+          const bits = !U && it && it.cut && (it.k || 0) >= (it.n || 0);
           if (!g.drag) {
-            out.ov.set(k, { pos: box.clone(), yaw: out.yaw, box: {}, st: q > 1 ? { qty: q - done } : null });
+            // (several, one at a time: the next one still in the container – drawn with those still to do)
+            out.ov.set(k, U ? { hide: true } : { pos: box.clone(), yaw: out.yaw, box: {} });
             hand(wi, at(st.grabPoint()).addScaledVector(UP, 0.05), 'hand', { curl: 0.3 });
             ring({ ...g.from, r: 50 });
             ring(g.target);
             break;
           }
-          out.boxes.push([g.source.id, { pos: box, yaw: out.yaw, st: q - done - 1 > 0 ? { ...it, qty: q - done - 1 } : null }]);
+          if (!U) out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
           const P = at(g.pos);
           P.y = Math.max(P.y, w.O.y + 0.05);
           if (bits) {
@@ -1456,9 +1458,26 @@ export class Scene3D {
             hand(oi, P.clone().addScaledVector(w.R, -0.019), 'palm', { curl: 0.55 });
           } else {
             // (held from above, the fingers round it – just the one)
-            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw, st: q > 1 ? { qty: 1 } : null });
+            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw, st: U ? { qty: 1, cut: null, k: 0, n: 0, peeled: 0 } : null });
             hand(wi, P.clone(), 'hand', { curl: 0.8 });
           }
+          ring(g.target);
+          break;
+        }
+        if (g.source && g.source.unit) {
+          // The one just done, pushed along the board to the pile at its side – the knife's blade on
+          // its side behind it, its edge on the board (or the hand behind it) – where the pointer has it.
+          const it = D && D.items[g.source.id], U = it && boardUnits(it);
+          const P = g.drag ? this.boardAt(w, at(g.pos)) : w.O.clone();
+          const push = this.pileSpot(w).sub(w.O).setY(0).normalize();
+          out.ov.set(k, U && U.cur ? { pos: P.clone(), yaw: out.yaw + CUT_TURN, st: U.cur } : { hide: true });
+          if (ph.tool === 'knife') {
+            const d = new THREE.Vector3().crossVectors(UP, push).normalize();
+            if (d.dot(w.N) > 0) d.negate(); // (pointing away from me)
+            const K = this.knifeAt(P.clone().addScaledVector(push, -0.05).setY(w.O.y + 0.001), d, 0.04);
+            out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
+            hand(wi, K.fist, 'knife', { dir: K.xA });
+          } else hand(wi, P.clone().addScaledVector(push, -0.045).addScaledVector(UP, 0.02), 'hand', { curl: 0.3, dir: push });
           ring(g.target);
           break;
         }
@@ -1471,8 +1490,9 @@ export class Scene3D {
           this.boxing = { id: g.source.id, fx: w.fx, pos: box.clone() };
           if (st.k > 0) { (this.boxedAt || (this.boxedAt = new Map())).set(g.source.id, this.boxing); break; }
           if (!g.drag) {
-            out.ov.set(k, { pos: w.O.clone(), yaw: out.yaw + CUT_TURN });
-            hand(wi, at(st.grabPoint()).addScaledVector(UP, 0.035), 'hand', { curl: 0.3 });
+            // (several done one at a time: they're all on the pile at the side)
+            out.ov.set(k, ph.pile ? { pos: this.pileSpot(w), yaw: out.yaw, st: { spread: 0.035 } } : { pos: w.O.clone(), yaw: out.yaw + CUT_TURN });
+            hand(wi, (ph.pile ? this.pileSpot(w) : at(st.grabPoint())).addScaledVector(UP, 0.035), 'hand', { curl: 0.3 });
             ring(g.target);
             break;
           }
@@ -1622,7 +1642,7 @@ export class Scene3D {
         // over the board (as the close-up has it); off to the side of the food, it
         // goes that way.
         const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
-        const C = it && cutLine(it.kind, st.k, phaseTarget(ph), it.qty);
+        const C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty);
         if (!ov || !C) { toolHand(at(pt)); break; }
         ov.yaw = out.yaw + CUT_TURN;
         const ax = new THREE.Vector3(Math.cos(ov.yaw), 0, -Math.sin(ov.yaw)); // (its length, to the right)
@@ -1688,6 +1708,25 @@ export class Scene3D {
         break;
       }
     }
+    // a food worked several at a time: its container beside the board with those still to do in it
+    // (one less while I carry one out), the pile of those done at the side (but while it's gathered
+    // up), and just the one being worked on where the work is
+    const uId = st.c && st.c.def && st.c.def.item, uIt = uId && D && D.items[uId], U = uIt && boardUnits(uIt);
+    if (U) {
+      const left = U.left - (g.kind === 'drag' && g.source && g.source.fromBox && g.drag ? 1 : 0);
+      out.boxes = out.boxes.filter(([id]) => id !== uId);
+      out.boxes.push([uId, { pos: this.boxSpot(w), yaw: out.yaw, st: left > 0 ? { ...uIt, qty: left, cut: null, k: 0, n: 0, peeled: 0 } : null }]);
+      if (U.pile && !(g.kind === 'drag' && g.source && g.source.pieces)) out.sprites.push({ tex: null, kind: uIt.kind, st: U.pile, pos: this.pileSpot(w), size: 0.12 });
+      const ov = out.ov.get(`i:${uId}`);
+      if (ov && !ov.hide && !(g.source && (g.source.fromBox || g.source.unit || g.source.pieces))) { if (U.cur) ov.st = { ...U.cur, ...(ov.st || {}) }; else ov.hide = true; }
+    }
+    // the grater standing where it's used, the peeler in my other hand – held between uses
+    if (ph.held === 'grater' && !out.tool) out.tool = { kind: 'grater', at: { pos: w.O.clone().addScaledVector(w.R, -0.09).addScaledVector(UP, 0.115), yaw: out.yaw + Math.PI / 2 } };
+    if (ph.held === 'peeler' && !out.tool && !out.hands[oi]) {
+      const gp = w.O.clone().addScaledVector(w.R, 0.14).addScaledVector(w.N, 0.06).addScaledVector(UP, 0.07);
+      out.tool = { kind: 'peeler', grip: gp, dir: UP.clone().addScaledVector(w.N, 0.3).normalize(), hand: oi };
+      hand(oi, gp, 'tool');
+    }
     // the knife held at rest (between knife work: turning the strips …) – its tip on the board, at the right
     if (ph.held === 'knife' && !out.tool && !out.hands[oi]) {
       const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, 0.02).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.25).normalize(), 0.3);
@@ -1702,6 +1741,14 @@ export class Scene3D {
   // (where a food's container stands beside the board while it's out on it – and where it
   // stays, once what's cut up is gathered into it)
   boxSpot(w) { return w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1); }
+  // (several worked one at a time: where those done pile up, at the board's back right)
+  pileSpot(w) { return w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, -0.085); }
+  // the point on the board under this point of the work plane, as it's seen (what the pointer's over)
+  boardAt(w, P) {
+    const s = this.screenOf(P), ray = this.rayAt(s.x, s.y);
+    if (Math.abs(ray.direction.y) < 1e-4) return P.clone().setY(w.O.y);
+    return ray.at((w.O.y - ray.origin.y) / ray.direction.y, new THREE.Vector3());
+  }
   // (the board's own knife, peeler or grater, where it lies: its handle)
   toolSpot(w, t) {
     const F = this.k3.fx[w.fx], o = F && F.parts.tools && F.parts.tools[t];
