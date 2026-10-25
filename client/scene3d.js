@@ -32,7 +32,7 @@ const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 
 const UP = new THREE.Vector3(0, 1, 0);
 const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
-const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05 };
+const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
 const GRIP3D = { saucepan: new THREE.Vector3(0.254, 0.093, 0.032), pan: new THREE.Vector3(0.294, 0.037, 0.032), cezve: new THREE.Vector3(0.194, 0.084, 0.032) };
 const mobile = matchMedia('(pointer: coarse)').matches;
@@ -517,6 +517,15 @@ export class Scene3D {
     const fxs = (C && C.fx) || {};
     for (const [id, F] of Object.entries(this.k3.fx)) {
       const P = F.parts;
+      // a board after knife work: its stains (going as it's scrubbed) and the suds
+      if (P.stains) {
+        const wl = this.work && this.work.washing && this.work.washing.fx === id && !this.work.washing.vid ? this.work.washing : null;
+        P.stains.visible = !!(fxs[id] && fxs[id].dirty) || !!wl;
+        if (P.stains.visible) {
+          const dirt = wl ? wl.dirt : 1, suds = wl ? wl.suds : 0;
+          P.stains.children.forEach((m, i) => { m.visible = m.userData.dirt ? i / 9 < dirt - 0.02 : suds > (i % 7) / 9; });
+        }
+      }
       if (P.door) {
         // the fridge door swings open / shut
         const u = P.door.userData;
@@ -745,6 +754,11 @@ export class Scene3D {
         if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
         if (ov) rec.group.position.copy(ov.pos);
         updateVessel(rec, v, this.t, this.firstPerson);
+        // dirty: a smear of what was in it (going as it's scrubbed) – and the suds while it's washed
+        const wl = this.work && this.work.washing && this.work.washing.vid === id ? this.work.washing : null;
+        const grime = v.dirty && !rec.liquid.visible && !v.lid ? (wl ? wl.dirt : 1) : 0;
+        if (grime > 0.02) { rec.liquid.visible = true; rec.liquid.position.y = 0.012; rec.liquid.material.color.set('#7a5232'); rec.liquid.material.opacity = 0.4 * grime; }
+        if (wl && wl.suds > 0.05) rec.bubbles.forEach((b, i) => { b.visible = true; b.position.set(Math.cos(i * 2.1) * rec.r * 0.55, 0.02 + (i % 2) * 0.008, Math.sin(i * 2.1) * rec.r * 0.55); b.scale.setScalar(1.2 + wl.suds * 1.5); });
         // first person: what's in it, in 3D (what's runny is its surface)
         rec.inside = this.firstPerson && !v.lid ? Object.entries(D.items).filter(([, it]) => it.in === id && !it.hidden && solidIn(it, v)) : null;
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');
@@ -1254,8 +1268,15 @@ export class Scene3D {
     if ((g.kind === 'tap' && g.ph.hot === 'faucet') && F.parts.lever) {
       return { w: F.parts.lever.localToWorld(new THREE.Vector3(0.1, 0.03, 0)), at: st.hotspot() };
     }
+    // the dish soap: on the sink's rim – or, cleaning a board, standing beside it on the worktop
+    if (g.kind === 'tap' && g.ph.hot === 'soap') {
+      if (F.parts.soap) return { w: F.parts.soap.localToWorld(new THREE.Vector3(0, 0.14, 0)), at: st.hotspot() };
+      return { w: this.soapSpot(w).addScaledVector(UP, 0.14), at: st.hotspot() };
+    }
     return null;
   }
+  // (cleaning a board: where the dish soap stands, on the worktop to its right)
+  soapSpot(w) { return w.O.clone().addScaledVector(w.R, 0.33).addScaledVector(w.N, -0.12).setY(w.O.y - 0.025); }
   // The camera at work: almost straight down on the work, from just my side of it,
   // close enough to see what's happening; for the knob on the stove's front / the
   // tap's lever, from in front and a little above (the pan in view too).
@@ -1299,6 +1320,9 @@ export class Scene3D {
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
+    // washing up / cleaning a board: how grimy, how sudsy it still is
+    const cleaning = st.c && st.c.def && (st.c.def.do === 'scrub' || st.c.def.do === 'wipe');
+    if (cleaning) out.washing = { fx: w.fx, vid: st.c.def.do === 'scrub' ? st.c.st && st.c.st.vid : null, ...st.washLook(), soap: !F0 || !F0.parts.soap ? this.soapSpot(w) : null };
     const basin = washing && F0 && F0.anchors.basin ? F0.anchors.basin.clone() : null;
     const wantWater = !washing ? 0 : st.ph === 0 ? 0 : g.kind === 'pour' ? 0.7 * (1 - Math.min(1, g.v || 0)) : 0.7;
     this.washWater = (this.washWater || 0) + (wantWater - (this.washWater || 0)) * Math.min(1, (this.dt || 0.016) * (wantWater > (this.washWater || 0) ? 1.6 : 6));
@@ -1501,6 +1525,17 @@ export class Scene3D {
       this.scene.add(this.workFx.stream);
     }
     const fx = this.workFx;
+    // cleaning a board: the dish soap stands beside it
+    if (!fx.soap) {
+      fx.soap = new THREE.Group();
+      fx.soap.add(cyl(0.026, 0.028, 0.12, mat('#4cbf5c', { rough: 0.25, opacity: 0.92 }), 0, 0, 0, 14));
+      fx.soap.add(cyl(0.012, 0.012, 0.02, mat('#f2f2f2', { rough: 0.4 }), 0, 0.12, 0, 10));
+      fx.soap.add(box(0.03, 0.008, 0.01, mat('#f2f2f2', { rough: 0.4 }), 0.01, 0.14, 0));
+      this.scene.add(fx.soap);
+    }
+    const soapAt = W && W.washing && W.washing.soap;
+    fx.soap.visible = !!soapAt && this.firstPerson;
+    if (soapAt) fx.soap.position.copy(soapAt);
     const rings = (W && W.rings) || [];
     while (fx.rings.length < rings.length) {
       const m = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 40), new THREE.MeshBasicMaterial({ color: '#ffd34d', transparent: true, opacity: 0.8, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));

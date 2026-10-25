@@ -259,6 +259,23 @@ function counter(g, ctx, w, d, withBoard) {
     // (towards the front: in first person it's within a hand's reach)
     g.add(rbox(0.52, 0.024, 0.36, mat('#c9955a', { rough: 0.65 }), 0, COUNTER_H, 0.2, 0.01));
     d.anchors.board = v3(0, COUNTER_H + 0.025, 0.2);
+    // after knife work: juice stains and crumbs on it (and suds while it's scrubbed)
+    const stains = live(new THREE.Group());
+    stains.position.set(0, COUNTER_H + 0.0255, 0.2);
+    const dirt = [mat('#8a5a32', { rough: 0.9, opacity: 0.6 }), mat('#b8402a', { rough: 0.7, opacity: 0.55 })];
+    for (let i = 0; i < 9; i++) {
+      const r = 0.012 + ((i * 37) % 10) * 0.0025, m = new THREE.Mesh(new THREE.CircleGeometry(r, 10), dirt[i % 3 ? 0 : 1]);
+      m.rotation.x = -Math.PI / 2;
+      m.scale.set(1, 0.6 + ((i * 13) % 5) * 0.12, 1);
+      m.position.set(((i * 53) % 9 - 4) * 0.05, 0.0004 * i, ((i * 29) % 7 - 3) * 0.04);
+      m.userData.dirt = true;
+      stains.add(m);
+    }
+    const suds = mat('#ffffff', { rough: 0.3, opacity: 0.85 });
+    for (let i = 0; i < 7; i++) { const b = ball(0.012 + (i % 3) * 0.006, suds, ((i * 41) % 9 - 4) * 0.045, 0.004, ((i * 17) % 7 - 3) * 0.035, 1, 0.45, 1, 8); b.userData.suds = true; stains.add(b); }
+    stains.visible = false;
+    g.add(stains);
+    d.parts.stains = stains;
   }
   d.anchors.top = v3(0, COUNTER_H, 0.1);
   d.anchors.spots = [v3(-0.3, COUNTER_H, -0.22), v3(0.3, COUNTER_H, -0.22), v3(-0.3, COUNTER_H, 0.3), v3(0.32, COUNTER_H, 0.3)];
@@ -309,9 +326,22 @@ function sink(g, ctx, d) {
   water.visible = false;
   g.add(water);
   d.parts.water = water;
+  // washing up: the dish soap on the rim, the sponge beside it
+  const soap = live(new THREE.Group());
+  soap.position.set(0.41, COUNTER_H, -0.34);
+  soap.add(cyl(0.026, 0.028, 0.12, mat('#4cbf5c', { rough: 0.25, opacity: 0.92 }), 0, 0, 0, 14));
+  soap.add(cyl(0.012, 0.012, 0.02, mat('#f2f2f2', { rough: 0.4 }), 0, 0.12, 0, 10));
+  soap.add(box(0.03, 0.008, 0.01, mat('#f2f2f2', { rough: 0.4 }), 0.01, 0.14, 0));
+  g.add(soap);
+  d.parts.soap = soap;
+  const sponge = live(new THREE.Group());
+  sponge.position.set(0.41, COUNTER_H, 0.12);
+  sponge.add(box(0.09, 0.025, 0.06, mat('#f6d44a', { rough: 0.95 }), 0, 0, 0));
+  sponge.add(box(0.09, 0.008, 0.06, mat('#3f9a46', { rough: 0.95 }), 0, 0.025, 0));
+  g.add(sponge);
+  d.parts.sponge = sponge;
   d.anchors.basin = v3(0, COUNTER_H - SINK_DEPTH, 0); // (its bottom)
   d.anchors.spout = v3(0, COUNTER_H + 0.24, -0.12); // where the water comes out
-  d.anchors.spout = v3(0, COUNTER_H + 0.24, -0.12);
   d.anchors.top = v3(0, COUNTER_H, 0.1);
   d.anchors.spots = [v3(-0.3, COUNTER_H, 0.36), v3(0.3, COUNTER_H, 0.36)];
   d.anchors.scraps = v3(0.36, COUNTER_H, 0.36);

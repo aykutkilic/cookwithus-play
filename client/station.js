@@ -26,6 +26,7 @@ const KNOB = { x: 795, y: 540, r: 52 };
 const OVEN_KNOB = { x: 680, y: 145, r: 36 };
 const LEVER = { x: 580, y: 200, r: 44 };
 const BELL = { x: 795, y: 470, r: 52 };
+const SOAP = { x: 770, y: 300, r: 60 }; // the dish soap bottle by the sink (by the board too, washing it)
 const ASIDE = { x: 820, y: 520 };
 const HANDS = { x: 880, y: 470, r: 105 };   // (pull a thing out to here – anywhere out of the cupboard – and it's in your hand)
 const EYE = { x: 500, y: 330, f: 1400 };    // where you look from (for doors swinging towards you)
@@ -116,6 +117,8 @@ export class Station {
     if (isItemStep && s.item) g.subject = { type: 'item', id: s.item };
     else if (vId) g.subject = { type: 'vessel', id: vId };
     else if (s.target) g.subject = { type: 'item', id: s.target };
+    // washing up: the pot / pan / bowl in the sink
+    if (s.do === 'scrub' && this.c.st && this.c.st.vid) g.subject = { type: 'vessel', id: this.c.st.vid };
     switch (ph.g) {
       case 'drag': {
         const obj = ph.obj;
@@ -916,6 +919,7 @@ export class Station {
       case 'fridge': return { x: 640, y: 330, r: 90 };
       case 'bell': return BELL;
       case 'pedal': return { x: 500, y: 590, r: 60 };
+      case 'soap': return SOAP;
       default: return { x: 500, y: 300, r: 80 };
     }
   }
@@ -1176,6 +1180,12 @@ export class Station {
     }
     // the grater stands beside the food while grating
     if (g && g.ph.tool === 'grater') drawTool(ctx, 'grater', MAIN.x + 150, MAIN.y, 1.1, 0, false);
+    // cleaning the board: its stains and crumbs, the suds, the dish soap
+    if (s.do === 'wipe') {
+      const { dirt, suds } = this.washLook();
+      this.drawDirt(ctx, MAIN.x, MAIN.y - 10, 230, 110, dirt, suds);
+      this.drawSoap(ctx, g && g.kind === 'tap' && g.ph.hot === 'soap' && this.ptr.down);
+    }
     this.drawScrapsHere(ctx);
     this.drawSource(ctx);
   }
@@ -1763,7 +1773,7 @@ export class Station {
     if (g && g.kind === 'tap' && g.ph.hot === 'faucet') tapOn = !!fxs.tap;
     if (g && g.kind === 'fill') tapOn = !!g.pouring;
     if (g && g.kind === 'strokes' && s.do === 'wash') tapOn = true;
-    if (g && g.kind === 'circle' && s.do === 'rinse') tapOn = true;
+    if (g && g.kind === 'circle' && (s.do === 'rinse' || s.do === 'scrub')) tapOn = true;
     ctx.fillStyle = '#c9ccd2'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.roundRect(478, 200, 44, 60, 10); ctx.fill(); ctx.stroke();
     ctx.lineWidth = 22; ctx.strokeStyle = OUTLINE; ctx.lineCap = 'round';
@@ -1792,6 +1802,14 @@ export class Station {
       ctx.beginPath(); ctx.moveTo(370, 520); ctx.quadraticCurveTo(380, 590, 500, 595); ctx.quadraticCurveTo(620, 590, 630, 520); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#9aa0aa';
       for (let i = 0; i < 18; i++) { ctx.beginPath(); ctx.arc(400 + (i % 6) * 40, 545 + Math.floor(i / 6) * 16, 3, 0, TAU); ctx.fill(); }
+    }
+    // washing up: the dirty pot / pan in the basin – grimy, then sudsy, then clean – and the dish soap
+    if (s.do === 'scrub') {
+      const vid = g && g.subject && g.subject.type === 'vessel' ? g.subject.id : this.c.st && this.c.st.vid;
+      if (vid && this.D.vessels[vid]) this.drawMainVessel(ctx, vid, 470, 575, 1.0);
+      const { dirt, suds } = this.washLook();
+      this.drawDirt(ctx, 470, 520, 120, 40, dirt, suds);
+      this.drawSoap(ctx, g && g.kind === 'tap' && g.ph.hot === 'soap' && this.ptr.down);
     }
     // the thing under the tap
     const it = this.subjectItem();
@@ -2150,6 +2168,36 @@ export class Station {
     ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4; ctx.stroke();
     ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.moveTo(-w / 2 + 14, -h + 10); ctx.lineTo(-wb / 2 + 12, -10); ctx.stroke();
+  }
+
+  // washing up: how grimy it still is, how sudsy (0..1) – by how far along the scrubbing and rinsing are
+  washLook() {
+    const P = this.c.phases || [];
+    const n = (i) => (P[i] ? phaseTarget(P[i]) : 1);
+    const f = (i) => (this.ph > i ? 1 : this.ph === i ? Math.min(1, this.k / n(i)) : 0);
+    if (this.c.def.do === 'wipe') return { dirt: 1 - f(1) * 0.75 - f(2) * 0.25, suds: Math.max(0, f(1) - f(2)) };
+    return { dirt: 1 - f(1), suds: Math.max(0, f(1) - f(3)) };
+  }
+  // grime and suds on what's being washed, over an ellipse (cx, cy, rx, ry)
+  drawDirt(ctx, cx, cy, rx, ry, dirt, suds) {
+    const rnd = (i, k) => ((Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
+    for (let i = 0; i < 14; i++) {
+      const x = cx + (rnd(i, 1) - 0.5) * 2 * rx * 0.8, y = cy + (rnd(i, 2) - 0.5) * 2 * ry * 0.8;
+      if (dirt > 0.02) { ctx.fillStyle = `rgba(${i % 3 ? '120,70,30' : '190,60,40'},${(0.45 * dirt).toFixed(3)})`; ctx.beginPath(); ctx.ellipse(x, y, 6 + rnd(i, 3) * 12, 4 + rnd(i, 4) * 6, rnd(i, 5) * 3, 0, TAU); ctx.fill(); }
+      if (suds > 0.02) { ctx.fillStyle = `rgba(255,255,255,${(0.85 * suds).toFixed(3)})`; ctx.strokeStyle = `rgba(160,200,230,${(0.6 * suds).toFixed(3)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x + 8, y - 4, 6 + rnd(i, 6) * 9, 0, TAU); ctx.fill(); ctx.stroke(); }
+    }
+  }
+  // the dish soap bottle (pressed: a squeeze)
+  drawSoap(ctx, pressed) {
+    const { x, y } = SOAP;
+    ctx.save(); ctx.translate(x, y); if (pressed) ctx.scale(1.06, 0.92);
+    ctx.fillStyle = '#5cc86a'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.roundRect(-26, -40, 52, 86, 14); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e8f6ea'; ctx.beginPath(); ctx.roundRect(-18, -12, 36, 30, 6); ctx.fill();
+    ctx.fillStyle = '#3a8a46'; ctx.font = '700 13px Fredoka, system-ui'; ctx.textAlign = 'center'; ctx.fillText('SOAP', 0, 8); ctx.textAlign = 'start';
+    ctx.fillStyle = '#f2f2f2'; ctx.beginPath(); ctx.roundRect(-8, -58, 16, 20, 4); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    if (pressed) { ctx.fillStyle = 'rgba(110,210,120,0.85)'; ctx.beginPath(); ctx.arc(x, y - 66, 7, 0, TAU); ctx.fill(); }
   }
 
   pourColor() {
@@ -2570,7 +2618,7 @@ function easeIO(t) { return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2; }
 // where your hand holds each tool, relative to its working point (art.js geometry)
 const GRIP = {
   knife: [72, -30], peeler: [0, -88], whisk: [0, -125], spoon: [0, -128], ladle: [20, -125], brush: [0, -112], masher: [0, -135],
-  tongs: [0, -150], spatula: [0, -125], blenderStick: [0, -165], pizzaPeel: [150, 42],
+  tongs: [0, -150], spatula: [0, -125], blenderStick: [0, -165], pizzaPeel: [150, 42], sponge: [0, -18],
 };
 function toolFor(kind) {
   return { chop: 'knife', peel: 'peeler', circle: 'spoon', strokes: 'hand', paint: 'spoon', flick: 'grab' }[kind] || 'hand';

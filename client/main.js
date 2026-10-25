@@ -17,7 +17,7 @@ import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
   choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
-  handsFree, canPut, HANDS, handsUsed, inOrder,
+  handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS } from '../shared/actions.js';
 import { foodWidth } from './food3d.js';
@@ -334,7 +334,10 @@ function renderSheet() {
   const fresh = S.doneSeen ? [...nowDone].filter((id) => !S.doneSeen.has(id)) : [];
   S.doneSeen = nowDone;
   const html = [];
+  // what's still to clean before it can be served
+  const todo = cleanup(C, x);
   for (const { s, st } of list) {
+    if (s.do === 'serve' && todo.length && st.s !== 'done') html.push(cleanupRow(C, x, todo));
     const cls = [st.s];
     // (open, but the recipe puts other steps first: yours to do whenever – it just says what usually comes first)
     const later = st.s === 'open' && st.ph === 0 && st.k === 0 && !inOrder(C, s);
@@ -355,7 +358,7 @@ function renderSheet() {
     else if (st.s === 'open') sub = esc(planNote(planStep(C, x, S.K, s.id, S.myId)));
     else if (st.s === 'running') sub = `⏳ ${fmtTime(Math.max(0, stepDuration(C, x, S.K, s) - st.t))} left${C.speed > 1 ? ` · ${C.speed}×` : ''}`;
     else if (st.s === 'ready') sub = '⏰ ready!';
-    else if (st.s === 'locked') { const need = (s.do === 'serve' ? x.steps.filter((o) => o.id !== s.id) : s.after.map((a) => stepDef(x, a))).filter((o) => o && C.steps[o.id] && !['done', 'ready'].includes(C.steps[o.id].s)); sub = need.length ? `after: ${esc(need[0].name)}${need.length > 1 ? ` +${need.length - 1}` : ''}` : ''; }
+    else if (st.s === 'locked') { const need = (s.do === 'serve' ? x.steps.filter((o) => o.id !== s.id) : s.after.map((a) => stepDef(x, a))).filter((o) => o && C.steps[o.id] && !['done', 'ready'].includes(C.steps[o.id].s)); sub = need.length ? `after: ${esc(need[0].name)}${need.length > 1 ? ` +${need.length - 1}` : ''}` : s.do === 'serve' && todo.length ? 'after: cleaning up 🧽' : ''; }
     const canAct = st.s === 'open' || (st.s === 'active' && st.by === S.myId);
     const acts = [];
     if (st.s !== 'done' && s.do !== 'wait') acts.push(`<button data-claim="${s.id}" class="${st.claim.includes(S.myId) ? 'on' : ''}" title="I’ll do this">✋</button>`);
@@ -1206,6 +1209,14 @@ function jobsAtNow(f) {
       if (carrying(C, S.myId)) out.unshift({ sid: choreId('toss', f.id), label: fill >= holds ? '🗑️ Full! Change the bag first' : `🗑️ Throw away the scraps`, chore: true, off: fill >= holds });
       if (fill >= holds * 0.5) out.push({ sid: choreId('bag', f.id), label: `🛍️ Change the bag (${fill}/${holds})`, chore: true });
     }
+    // washing up: something dirty in the sink (by hand – soap on the sponge, scrub, rinse)
+    if (f.caps.includes('sink')) {
+      const dirty = Object.entries(C.vessels).find(([id, v]) => v.held == null && v.at && v.at.fx === f.id && needsWash(C, x, id));
+      const full = held.length > 0; // (both hands for washing up)
+      if (dirty) out.push({ sid: choreId('scrub', f.id), label: `🧽 Wash up the ${thingName(C, x, `v:${dirty[0]}`)}${full ? ' (hands full)' : ''}`, chore: true, off: full });
+    }
+    // a dirty board (wooden: by hand, with the sponge)
+    if (f.caps.includes('board') && C.fx[f.id] && C.fx[f.id].dirty) out.push({ sid: choreId('wipe', f.id), label: '🧽 Clean the board', chore: true });
   }
   return out;
 }
@@ -1335,6 +1346,21 @@ function renderNudge() {
 }
 
 // a step that's ready to go with what I'm holding (for the hint and the arrows)
+// the sheet's clean-up line: what's dirty, where the scraps are
+function cleanupRow(C, x, todo) {
+  const K = S.K;
+  const fxName = (id) => { const f = fixtureById(K, id); return f ? FIXTURES[f.type].name.toLowerCase() : id; };
+  const parts = [];
+  const ves = todo.filter((t) => t.kind === 'vessel').map((t) => thingName(C, x, t.key));
+  if (ves.length) parts.push(`wash up the ${ves.join(', ')}`);
+  const boards = todo.filter((t) => t.kind === 'board');
+  if (boards.length) parts.push(boards.length > 1 ? `clean ${boards.length} boards` : 'clean the board');
+  const sc = todo.filter((t) => t.kind === 'scraps').map((t) => fxName(t.fx));
+  if (sc.length) parts.push(`clear the scraps off the ${sc.join(', ')}`);
+  if (todo.some((t) => t.kind === 'carry')) parts.push('bin the scraps in hand');
+  return `<li class="open cleanup"><span class="ic">🧽</span><span class="nm">Clean up before serving<small>${esc(parts.join(' · '))}</small></span><span class="who"></span><span class="acts"></span></li>`;
+}
+
 // What glows a little, to help: for the step I picked (📍), else the one
 // what I hold is for, else the recipe's next step I can get going (one I said
 // I'd do ✋ first) – the fridge / shelf and the thing to fetch from it, where
@@ -1362,6 +1388,12 @@ function guideNow() {
     }
     // (the fridge / pantry glows till its door is open – then just the thing in it)
     if (p) { if (!(p.do === 'take' && p.store && C.fx[p.fx] && C.fx[p.fx].door)) out.add(p.fx); if (p.do === 'take' && p.key) out.add(p.key); }
+    // nothing of the recipe to do: what needs cleaning (the dirty things and the sink, dirty boards, scraps)
+    if (!p && !S.sel) {
+      const todo = cleanup(C, x);
+      for (const t of todo) if (t.kind === 'scraps' || t.kind === 'board') out.add(t.fx); else if (t.kind === 'vessel') out.add(t.key);
+      if (todo.some((t) => t.kind === 'vessel')) { const sink = K.fixtures.find((f) => f.caps.includes('sink')); if (sink) out.add(sink.id); }
+    }
   }
   S.guideCache = { key, out };
   return out;
@@ -1820,6 +1852,8 @@ function buildView(now, dt) {
       if (m) busy.set(st.fx, m.color);
       const d = stepDef(x, sid);
       if (d && d.item) { activeAt.set(st.fx, d.item); activeItems.set(d.item, st.fx); }
+      // (a board being cleaned: what stood on it is moved aside)
+      if (sid.startsWith('#wipe@')) activeAt.set(st.fx, sid);
     }
   }
   // doors being swung right now (mine straight from my hand)

@@ -264,6 +264,8 @@ export function toolMesh(kind) {
     case 'rollingPin': { const r = cyl(0.025, 0.025, 0.24, wood, 0, 0, 0, 10); r.rotation.z = Math.PI / 2; r.position.set(-0.11, -0.01, 0.02); g.add(r); break; }
     case 'shaker': g.add(cyl(0.02, 0.02, 0.06, mat('#ffffff'), 0, -0.05, 0, 10)); break;
     case 'pizzaPeel': g.add(cyl(0.008, 0.008, 0.2, wood, 0, -0.1, 0.08, 6)); g.add(box(0.12, 0.006, 0.12, wood, 0, -0.03, 0.2)); break;
+    // the kitchen sponge in the fist: yellow foam, its green scouring side down on what's scrubbed
+    case 'sponge': g.add(box(0.06, 0.03, 0.09, mat('#f6d44a', { rough: 0.95 }), 0, -0.02, 0)); g.add(box(0.06, 0.008, 0.09, mat('#3f9a46', { rough: 0.95 }), 0, -0.039, 0)); break;
     default: break;
   }
   TOOL_CACHE.set(kind, g);

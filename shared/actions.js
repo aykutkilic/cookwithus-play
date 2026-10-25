@@ -528,6 +528,27 @@ export const ACTIONS = {
     cap: 'hob', verb: 'Turn off the burner', tool: 'hand', icon: '🔥', chore: true,
     phases: () => [{ g: 'knob', to: 0, hint: 'Turn the empty burner off', eff: (S, st, v, fx) => { const k = Object.keys(fx.lit || {})[0]; if (k != null) delete fx.lit[k]; } }],
   },
+  // ------------------------------------------------------------- chores: washing up
+  // (a dirty pot / pan / bowl in the sink, washed by hand: soap on the sponge, scrub, rinse)
+  scrub: {
+    cap: 'sink', verb: 'Wash up', tool: 'sponge', icon: '🧽', chore: true,
+    phases: () => [
+      { g: 'tap', hot: 'soap', hint: 'Squeeze some dish soap onto the sponge' },
+      { g: 'strokes', axis: 'h', n: 6, tool: 'sponge', hint: 'Scrub it all over with the sponge' },
+      { g: 'tap', hot: 'faucet', hint: 'Turn on the tap', eff: (S, st, v, fx) => { fx.tap = 1; } },
+      { g: 'circle', n: 2, tool: 'hand', hint: 'Rinse the suds off under the water' },
+      { g: 'tap', hot: 'faucet', hint: 'Turn off the tap', eff: (S, st, v, fx) => { fx.tap = 0; } },
+    ],
+  },
+  // (a cutting board after knife work: wooden – by hand, with the sponge, never in the dishwasher)
+  wipe: {
+    cap: 'board', verb: 'Clean the board', tool: 'sponge', icon: '🧽', chore: true,
+    phases: () => [
+      { g: 'tap', hot: 'soap', hint: 'A squeeze of dish soap on the sponge' },
+      { g: 'strokes', axis: 'h', n: 5, tool: 'sponge', hint: 'Scrub the board with the sponge' },
+      { g: 'strokes', axis: 'v', n: 3, tool: 'sponge', hint: 'Wipe it down clean' },
+    ],
+  },
   bag: {
     cap: 'bin', verb: 'Change the bag', tool: 'grab', icon: '🛍️', chore: true,
     phases: () => [

@@ -171,7 +171,7 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
-  const m = /^#(clear|toss|bag|knob)@([a-zA-Z]+\d*)$/.exec(sid);
+  const m = /^#(clear|toss|bag|knob|scrub|wipe)@([a-zA-Z]+\d*)$/.exec(sid);
   if (!m) return null;
   return { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
 }
@@ -213,11 +213,47 @@ function choreBlocked(C, x, K, d, memberId) {
     case 'bag':
       if (!f.caps.includes('bin')) return 'That isn’t a bin';
       return bin.fill >= binHolds(f) * 0.5 ? '' : 'The bag isn’t full yet';
+    case 'scrub': {
+      if (!f.caps.includes('sink')) return 'That isn’t a sink';
+      if (!dirtyAt(C, x, d.fx)) return 'Nothing dirty in the sink';
+      const h = heldBy(C, memberId);
+      return h.length ? `Put the ${thingName(C, x, h[0])} down first – washing up takes both hands` : '';
+    }
+    case 'wipe':
+      if (!(C.fx[d.fx] && C.fx[d.fx].dirty)) return 'The board is clean';
+      return handsUsed(C, memberId) >= HANDS ? 'No hand free for the sponge' : '';
   }
   return 'Nothing to do';
 }
 
-function choreDone(C, K, d, st) {
+// ------------------------------------------------------------------ washing up
+// Pots, pans, bowls get dirty when a step uses them; a board after knife work.
+// Before the dish is served the kitchen must be clean: no scraps lying about
+// or in anyone's hands, no dirty board, nothing dirty but what holds the dish.
+
+// a pot / pan / bowl that wants washing: used, done with (off the heat, no
+// step left that needs it) and nothing but water left in it
+export function needsWash(C, x, id) {
+  const v = C.vessels[id];
+  if (!v || !v.dirty || v.heat > 0 || (v.contents || []).some((c) => c.kind !== 'water') || (v.items || []).length) return false;
+  return !x.steps.some((s) => !['done', 'ready'].includes(C.steps[s.id].s) && (stepVessel(s) === id || s.from === id || s.into === id || s.vessel === id));
+}
+// the dirty one standing in this sink (vessel id), if any
+function dirtyAt(C, x, fx) {
+  for (const [id, v] of Object.entries(C.vessels)) if (v.held == null && v.at && v.at.fx === fx && needsWash(C, x, id)) return id;
+  return null;
+}
+// What's still to clean up: [{kind: 'scraps' | 'carry' | 'board' | 'vessel', fx?, key?, m?}]
+export function cleanup(C, x) {
+  const out = [];
+  for (const [fx, sc] of Object.entries(C.scraps || {})) if (sc && sc.n > 0) out.push({ kind: 'scraps', fx });
+  for (const [m, c] of Object.entries(C.carry || {})) if (c && c.n > 0) out.push({ kind: 'carry', m: Number(m) });
+  for (const [fx, s] of Object.entries(C.fx || {})) if (s && s.dirty) out.push({ kind: 'board', fx });
+  for (const id of Object.keys(C.vessels)) if (needsWash(C, x, id)) out.push({ kind: 'vessel', key: `v:${id}` });
+  return out;
+}
+
+function choreDone(C, x, K, d, st) {
   const by = st.by;
   const f = fixtureById(K, d.fx);
   if (d.do === 'clear') {
@@ -236,6 +272,12 @@ function choreDone(C, K, d, st) {
     bin.fill = 0;
     bin.bags++;
     C.bagsOut = (C.bagsOut || 0) + 1;
+  } else if (d.do === 'scrub') {
+    const id = st.vid && needsWash(C, x, st.vid) ? st.vid : dirtyAt(C, x, d.fx);
+    const v = id && C.vessels[id];
+    if (v) { v.dirty = 0; v.water = 0; v.contents = []; v.liquid = null; }
+  } else if (d.do === 'wipe') {
+    if (C.fx[d.fx]) C.fx[d.fx].dirty = 0;
   }
 }
 
@@ -494,6 +536,7 @@ function bringMsg(C, x, K, miss) {
 //   null                           not a step you can do now
 export function planStep(C, x, K, sid, m) {
   const s = stepDef(x, sid);
+  if (s && s.chore && (s.do === 'scrub' || s.do === 'wipe')) return planWash(C, x, K, s, m);
   const st = s && C.steps[sid];
   if (!s || !st || s.chore || s.do === 'wait') return null;
   if (st.s === 'active' && st.by === m) return { do: 'go', fx: st.fx, slot: st.slot };
@@ -534,6 +577,31 @@ export function planStep(C, x, K, sid, m) {
   if (blocked && held.length) return { do: 'put', fx: putSpot(C, x, K, m, place), keys: held };
   if (!place && held.length) return { do: 'put', fx: putSpot(C, x, K, m, null), keys: held };
   return { do: 'wait', why: blocked || 'Not yet' };
+}
+
+// Getting the washing up going: a dirty pot to the sink (my hands free of the
+// rest), then wash it there; the board: a free hand for the sponge.
+function planWash(C, x, K, s, m) {
+  if (carrying(C, m)) return { do: 'bin' };
+  const st = C.steps[s.id];
+  if (st && st.s === 'active' && st.by === m) return { do: 'go', fx: s.fx, slot: 0 };
+  const held = heldBy(C, m);
+  if (s.do === 'wipe') {
+    if (!(C.fx[s.fx] && C.fx[s.fx].dirty)) return null;
+    if (handsUsed(C, m) >= HANDS) return { do: 'put', fx: putSpot(C, x, K, m, { fx: s.fx }, held), keys: held };
+    return { do: 'go', fx: s.fx, slot: 0 };
+  }
+  const mine = held.find((k) => k[0] === 'v' && needsWash(C, x, k.slice(2)));
+  if (mine) return { do: 'put', fx: s.fx, keys: [mine] }; // (into the sink)
+  if (held.length) return { do: 'put', fx: putSpot(C, x, K, m, null, held), keys: held };
+  if (dirtyAt(C, x, s.fx)) return { do: 'go', fx: s.fx, slot: 0 };
+  // the nearest dirty one nobody has in their hands
+  for (const [id, v] of Object.entries(C.vessels)) {
+    if (v.held != null || !needsWash(C, x, id)) continue;
+    const L = locate(C, K, `v:${id}`);
+    if (L.fx && L.fx !== s.fx) return { do: 'take', key: `v:${id}`, fx: L.fx, store: !!L.stored };
+  }
+  return null;
 }
 
 // where a step would be done: a free spot, preferably where its things already are
@@ -579,7 +647,8 @@ export function refresh(C, x) {
     const st = C.steps[s.id];
     if (st.s !== 'locked') continue;
     if (s.do === 'wait' && !inOrder(C, s)) continue;
-    if (s.do === 'serve' && !x.steps.every((o) => o.id === s.id || ['done', 'ready'].includes(C.steps[o.id].s))) continue;
+    // (serving: once everything else is done – and the kitchen is clean)
+    if (s.do === 'serve' && (!x.steps.every((o) => o.id === s.id || ['done', 'ready'].includes(C.steps[o.id].s)) || cleanup(C, x).length)) continue;
     // a step after a timer opens when the timer is ready
     st.s = s.do === 'wait' ? 'running' : 'open';
     st.t = 0;
@@ -669,6 +738,7 @@ export function openStep(C, x, K, sid, place, memberId) {
   }
   const st = C.steps[sid];
   if (!s || !st) return 'No such step';
+  if (s.chore && s.do === 'scrub' && !(st.s === 'active' || st.ph > 0 || st.k > 0)) st.vid = dirtyAt(C, x, s.fx);
   if (C.finished && !s.chore) return 'The dish is finished';
   if (!s.chore && carrying(C, memberId)) return 'Your hands are full – take the scraps to a bin first 🗑️';
   if (st.s === 'active' && st.by !== memberId) return 'Someone is already on it';
@@ -818,16 +888,20 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
   ev.push({ k: 'phase', sid: s.id });
   if (st.ph < phases.length) return;
   if (s.chore) {
-    choreDone(C, K, s, st);
+    choreDone(C, x, K, s, st);
     st.s = 'done';
     credit(C, st.by, 'chores');
     st.by = null;
     ev.push({ k: 'chore', sid: s.id, what: s.do });
+    refresh(C, x); // (the kitchen may be clean now: serving opens)
     return;
   }
   // step complete
   const sc = scrapsOf(s, C.items);
   if (sc) addScraps(C, st.fx, sc);
+  // what it used is dirty now: its pots and pans, the board
+  for (const id of [s.vessel, s.into, s.from]) if (id && C.vessels[id]) C.vessels[id].dirty = 1;
+  if (a.cap === 'board' && f && f.caps.includes('board')) fxState(C, st.fx).dirty = 1;
   if (a.moves) moveVessel(C, s, st);
   if (s.makes && C.items[s.makes]) {
     const it = C.items[s.makes];

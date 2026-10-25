@@ -3690,6 +3690,14 @@ function toolLocal(c, tool, pressed) {
       c.beginPath(); c.moveTo(-62, -2); c.quadraticCurveTo(0, 6, 62, -2); strokeIn(c, rgba(OUTLINE, 0.6), 2.4);
       return;
     }
+    case 'sponge': {
+      // a kitchen sponge: yellow foam, the green scouring side on top
+      if (pressed) c.translate(0, 3);
+      c.beginPath(); c.roundRect(-34, -14, 68, 30, 7); fs(c, '#f6d44a');
+      c.beginPath(); c.roundRect(-34, -22, 68, 12, 5); fs(c, '#4aa84a');
+      c.fillStyle = 'rgba(255,255,255,0.35)'; for (let i = 0; i < 6; i++) { c.beginPath(); c.arc(-24 + i * 10, 4 + (i % 2) * 5, 2.2, 0, Math.PI * 2); c.fill(); }
+      return;
+    }
     default:
       c.beginPath(); E(c, 0, 0, 12, 12); fs(c, '#e8574a');
   }

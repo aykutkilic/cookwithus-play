@@ -87,6 +87,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #steps li.active { background: #fff3c4; border-color: var(--ink); }
 #steps li.locked { opacity: .45; }
 #steps li.later { opacity: .72; }
+#steps li.cleanup { background: #eef7fb; border-style: dashed; }
 #steps li.done { opacity: .55; }
 #steps li.done .nm { text-decoration: line-through; text-decoration-thickness: 2px; }
 #steps li.running, #steps li.ready { background: #e6f4fb; border-color: #5aa0c8; }
