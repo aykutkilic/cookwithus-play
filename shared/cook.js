@@ -80,7 +80,7 @@ export function expandRecipe(r, cap = 1) {
   for (const s of steps) {
     s.name = stepTitle(s, names) + (s.part ? ` (${s.part[0]}/${s.part[1]})` : '');
     // (what they are: kept in a food container or not)
-    if (s.item && ing[s.item]) s.itemKind = ing[s.item].kind;
+    if (s.item && ing[s.item]) { s.itemKind = ing[s.item].kind; s.itemQty = ing[s.item].qty || 1; }
     if (s.items) s.itemKinds = Object.fromEntries(s.items.filter((id) => ing[id]).map((id) => [id, ing[id].kind]));
   }
   return { ...r, ing, ves, names, steps };

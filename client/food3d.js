@@ -683,14 +683,48 @@ const cutAt = (C, k, n) => {
   const L = C.xR - C.xL, keep = clamp(0.032, L * KEEP, L * 0.4);
   return C.xR - (L - keep) * clamp(k / Math.max(1, n), 0, 1);
 };
-// For the knife in first person: on a thing being cut, k of n cuts made, where
-// the next cut goes and where the cut face is now (x, as buildFood lays it
-// out), and how tall it is.
-export function cutLine(kind, k, n) {
+// Several of a thing are cut one after the other, the n cuts shared out among
+// them: which one is being cut (u), its cuts so far and in all (kk of nn), and the
+// cuts on the ones before it.
+function unitOf(k, n, q) {
+  const b = (j) => Math.round((j * n) / q);
+  let u = 0;
+  while (u < q - 1 && b(u + 1) <= k) u++;
+  return { u, kk: k - b(u), nn: Math.max(1, b(u + 1) - b(u)), before: b(u) };
+}
+// For the knife in first person: on a thing being cut (qty of them: the one being
+// cut), k of n cuts made, where the next cut goes and where the cut face is now (x,
+// as buildFood lays it out), and how tall it is.
+export function cutLine(kind, k, n, qty = 1) {
   const a = artOf(kind);
   if (!a) return null;
   const C = cutGeom(a);
+  const q = clamp(num(qty, 1) | 0, 1, 8);
+  if (q > 1) { const U = unitOf(k, n, q); k = U.kk; n = U.nn; }
   return { next: cutAt(C, Math.min(n, k + 1), n), face: cutAt(C, k, n), xL: C.xL, xR: C.xR, top: C.top };
+}
+
+// Several, cut one after the other: the one being cut where one alone would be,
+// the ones still to cut lying whole behind it, the pieces of those done off to its
+// front right.
+function cutMany(g, a, P, cut, st, seed, wet, q, k, n) {
+  const U = unitOf(k, n, q);
+  cutProgress(g, a, P, cut, { ...st, qty: 1, k: U.kk, n: U.nn }, seed, wet);
+  const S = sizeArt(a), deep = Math.min(S.w, S.h) * K + 0.012;
+  for (let i = U.u + 1; i < q; i++) {
+    const h = new THREE.Group();
+    whole(h, a, P, { ...st, cut: null, qty: 1 }, seed + i * 31, wet);
+    h.position.set((i % 2) * 0.012, 0, -(i - U.u) * deep);
+    g.add(h);
+  }
+  if (U.u > 0) {
+    const C = cutGeom(a), row = cut === 'slices' || cut === 'rings';
+    const pg = new THREE.Group();
+    pieces(pg, a, P, cut, row ? Math.min(12, U.before + U.u) : Math.max(1, Math.round((defaultCount(a, cut, st) * U.before) / Math.max(1, n))), seed + 7, st);
+    pg.position.set(C.xR + 0.02, 0, deep * 0.9);
+    pg.scale.setScalar(0.85);
+    g.add(pg);
+  }
 }
 
 function cutProgress(g, a, P, cut, st, seed, wet) {
@@ -705,6 +739,8 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   if (cut === 'slit') { whole(g, a, P, { ...st, cut: null }, seed, wet); return slitGroove(g, a, st, done ? 1 : clamp(k / n, 0, 1)); }
   if (cut === 'rolls' && a.type === 'leaf') return pieces(g, a, P, 'rolls', defaultCount(a, cut, st), seed, st);
   if (done) return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
+  const q = clamp(num(st.qty, 1) | 0, 1, 8);
+  if (q > 1 && cut !== 'halves') return cutMany(g, a, P, cut, st, seed, wet, q, k, n);
   const frac = clamp(k / n, 0, 1);
   const wholeG = new THREE.Group();
   whole(wholeG, a, P, { ...st, cut: null, qty: 1 }, seed, wet);

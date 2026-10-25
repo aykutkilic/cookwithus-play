@@ -543,6 +543,7 @@ export class Station {
             this.hooks.sfx(g.ph.to === 'vessel' ? 'plop' : 'clunk');
             if (g.ph.to === 'vessel') this.splash(tg.x, tg.y);
             this.count();
+            if (this.g === g && !this.done) g.pos = { ...g.from }; // (several, one at a time: the next one's still where they came from)
           } else g.pos = { ...g.from };
         }
         break;
@@ -1207,7 +1208,11 @@ export class Station {
     // taking it out / putting it back: its container stands beside the board (with it in, once it's in)
     if (g && g.kind === 'drag' && g.source && (g.source.pieces || g.source.fromBox)) {
       const it2 = D.items[g.source.id];
+      // (taking several out, one at a time: those out so far on the board, the rest still in it)
+      const many = g.source.fromBox && it2 && (it2.qty || 1) > 1 && !(it2.cut && (it2.k || 0) >= (it2.n || 0));
+      if (many && this.k > 0) drawIngredient(ctx, it2.kind, { ...it2, qty: this.k }, MAIN.x, MAIN.y, this.itemScale(it2.kind), this.t);
       ctx.save(); ctx.translate(BOX_AT.x, BOX_AT.y + 50); ctx.scale(0.75, 0.75); this.drawTub(ctx, 230, 120, 0, 'back');
+      if (many && (it2.qty || 1) - this.k - 1 > 0) drawIngredient(ctx, it2.kind, { ...it2, qty: (it2.qty || 1) - this.k - 1 }, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
       if (g.source.pieces && this.k > 0 && it2) {
         if (it2.cut && (it2.k || 0) >= (it2.n || 0)) drawPieces(ctx, it2.kind, it2.cut, 7, 0, -12, 0.8, 3);
         else drawIngredient(ctx, it2.kind, it2, 0, -10, Math.min(1.1, this.itemScale(it2.kind) * 0.7), this.t);
@@ -2088,7 +2093,7 @@ export class Station {
         if (it) {
           const cut = it.cut && (it.k || 0) >= (it.n || 0);
           if (cut) drawPieces(ctx, it.kind, it.cut, 8, p.x, p.y, 0.9, 3);
-          else drawIngredient(ctx, it.kind, it, p.x, p.y, Math.min(1.1, this.itemScale(it.kind) * 0.7), this.t);
+          else drawIngredient(ctx, it.kind, src.fromBox ? { ...it, qty: 1 } : it, p.x, p.y, Math.min(1.1, this.itemScale(it.kind) * 0.7), this.t); // (out of its container: one at a time)
           if (g.kind === 'dip') drawTool(ctx, 'tongs', p.x + 30, p.y - 60, 0.7, -0.4, !!g.drag);
           if (g.kind === 'dip' && g.inside) this.holdRing(ctx, p.x, p.y - 140, g.hold / (g.ph.hold || 1.6));
         }

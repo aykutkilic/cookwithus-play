@@ -75,7 +75,9 @@ export function stepHands(step) {
 // board before the work with it and put back down on it after (held meanwhile –
 // `held` – while the other hand does something in between).
 export const BOARD_TOOLS = ['knife', 'peeler', 'grater'];
-const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board' });
+// (several of them: one at a time – one in the hand – `out` of them on the board so far)
+const takeOut = (q) => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', n: q, hint: q > 1 ? 'Take them out of their container onto the board, one at a time' : 'Take it out of its container, onto the board',
+  prog: (D, st, k) => { const it = item(D, st); if (it) it.out = k; } });
 const boxUp = (cut) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put it back in its container' });
 const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
 const putTool = (t) => ({ g: 'tap', hot: 'rest', takes: t, tool: t, hint: `Put the ${t} down on the board` });
@@ -88,7 +90,7 @@ function onBoard(s, phases, cut = false) {
     while (out[k1].tool !== t) k1--;
     out = [...out.slice(0, k0), pickTool(t), ...out.slice(k0, k1 + 1).map((p) => (p.tool === t ? p : { ...p, held: t })), putTool(t), ...out.slice(k1 + 1)];
   }
-  return s.itemKind && !boxable(s.itemKind) ? out : [takeOut(), ...out, boxUp(cut)];
+  return s.itemKind && !boxable(s.itemKind) ? out : [takeOut(Math.max(1, Math.min(8, s.itemQty || 1))), ...out, boxUp(cut)];
 }
 
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)

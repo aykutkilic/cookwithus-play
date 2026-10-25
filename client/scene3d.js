@@ -977,7 +977,7 @@ export class Scene3D {
     // at work: the containers of what's out on the board, standing beside it, empty
     if (fp && this.work) for (const [k, b] of this.work.boxes || []) {
       const it = D.items[k];
-      if (it && boxable(it.kind)) food(`box:${k}`, it.kind, null, b.pos, b.yaw, { of: it, empty: true, tilt: b.tilt, axis: b.axis });
+      if (it && boxable(it.kind)) food(`box:${k}`, it.kind, b.st || null, b.pos, b.yaw, { of: it, empty: !b.st, tilt: b.tilt, axis: b.axis });
     }
     // the empty food containers set down on the stove after their food was tipped into the pot –
     // nested in each other, the smaller inside the bigger
@@ -1437,14 +1437,17 @@ export class Scene3D {
           // and put it down on the board.
           const box = this.boxSpot(w), it = D && D.items[g.source.id];
           const bits = it && it.cut && (it.k || 0) >= (it.n || 0);
+          // (several whole ones: one at a time – those out so far lie on the board, the rest wait in it)
+          const q = it && !bits ? Math.max(1, it.qty || 1) : 1, done = Math.min(st.k, q - 1);
+          if (q > 1 && done > 0) out.sprites.push({ tex: null, kind: it.kind, st: { ...it, qty: done }, pos: w.O.clone(), size: 0.2 });
           if (!g.drag) {
-            out.ov.set(k, { pos: box.clone(), yaw: out.yaw, box: {} });
+            out.ov.set(k, { pos: box.clone(), yaw: out.yaw, box: {}, st: q > 1 ? { qty: q - done } : null });
             hand(wi, at(st.grabPoint()).addScaledVector(UP, 0.05), 'hand', { curl: 0.3 });
             ring({ ...g.from, r: 50 });
             ring(g.target);
             break;
           }
-          out.boxes.push([g.source.id, { pos: box, yaw: out.yaw }]);
+          out.boxes.push([g.source.id, { pos: box, yaw: out.yaw, st: q - done - 1 > 0 ? { ...it, qty: q - done - 1 } : null }]);
           const P = at(g.pos);
           P.y = Math.max(P.y, w.O.y + 0.05);
           if (bits) {
@@ -1452,8 +1455,8 @@ export class Scene3D {
             hand(wi, P.clone().addScaledVector(w.R, 0.019), 'palm', { curl: 0.55 });
             hand(oi, P.clone().addScaledVector(w.R, -0.019), 'palm', { curl: 0.55 });
           } else {
-            // (held from above, the fingers round it)
-            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw });
+            // (held from above, the fingers round it – just the one)
+            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw, st: q > 1 ? { qty: 1 } : null });
             hand(wi, P.clone(), 'hand', { curl: 0.8 });
           }
           ring(g.target);
@@ -1619,7 +1622,7 @@ export class Scene3D {
         // over the board (as the close-up has it); off to the side of the food, it
         // goes that way.
         const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
-        const C = it && cutLine(it.kind, st.k, phaseTarget(ph));
+        const C = it && cutLine(it.kind, st.k, phaseTarget(ph), it.qty);
         if (!ov || !C) { toolHand(at(pt)); break; }
         ov.yaw = out.yaw + CUT_TURN;
         const ax = new THREE.Vector3(Math.cos(ov.yaw), 0, -Math.sin(ov.yaw)); // (its length, to the right)
