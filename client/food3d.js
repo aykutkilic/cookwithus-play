@@ -27,10 +27,10 @@ const rng = (seed) => { let s = (seed >>> 0) || 1; return () => { s = (s * 16645
 // ------------------------------------------------------------------ shared parts
 const MATS = new Map();
 function fm(color, o = {}) {
-  const key = `${color}|${o.rough ?? 0.62}|${o.metal || 0}|${o.opacity ?? 1}|${o.emissive || ''}`;
+  const key = `${color}|${o.rough ?? 0.62}|${o.metal || 0}|${o.opacity ?? 1}|${o.emissive || ''}|${o.side || 0}`;
   let m = MATS.get(key);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({ color, roughness: o.rough ?? 0.62, metalness: o.metal || 0 });
+    m = new THREE.MeshStandardMaterial({ color, roughness: o.rough ?? 0.62, metalness: o.metal || 0, side: o.side || THREE.FrontSide });
     if (o.opacity != null && o.opacity < 1) { m.transparent = true; m.opacity = o.opacity; m.depthWrite = false; }
     if (o.emissive) { m.emissive = new THREE.Color(o.emissive); m.emissiveIntensity = 0.25; }
     MATS.set(key, m);
@@ -48,6 +48,8 @@ const GEO = {
   disc: new THREE.CircleGeometry(1, 20),
   torus: new THREE.TorusGeometry(1, 0.28, 8, 18),
   caps: new THREE.CapsuleGeometry(0.5, 1, 4, 10), // (y: -1 … 1, radius 0.5)
+  tube: new THREE.CylinderGeometry(1, 1, 1, 18, 1, true), // (open at both ends: a ring cut off a pepper)
+  annulus: new THREE.RingGeometry(0.8, 1, 24),
 };
 function part(g, geo, mat, x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(geo, mat);
@@ -118,7 +120,27 @@ export function buildFood(kind, st) {
     if (CACHE.size > 400) CACHE.clear();
     CACHE.set(key, g);
   }
-  return g.clone();
+  const c = g.clone();
+  // (a thing half cut through: its own materials, cut off at the knife's line –
+  // syncCuts keeps that where the thing is)
+  c.traverse((o) => {
+    if (o.userData.clipX == null) return;
+    const local = new THREE.Plane(v(-1, 0, 0), o.userData.clipX), plane = local.clone();
+    const cl = (mm) => { const m = mm.clone(); m.clippingPlanes = [plane]; m.clipShadows = true; return m; };
+    o.traverse((m) => { if (m.isMesh) m.material = Array.isArray(m.material) ? m.material.map(cl) : cl(m.material); });
+    o.userData.clip = { local, plane };
+  });
+  return c;
+}
+// Keeps the cut of a half-cut thing (its clipping plane, in the world) where it is now.
+export function syncCuts(root) {
+  root.updateMatrixWorld(true);
+  root.traverse((o) => { const c = o.userData.clip; if (c) c.plane.copy(c.local).applyMatrix4(o.matrixWorld); });
+}
+export function hasCuts(root) {
+  let any = false;
+  root.traverse((o) => { if (o.userData.clip) any = true; });
+  return any;
 }
 // ------------------------------------------------------------------ food containers
 // Loose food is kept, carried and put down in a food container – glass, clear
@@ -628,6 +650,47 @@ function topping(h, kind, ck, r) {
 }
 
 // ------------------------------------------------------------------ cut up
+// A thing being cut lies along x and is cut from its right end leftwards: the
+// left end (a pepper's stem) is what the other hand holds, and is left over.
+// Its cross-section at x: {y (the middle's height), ry, rz (half height, half
+// depth)} – no sec for things that aren't cut in clean slices (a head, herbs …).
+const KEEP = 0.16; // (how much of it is left over)
+function cutGeom(a) {
+  if (a.type === 'round') {
+    const { rx, ry } = roundDims(a);
+    const R = rx * K, H = ry * K;
+    return { xL: -R, xR: R, top: 2 * H, sec: (x) => { const f = Math.sqrt(Math.max(0, 1 - (x / R) ** 2)); return { y: H, ry: H * f, rz: R * 0.97 * f }; } };
+  }
+  if (a.type === 'long' && !a.knobby && !a.bunch) {
+    const T = tubeOf(a), N = T.N;
+    const xs = T.x.map((q) => q * K), ys = T.y.map((q) => -q * K), rs = T.r.map((q) => q * K);
+    let top = 0;
+    for (let i = 0; i <= N; i++) top = Math.max(top, ys[i] + rs[i]);
+    return {
+      xL: xs[0] - rs[0], xR: xs[N] + rs[N], top,
+      sec: (x) => {
+        if (x <= xs[0] || x >= xs[N]) { const i = x <= xs[0] ? 0 : N, d = x - xs[i], r = Math.sqrt(Math.max(0, rs[i] * rs[i] - d * d)); return { y: ys[i], ry: r, rz: r * 0.95 }; }
+        const u = ((x - xs[0]) / (xs[N] - xs[0])) * N, i = Math.min(N - 1, Math.floor(u)), f = u - i;
+        const r = rs[i] + (rs[i + 1] - rs[i]) * f;
+        return { y: ys[i] + (ys[i + 1] - ys[i]) * f, ry: r, rz: r * 0.95 };
+      },
+    };
+  }
+  const S = sizeArt(a);
+  return { xL: (-S.w * K) / 2, xR: (S.w * K) / 2, top: S.h * K, sec: null };
+}
+// the k-th of n cuts' line (k = 0: the right end)
+const cutAt = (C, k, n) => C.xR - (C.xR - C.xL) * (1 - KEEP) * clamp(k / Math.max(1, n), 0, 1);
+// For the knife in first person: on a thing being cut, k of n cuts made, where
+// the next cut goes and where the cut face is now (x, as buildFood lays it
+// out), and how tall it is.
+export function cutLine(kind, k, n) {
+  const a = artOf(kind);
+  if (!a) return null;
+  const C = cutGeom(a);
+  return { next: cutAt(C, Math.min(n, k + 1), n), face: cutAt(C, k, n), xL: C.xL, xR: C.xR, top: C.top };
+}
+
 function cutProgress(g, a, P, cut, st, seed, wet) {
   const n = num(st.n, 0), k = num(st.k, n);
   const done = !(n > 0 && k < n);
@@ -642,19 +705,81 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   const wholeG = new THREE.Group();
   whole(wholeG, a, P, { ...st, cut: null, qty: 1 }, seed, wet);
   if (cut === 'halves' || frac <= 0) { g.add(wholeG); return; }
-  // the rest of it shrinks from the right; the cut pieces lie next to it
-  const S = sizeArt(a);
-  const W = S.w * K;
+  const C = cutGeom(a);
+  const xc = cutAt(C, k, n);
+  const row = cut === 'slices' || cut === 'rings';
+  const cnt = row ? Math.min(12, Math.max(1, k)) : Math.max(1, Math.round(defaultCount(a, cut, st) * frac));
+  if (C.sec) {
+    // cut off clean where the knife went through, the cut face showing; the
+    // slices off it standing against each other beside it (the bits: a heap)
+    wholeG.userData.clipX = xc;
+    g.add(wholeG);
+    cutFace(g, a, P, C.sec(xc), xc);
+    if (row) return cutSlices(g, a, P, C, k, n);
+    const pg = new THREE.Group();
+    pieces(pg, a, P, cut, cnt, seed, st);
+    pg.position.x = xc + 0.022 + Math.sqrt(cnt) * 0.0065;
+    g.add(pg);
+    return;
+  }
+  // (the rest: what's left shrinks from the right, the pieces right beside it)
+  const W = C.xR - C.xL;
   const f = clamp(1 - frac, 0.15, 1);
   wholeG.scale.x = f;
-  wholeG.position.x = -W * (1 - f) / 2 - 0.01;
+  wholeG.position.x = (-W * (1 - f)) / 2;
   g.add(wholeG);
-  const cnt = cut === 'slices' || cut === 'rings' ? Math.min(12, Math.max(1, k)) : Math.max(1, Math.round(defaultCount(a, cut, st) * frac));
   const pg = new THREE.Group();
   pieces(pg, a, P, cut, cnt, seed, st);
-  pg.position.x = W * f / 2 + 0.035;
+  const half = row ? ((cnt - 1) * Math.min(0.016, Math.max(0.04, W) / cnt)) / 2 + 0.012 : 0.016 + Math.sqrt(cnt) * 0.0065;
+  pg.position.x = -W / 2 + W * f + 0.006 + half * 0.85;
   pg.scale.setScalar(0.85);
   g.add(pg);
+}
+// the face where it was cut through: its flesh – a hollow one's (a pepper's) a
+// ring round the pith and seeds, a tomato's or a lemon's with its middle
+function cutFace(g, a, P, s, x) {
+  if (!s || s.ry < 0.002) return;
+  const flesh = fm(P.c2, { rough: 0.45 });
+  if (a.hollow) {
+    part(g, GEO.annulus, flesh, x, s.y, 0, s.rz, s.ry, 1, 0, Math.PI / 2, 0);
+    part(g, GEO.disc, fm(mixHex(P.c2, '#fffbe8', 0.55), { rough: 0.7 }), x - 0.004, s.y, 0, s.rz * 0.8, s.ry * 0.8, 1, 0, Math.PI / 2, 0);
+    return;
+  }
+  part(g, GEO.disc, flesh, x, s.y, 0, s.rz, s.ry, 1, 0, Math.PI / 2, 0);
+  if (a.type === 'round' && !a.spots) part(g, GEO.disc, fm(P.c3, { rough: 0.5 }), x + 0.0004, s.y, 0, s.rz * 0.55, s.ry * 0.55, 1, 0, Math.PI / 2, 0);
+}
+// the slices cut off so far, standing against each other beside it: the
+// newest nearly upright by the knife, the older ones further over
+function cutSlices(g, a, P, C, k, n) {
+  const skin = fm(P.c1, { rough: 0.45 }), flesh = fm(P.c2, { rough: 0.5 }), inner = fm(P.c2, { rough: 0.5, side: THREE.BackSide });
+  let px = cutAt(C, k, n) + 0.004;
+  for (let j = k - 1; j >= 0; j--) {
+    const hi = cutAt(C, j, n), lo = cutAt(C, j + 1, n), t = Math.max(0.002, (hi - lo) * 0.9);
+    const s = C.sec((hi + lo) / 2);
+    if (!s || s.ry < 0.002) continue;
+    const phi = Math.min(0.85, 0.3 + 0.2 * (k - 1 - j));
+    px += j === k - 1 ? t / 2 : (t / Math.cos(phi)) * 1.08 + 0.0015;
+    // (leaning over from its foot)
+    const h = new THREE.Group();
+    h.position.set(px, (Math.sin(phi) * t) / 2, 0);
+    h.rotation.z = -phi;
+    // (the slice standing on its edge, its cut faces to the sides: built round y, turned)
+    const sl = new THREE.Group();
+    sl.position.y = s.ry;
+    sl.rotation.z = Math.PI / 2;
+    sl.scale.set(s.ry, t, s.rz);
+    if (a.hollow) {
+      part(sl, GEO.tube, skin, 0, 0, 0, 1, 1, 1);
+      part(sl, GEO.tube, inner, 0, 0, 0, 0.8, 0.999, 0.8);
+      part(sl, GEO.annulus, flesh, 0, 0.5, 0, 1, 1, 1, -Math.PI / 2, 0, 0);
+      part(sl, GEO.annulus, flesh, 0, -0.5, 0, 1, 1, 1, Math.PI / 2, 0, 0);
+    } else {
+      part(sl, GEO.cyl, [skin, flesh, flesh], 0, 0, 0, 1, 1, 1);
+      if (a.type === 'round' && !a.spots) for (const y of [0.502, -0.502]) part(sl, GEO.disc, fm(P.c3, { rough: 0.5 }), 0, y, 0, 0.55, 0.55, 0.55, y > 0 ? -Math.PI / 2 : Math.PI / 2, 0, 0);
+    }
+    h.add(sl);
+    g.add(h);
+  }
 }
 function slitGroove(g, a, st, open) {
   const T = tubeOf(a);

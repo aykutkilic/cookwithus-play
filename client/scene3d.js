@@ -19,10 +19,10 @@ import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
 import { FpArms } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
-import { buildFood, foodKey, boxedFood, boxable, boxSpec } from './food3d.js';
+import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
-import { SAKIR } from '../shared/cook.js';
+import { SAKIR, phaseTarget } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
@@ -32,6 +32,7 @@ const REACH_S = 0.55;  // and the cook reaches out for it
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
 const UP = new THREE.Vector3(0, 1, 0);
 const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
+const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
@@ -50,6 +51,7 @@ export class Scene3D {
     r.shadowMap.type = THREE.PCFShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.outputColorSpace = THREE.SRGBColorSpace;
+    r.localClippingEnabled = true; // (a thing half cut through ends at the knife's line)
     this.renderer = r;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200);
@@ -457,18 +459,26 @@ export class Scene3D {
       const lean = Math.max(this.fpArms.lean(), this.workLean);
       const eye = this.eyeAt(me.x, me.y, yaw, view.eyeOff || 0, lean);
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
-      this.eye.position.copy(eye);
-      this.camTarget.copy(eye).add(dir);
-      this.eye.lookAt(this.camTarget);
-      this.eye.updateMatrixWorld(true);
       // at work the view leaves my eyes for a camera of its own, almost straight down on
       // the work (and in front of the knob, the tap's lever) – my arms stay at my
       // shoulders: I see them reach in. It glides there and back.
       const wc = this.work && !this.work.idle && this.work.cam;
-      if (wc) this.workCamAt = wc;
+      if (wc) { this.workCamAt = wc; this.workBodyAt = this.work.body || null; }
       this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6));
       if (!wc && this.workCamK < 0.003) this.workCamK = 0;
       const wk = this.workCamK * this.workCamK * (3 - 2 * this.workCamK);
+      this.eye.position.copy(eye);
+      this.camTarget.copy(eye).add(dir);
+      this.eye.lookAt(this.camTarget);
+      // (and I step right up to it, leaning over: my shoulders – where my arms come
+      // from – just out of that camera's sight, close enough for my hands to be on the work)
+      const B = wk > 0 && this.workBodyAt;
+      if (B) {
+        const qb = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(B.pos, B.pos.clone().add(B.fwd), UP));
+        this.eye.position.lerp(B.pos, wk);
+        this.eye.quaternion.slerp(qb, wk);
+      }
+      this.eye.updateMatrixWorld(true);
       if (wk > 0 && this.workCamAt) {
         const Wc = this.workCamAt;
         const q1 = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(Wc.pos, Wc.look, UP));
@@ -885,6 +895,7 @@ export class Scene3D {
     if (!f || f.key !== key) {
       if (f) this.dynamic.remove(f.g);
       if (boxed) { const bf = boxedFood(kind, box.empty ? null : st, box.of || st); f = { key, g: bf.g, setWater: bf.setWater }; } else f = { key, g: buildFood(kind, st) };
+      f.cuts = hasCuts(f.g);
       this.foods.set(slot, f);
       this.dynamic.add(f.g);
     }
@@ -892,6 +903,7 @@ export class Scene3D {
     f.g.rotation.set(0, yaw, 0);
     if (boxed && box.tilt) f.g.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(box.axis || UP, box.tilt));
     if (f.setWater) f.setWater(boxed ? box.water || 0 : 0);
+    if (f.cuts) syncCuts(f.g);
     f.g.visible = true;
   }
 
@@ -912,7 +924,7 @@ export class Scene3D {
       if (it.hidden || it.in) continue;
       const ov = this.work && this.work.ov.get(`i:${id}`);
       // (at work: on the board out of its container – which stands beside it; in it, under the tap, being tipped into the pan)
-      if (ov) { put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, this.work.yaw || 0, ov.box ? { ...ov.box, of: it } : null); continue; }
+      if (ov) { put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, ov.yaw ?? (this.work.yaw || 0), ov.box ? { ...ov.box, of: it } : null); continue; }
       // where it lies on a counter, the sink, a table … (its spot there)
       const lie = () => {
         if (it.used && !it.at) return null;
@@ -1150,6 +1162,8 @@ export class Scene3D {
         if (h.dir) { dir = h.dir.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) dir.x = -dir.x; }
         holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
       });
+      // (a hand with nothing to do hangs at my side, out of sight – I'm right up against it)
+      if (this.work.body) for (let i = 0; i < 2; i++) if (!holds[i]) holds[i] = { kind: 'away', at: new THREE.Vector3(0.15, -0.5, 0.22) };
     }
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {
@@ -1329,6 +1343,8 @@ export class Scene3D {
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
     const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st), boxes: [] };
+    // (where my body is, working: right up against it, leaning over – the knob, the tap's lever: as I stand)
+    if (!out.real) out.body = { pos: w.O.clone().addScaledVector(w.N, 0.25).addScaledVector(UP, 0.46), fwd: w.N.clone().negate() };
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -1347,7 +1363,7 @@ export class Scene3D {
       const F = this.k3.fx[w.fx];
       if (w.kind === 'sink' && g.kind === 'strokes' && F && F.anchors.spout) out.stream = { from: F.anchors.spout.clone(), to: basin ? basin.clone().addScaledVector(UP, 0.05) : at({ x: b.cx, y: b.y0 }), color: '#cfe8f8' };
       // out on the board: its container stands beside it, empty
-      if (!washing && w.kind !== 'sink') out.boxes.push([g.subject.id, { pos: at({ x: 870, y: MAIN.y + 60 }), yaw: Math.atan2(w.N.x, w.N.z) }]);
+      if (!washing && w.kind !== 'sink') out.boxes.push([g.subject.id, { pos: w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1), yaw: Math.atan2(w.N.x, w.N.z) }]);
     }
     // the tool, as the close-up has it
     let tool = ph.tool || { chop: 'knife', peel: 'peeler', circle: 'spoon', paint: 'spoon' }[g.kind] || 'hand';
@@ -1368,10 +1384,9 @@ export class Scene3D {
     const toolHand = (pos) => {
       if (tool === 'hand') return hand(wi, pos.clone().addScaledVector(UP, 0.02), 'hand', { curl: p.down ? 0.8 : 0.3 });
       if (tool === 'knife') {
-        const blade = into.clone().addScaledVector(w.R, -0.5).addScaledVector(UP, -0.1).normalize();
-        const grip = pos.clone().addScaledVector(blade, -0.065).addScaledVector(UP, 0.024);
-        out.tool = { kind: 'knife', grip, dir: blade, hand: wi };
-        return hand(wi, grip, 'knife', { dir: blade });
+        const K = this.knifeAt(pos, into.clone().addScaledVector(w.R, -0.5).normalize(), 0.12);
+        out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
+        return hand(wi, K.fist, 'knife', { dir: K.xA });
       }
       const grip = pos.clone().addScaledVector(UP, len).addScaledVector(w.N, len * 0.25);
       out.tool = { kind: tool, grip, dir: grip.clone().sub(pos).normalize(), hand: wi };
@@ -1488,6 +1503,40 @@ export class Scene3D {
         for (const q of st.scoopTargets()) ring(q, 45);
         break;
       }
+      case 'chop': {
+        // The knife comes down through the food at the next cut (lying turned a little,
+        // cut from its right end leftwards), its blade across it, rocking – the heel
+        // up, the tip down – as it lifts; the other hand holds it in a claw just
+        // behind the blade, fingertips tucked under the knuckles, and walks back
+        // along it cut by cut. How high the knife is is the pointer's height
+        // over the board (as the close-up has it); off to the side of the food, it
+        // goes that way.
+        const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
+        const C = it && cutLine(it.kind, st.k, phaseTarget(ph));
+        if (!ov || !C) { toolHand(at(pt)); break; }
+        ov.yaw = out.yaw + CUT_TURN;
+        const ax = new THREE.Vector3(Math.cos(ov.yaw), 0, -Math.sin(ov.yaw)); // (its length, to the right)
+        const blade = new THREE.Vector3().crossVectors(UP, ax).normalize(); // (across it, away from me)
+        const b = st.subjectBox(), top2 = b.y0 - (ph.mode === 'mince' ? 10 : 18), board2 = b.y1 - 8;
+        const lift = p.seen ? Math.max(0, Math.min(1.6, (board2 - p.y) / (board2 - top2))) : 1.3;
+        const off = !p.seen ? 0 : p.x < b.x0 - 40 ? p.x - (b.x0 - 40) : p.x > b.x1 + 60 ? p.x - (b.x1 + 60) : 0;
+        const want = C.next + off * w.S;
+        const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
+        ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14);
+        const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lift * (C.top + 0.012));
+        const K = this.knifeAt(E, blade, 0.05 + 0.2 * Math.min(1, lift));
+        out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
+        hand(wi, K.fist, 'knife', { dir: K.xA });
+        // (on a touch screen it's held where the second finger is – not at all without one)
+        let hold = C.next - 0.05;
+        if (st.touchy) { const s2 = st.steadies() && st.steadyAt(); hold = s2 ? Math.min(hold, (s2.x - MAIN.x) * w.S) : null; }
+        if (hold != null) {
+          hold = Math.max(C.xL + 0.02, hold);
+          const H = ov.pos.clone().addScaledVector(ax, hold).setY(ov.pos.y + C.top + 0.013);
+          hand(oi, H, 'claw', { dir: ax.clone().addScaledVector(UP, -0.35).normalize(), curl: 0.9 });
+        }
+        break;
+      }
       case 'place': {
         toolHand(at(pt));
         if (ph.piece) out.sprites.push({ tex: this.spriteFor(ph.piece, null, 'slice'), kind: ph.piece, st: { cut: 'slice', k: 1, n: 1 }, pos: at(pt).addScaledVector(UP, -0.03), size: 0.08 });
@@ -1510,6 +1559,16 @@ export class Scene3D {
     // a second finger on a touch screen is my other hand
     if (st.ptr2 && !out.hands[oi]) hand(oi, at(st.ptr2), 'hand', { curl: 0.7 });
     this.work = out;
+  }
+
+  // The knife in my hand: its edge at E (the middle of it), the blade pointing d
+  // (level), its tip rocked down by tilt – the knife's own origin (fpKnife's)
+  // and my fist on its handle there; xA: along it, tip-wards.
+  knifeAt(E, d, tilt) {
+    const xA = d.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(UP, -Math.sin(tilt)).normalize();
+    const zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
+    const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, 0.022);
+    return { xA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
   }
 
   // a little round spoonful (scooping)
@@ -1576,6 +1635,7 @@ export class Scene3D {
       fx.tool.visible = true;
       // (in the fist itself – where the hand got to)
       fx.tool.position.copy(this.fpArms.group.visible ? this.fpArms.fist(T.hand) : T.grip);
+      if (T.off) fx.tool.position.add(T.off);
       if (T.kind === 'knife') {
         // blade along x, its edge down
         const xA = T.dir.clone().normalize(), zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
@@ -1990,9 +2050,9 @@ function fpKnife() {
   blade.position.z = -0.0009;
   g.add(blade);
   g.add(box(0.008, 0.02, 0.012, mat('#9aa0a6', { metal: 0.8, rough: 0.3 }), 0.009, -0.01, 0)); // (the bolster)
-  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.0075, 0.05, 4, 10), mat('#5a3a24', { rough: 0.5 }));
+  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.0068, 0.032, 4, 10), mat('#5a3a24', { rough: 0.5 }));
   handle.rotation.z = Math.PI / 2;
-  handle.position.set(-0.025, -0.006, 0);
+  handle.position.set(-0.0145, -0.006, 0);
   g.add(handle);
   return g;
 }

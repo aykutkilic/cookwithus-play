@@ -53,26 +53,26 @@ const HOLDS = {
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85 }, // a door's handle
   // at work (first person): a tool upright in the fist, or the open hand palm down
   tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
-  knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1 }, // (the handle in the fist, the blade forward)
+  // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
+  // the handle, the back of the hand to the outside and a little up, the palm in – back: c → that)
+  knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
   claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
 
 // The rotation turning hand direction a to b, twisted round b so that hand
-// direction c comes nearest pref.
+// direction c comes nearest pref (exactly: both seen end-on down b, the angle
+// between them – so it turns smoothly as they move).
 function aim(a, b, c, pref) {
-  const bn = b.clone().normalize(), pn = pref.clone().normalize();
+  const bn = b.clone().normalize();
   const q1 = new THREE.Quaternion().setFromUnitVectors(a.clone().normalize(), bn);
-  const q = new THREE.Quaternion(), tw = new THREE.Quaternion(), cv = new THREE.Vector3();
-  let best = null, score = -Infinity;
-  for (let i = 0; i < 36; i++) {
-    tw.setFromAxisAngle(bn, (i * Math.PI) / 18);
-    q.multiplyQuaternions(tw, q1);
-    const s = cv.copy(c).applyQuaternion(q).dot(pn);
-    if (s > score) { score = s; best = q.clone(); }
-  }
-  return best;
+  const c1 = c.clone().applyQuaternion(q1);
+  c1.addScaledVector(bn, -c1.dot(bn));
+  const pp = pref.clone().addScaledVector(bn, -pref.dot(bn));
+  if (c1.lengthSq() < 1e-8 || pp.lengthSq() < 1e-8) return q1;
+  const ang = Math.atan2(new THREE.Vector3().crossVectors(c1, pp).dot(bn), c1.dot(pp));
+  return new THREE.Quaternion().setFromAxisAngle(bn, ang).multiply(q1);
 }
 // a right hand's pose seen in a mirror (x → -x): the left hand's
 const mirrorQ = (q) => new THREE.Quaternion(q.x, -q.y, -q.z, q.w);
@@ -100,8 +100,8 @@ export class FpArms {
     this.lookKey = key;
     for (const h of this.hands) if (h.limb) this.group.remove(h.limb.root);
     const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 }), cuff = mat('#f6f2ea', { rough: 0.8 });
-    const tube = new THREE.CylinderGeometry(0.85, 1, 1, 12, 1, true);
-    const ball = new THREE.SphereGeometry(1, 12, 8);
+    const tube = new THREE.CylinderGeometry(0.85, 1, 1, 18, 1, true);
+    const ball = new THREE.SphereGeometry(1, 24, 16);
     for (const h of this.hands) {
       const root = new THREE.Group();
       const upper = new THREE.Mesh(tube, shirt), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
@@ -111,20 +111,19 @@ export class FpArms {
       const palm = new THREE.Mesh(ball, skin);
       palm.scale.set(0.017, 0.045, 0.05);
       palm.position.set(-0.002, 0.001, -0.046);
-      const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.026, 0.06, 12), skin);
-      wrist.rotation.x = Math.PI / 2;
-      wrist.position.z = 0.02;
-      hand.add(palm, wrist);
+      // (the wrist bends: it's laid between the hand and the forearm each frame)
+      const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.024 * HS, 0.026 * HS, 0.06 * HS, 14), skin);
+      hand.add(palm);
       const bones = FINGERS.map(([, ...ls], i) => ls.map((l, j) => {
         const m = new THREE.Mesh(new THREE.CapsuleGeometry(0.0092 - i * 0.0005 - j * 0.0008, l, 3, 8), skin);
         hand.add(m);
         return m;
       }));
       const thumb = [0.0105, 0.0095].map((r, j) => { const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, j ? 0.036 : 0.04, 3, 8), skin); hand.add(m); return m; });
-      root.add(upper, fore, elbow, band, hand);
+      root.add(upper, fore, elbow, band, hand, wrist);
       root.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; } });
       this.group.add(root);
-      h.limb = { root, upper, fore, elbow, band, hand, bones, thumb };
+      h.limb = { root, upper, fore, elbow, band, hand, wrist, bones, thumb };
     }
   }
 
@@ -135,8 +134,13 @@ export class FpArms {
     const H = HOLDS[kind] || HOLDS.away;
     let base = this.poseCache.get(kind);
     if (!base) { base = aim(H.a, H.b, H.c, H.pref); this.poseCache.set(kind, base); }
-    if (dir) base = aim(H.a, dir, H.c, H.pref);
     const grip = at ? at.clone() : H.at.clone(); // (in the right hand's space)
+    // (a knife: the back of the hand to the outside of the blade, a little up)
+    if (dir) {
+      const up = this.upLocal();
+      if (s < 0) up.x = -up.x; // (in the right hand's space)
+      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.pref);
+    }
     // (no further than an arm reaches)
     const toG = grip.clone().sub(SHOULDER), gl = H.grip.clone().multiplyScalar(HS).length();
     if (toG.length() > REACH - gl) grip.copy(SHOULDER).add(toG.setLength(REACH - gl));
@@ -298,13 +302,18 @@ export class FpArms {
       e = w.clone().add(f.clone().multiplyScalar(FORE));
     }
     const up = sh.clone().sub(e).normalize();
-    tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.25)), e, 0.024);
+    // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
+    tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024);
     tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021);
     L.elbow.position.copy(e);
-    L.elbow.scale.setScalar(0.021);
+    L.elbow.scale.setScalar(0.0232); // (round over both sleeves' ends)
     tube(L.band, w.clone().add(f.clone().multiplyScalar(0.022)), w.clone().add(f.clone().multiplyScalar(0.008)), 0.019);
     L.hand.position.copy(w);
     L.hand.quaternion.copy(h.q);
+    // (the wrist halfway between the hand's line and the forearm's)
+    const wd = back.clone().add(f).normalize();
+    L.wrist.position.copy(w).addScaledVector(wd, 0.02 * HS);
+    L.wrist.quaternion.setFromUnitVectors(v(0, 1, 0), wd);
     // the fingers close as far as curl says
     const c = h.curl;
     FINGERS.forEach(([y, ...ls], i) => {
