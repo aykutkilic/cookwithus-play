@@ -888,7 +888,8 @@ function openWork(sid, fx) {
     const w = workFrame();
     const F = w && scene.k3.fx[w.fx];
     if (!F || !F.anchors.basin) return null;
-    const p = scene.workPoint(w, F.anchors.basin.clone().setY(w.O.y));
+    // (under the tap: right under the spout)
+    const p = scene.workPoint(w, (to === 'underTap' && F.anchors.spout ? F.anchors.spout : F.anchors.basin).clone().setY(w.O.y));
     return { x: p.x, y: p.y, r: 110 };
   };
   $('cross').hidden = true;

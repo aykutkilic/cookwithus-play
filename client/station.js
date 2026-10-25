@@ -456,7 +456,8 @@ export class Station {
       }
       case 'drag': case 'dip': {
         const at = this.grabPoint();
-        if (dist(p, at) < (g.grip ? 75 : 130)) { g.drag = { dx: g.pos.x - p.x, dy: g.pos.y - p.y }; this.hooks.sfx('grab'); }
+        // (first person: anywhere on it – my hand takes it by its handle, wherever that is in the kitchen)
+        if (dist(p, at) < (g.grip ? 75 : 130) || (this.headless && g.source && g.source.type === 'vessel' && dist(p, g.pos) < 130)) { g.drag = { dx: g.pos.x - p.x, dy: g.pos.y - p.y }; this.hooks.sfx('grab'); }
         break;
       }
       case 'door':
