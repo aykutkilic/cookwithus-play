@@ -301,7 +301,7 @@ body.touchui:not(.sheetMin) #touch .tmore { bottom: calc(46vh + 24px); }
 @media (min-width: 761px) { body.touchui #touch .tmore { bottom: 114px; } }
 #prompt .more { opacity: .65; font-weight: 600; margin-left: 6px; }
 /* first person at work: the step, its hint and progress, at the bottom of the view */
-#fpWork { position: fixed; left: 50%; bottom: 22px; translate: -50% 0; z-index: 4; max-width: min(620px, calc(100vw - 32px)); background: var(--paper); border: 3px solid var(--ink); border-radius: 16px; box-shadow: 0 4px 0 var(--ink); padding: 8px 12px; pointer-events: auto; }
+#fpWork { position: fixed; left: 50%; top: 76px; translate: -50% 0; z-index: 4; max-width: min(620px, calc(100vw - 32px)); background: var(--paper); border: 3px solid var(--ink); border-radius: 16px; box-shadow: 0 4px 0 var(--ink); padding: 8px 12px; pointer-events: auto; }
 #fpWork .fwHead { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 #fpWork .fwHead b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #fwDots { display: flex; gap: 3px; margin-left: auto; flex-wrap: wrap; }
@@ -310,7 +310,6 @@ body.touchui:not(.sheetMin) #touch .tmore { bottom: calc(46vh + 24px); }
 #fwDots i.ph { border-radius: 3px; }
 #fwHint { font-weight: 600; font-size: 14px; margin-top: 4px; }
 #fpWork kbd { font-family: ui-monospace, monospace; font-size: 11px; }
-body.touchui #fpWork { bottom: auto; top: 76px; }
 /* (at work in first person every finger is a hand on the work: no stick, no buttons) */
 body.fpwork #touch .tzone, body.fpwork #touch .tuse, body.fpwork #touch .tmore, body.fpwork #touch .tstance, body.fpwork #touch .tstick { display: none; }
 body.fpwork #world { touch-action: none; }

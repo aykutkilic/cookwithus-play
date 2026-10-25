@@ -1043,7 +1043,13 @@ export class Scene3D {
     if (!O) return null;
     // (the sink: under the tap's spout, at the worktop – the basin lies in front of it, towards me)
     if (kind === 'sink') O = (A.spout || O).clone().setY(COUNTER_H);
-    const N = F.front.clone();
+    // facing the side it's worked from (a bin, a table, an island stands free: maybe from the side)
+    const f = F.f, sd = f.stand;
+    let N = F.front.clone();
+    if (sd) {
+      const dx = sd.x + 0.5 - (f.x + f.w / 2), dz = sd.y + 0.5 - (f.y + f.h / 2);
+      if (Math.abs(dx) > 1e-3 || Math.abs(dz) > 1e-3) N = Math.abs(dx) > Math.abs(dz) ? new THREE.Vector3(Math.sign(dx), 0, 0) : new THREE.Vector3(0, 0, Math.sign(dz));
+    }
     return { fx: fxId, kind, slot, O: O.clone(), N, R: new THREE.Vector3().crossVectors(N.clone().negate(), UP).normalize(), U: UP.clone(), S: scale };
   }
   // (The close-up looks down at the worktop: above the work spot its points

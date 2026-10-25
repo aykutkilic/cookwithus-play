@@ -1668,7 +1668,7 @@ function buildView(now, dt) {
     if (S.workPh !== phKey) {
       S.workPh = phKey;
       const real = scene.workReal(wf, station);
-      const look = real ? wf.O.clone().lerp(real.w, 0.55) : wf.O.clone().setY(wf.O.y + 0.06);
+      const look = real ? wf.O.clone().lerp(real.w, 0.7) : wf.O.clone().setY(wf.O.y + 0.06);
       const e = scene.camera.position;
       S.pitch = Math.max(-1.1, Math.min(0.3, Math.atan2(look.y - e.y, Math.hypot(look.x - e.x, look.z - e.z))));
     }

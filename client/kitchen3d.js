@@ -357,8 +357,8 @@ function stove(g, ctx, d, slots) {
     d.parts.flames.push(fr);
     d.anchors.burners.push(v3(x, COUNTER_H + 0.04, z));
     const kn = live(new THREE.Group());
-    kn.position.set(-0.3 + i * (0.6 / Math.max(1, slots - 1)), COUNTER_H - 0.07, 0.48);
-    const k = cyl(0.025, 0.028, 0.025, mat('#f2efe6', { rough: 0.4 }), 0, 0, 0, 14);
+    kn.position.set(-0.3 + i * (0.6 / Math.max(1, slots - 1)), COUNTER_H - 0.07, 0.505); // (out from the front, in sight)
+    const k = cyl(0.027, 0.03, 0.028, mat('#f2efe6', { rough: 0.4 }), 0, 0, 0, 14);
     k.rotation.x = Math.PI / 2;
     kn.add(k);
     kn.add(box(0.006, 0.02, 0.006, mat('#e8573a'), 0, 0.005, 0.018));
