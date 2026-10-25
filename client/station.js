@@ -195,6 +195,8 @@ export class Station {
   }
 
   targetFor(to) {
+    // (first person: where it really is in the kitchen – the basin under the tap …)
+    if (this.targetHook) { const t = this.targetHook(to); if (t) return t; }
     switch (to) {
       case 'underTap': return { x: 445, y: 570, r: 120 };
       case 'burner': return { x: MAIN.x, y: MAIN.y, r: 140 };

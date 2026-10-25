@@ -12,6 +12,7 @@ import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTextu
 import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake } from './parts3d.js';
 
 export const COUNTER_H = 0.46;
+const SINK_DEPTH = 0.1;
 export const WALL_H = 1.6;
 const CAB_Y0 = 0.98, CAB_Y1 = 1.4, CAB_D = 0.38;
 const FRONT_H = 0.12;
@@ -219,13 +220,18 @@ export function buildKitchen3D(K) {
 const live = (o) => { o.userData.live = true; return o; };
 function handleMat(T) { return T.handle === 'iron' ? M.iron() : M.brass(); }
 
-function carcass(g, ctx, w, d, { doors = 2, drawer = true, depth = 0.9 } = {}) {
+function carcass(g, ctx, w, d, { doors = 2, drawer = true, depth = 0.9, top = COUNTER_H - 0.04 } = {}) {
   const { T } = ctx;
   const cab = mat(T.cabinet, { rough: 0.55 });
   const cab2 = mat(T.cabinet2, { rough: 0.6 });
   const h = handleMat(T);
   g.add(box(w - 0.06, 0.05, depth - 0.1, mat('#2a2220', { rough: 0.8 }), 0, 0, -0.05)); // kick
-  g.add(box(w - 0.02, COUNTER_H - 0.09, depth, cab2, 0, 0.05, -0.02));
+  g.add(box(w - 0.02, top - 0.05, depth, cab2, 0, 0.05, -0.02));
+  // (cut down under a sink: panels round the sides close it up to the worktop)
+  if (top < COUNTER_H - 0.04) {
+    const ph = COUNTER_H - 0.04 - top;
+    for (const [pw, pd, x, z] of [[w - 0.02, 0.02, 0, depth / 2 - 0.03], [w - 0.02, 0.02, 0, -depth / 2 - 0.01], [0.02, depth, -(w - 0.02) / 2 + 0.01, -0.02], [0.02, depth, (w - 0.02) / 2 - 0.01, -0.02]]) g.add(box(pw, ph, pd, cab2, x, top, z));
+  }
   const fz = depth / 2 - 0.02 + 0.012;
   if (drawer) {
     g.add(rbox(w - 0.08, 0.075, 0.024, cab, 0, COUNTER_H - 0.13, fz, 0.008));
@@ -272,7 +278,7 @@ function table(g, ctx, d) {
 }
 
 function sink(g, ctx, d) {
-  carcass(g, ctx, 1, d, { drawer: false });
+  carcass(g, ctx, 1, d, { drawer: false, top: COUNTER_H - SINK_DEPTH - 0.012 }); // (room under the worktop for the basin)
   // worktop around the basin
   const top = mat(ctx.T.topA, { rough: 0.3, map: topTexture(ctx.T) });
   const y = COUNTER_H - 0.04;
@@ -280,11 +286,13 @@ function sink(g, ctx, d) {
   g.add(box(1, 0.04, 0.2, top, 0, y, 0.38));
   g.add(box(0.18, 0.04, 0.56, top, -0.41, y, 0));
   g.add(box(0.18, 0.04, 0.56, top, 0.41, y, 0));
-  const steel = M.steel();
-  g.add(box(0.64, 0.012, 0.56, steel, 0, COUNTER_H - 0.012, 0)); // rim
-  g.add(box(0.56, 0.2, 0.48, mat('#9aa4ac', { metal: 0.7, rough: 0.35 }), 0, COUNTER_H - 0.22, 0)); // basin
-  g.add(box(0.54, 0.004, 0.46, mat('#7a848c', { metal: 0.6, rough: 0.4 }), 0, COUNTER_H - 0.012, 0));
-  g.add(cyl(0.025, 0.025, 0.004, mat('#4a4f56', { metal: 0.6 }), 0, COUNTER_H - 0.011, 0.05, 12));
+  // the basin: a hole in the worktop – a steel rim round it, walls going down, a drain in the bottom
+  const steel = M.steel(), inside = mat('#9aa4ac', { metal: 0.7, rough: 0.35 });
+  const D = SINK_DEPTH, bot = COUNTER_H - D;
+  for (const [w, dz, x, z] of [[0.64, 0.04, 0, -0.26], [0.64, 0.04, 0, 0.26], [0.04, 0.48, -0.3, 0], [0.04, 0.48, 0.3, 0]]) g.add(box(w, 0.012, dz, steel, x, COUNTER_H - 0.006, z)); // rim
+  for (const [w, dz, x, z] of [[0.56, 0.01, 0, -0.235], [0.56, 0.01, 0, 0.235], [0.01, 0.46, -0.275, 0], [0.01, 0.46, 0.275, 0]]) g.add(box(w, D, dz, inside, x, bot, z)); // walls
+  g.add(box(0.56, 0.01, 0.48, mat('#8a949c', { metal: 0.65, rough: 0.4 }), 0, bot - 0.01, 0)); // bottom
+  g.add(cyl(0.025, 0.025, 0.004, mat('#3a3f46', { metal: 0.6 }), 0, bot + 0.001, 0.05, 12)); // drain
   // the tap: a swan neck from the back
   const tapMat = ctx.T.handle === 'brass' ? M.brass() : M.steel();
   g.add(cyl(0.03, 0.035, 0.05, tapMat, 0, COUNTER_H, -0.36, 12));
@@ -296,11 +304,11 @@ function sink(g, ctx, d) {
   lever.add(ball(0.02, mat(ctx.T.curtain, { rough: 0.4 }), 0.1, 0.03, 0));
   g.add(lever);
   d.parts.lever = lever;
-  const water = live(cyl(0.012, 0.016, 0.24, mat('#a9d6f2', { rough: 0.05, opacity: 0.7, emissive: '#6aaee0', ei: 0.25 }), 0, COUNTER_H + 0.02, -0.12, 8));
+  const water = live(cyl(0.012, 0.016, 0.26 + SINK_DEPTH, mat('#a9d6f2', { rough: 0.05, opacity: 0.7, emissive: '#6aaee0', ei: 0.25 }), 0, COUNTER_H - SINK_DEPTH, -0.12, 8));
   water.visible = false;
   g.add(water);
   d.parts.water = water;
-  d.anchors.basin = v3(0, COUNTER_H - 0.05, 0);
+  d.anchors.basin = v3(0, COUNTER_H - SINK_DEPTH, 0); // (its bottom)
   d.anchors.spout = v3(0, COUNTER_H + 0.24, -0.12); // where the water comes out
   d.anchors.spout = v3(0, COUNTER_H + 0.24, -0.12);
   d.anchors.top = v3(0, COUNTER_H, 0.1);

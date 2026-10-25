@@ -812,6 +812,15 @@ function openWork(sid, fx) {
   S.pending = null;
   S.working = { sid, fx: f.id, fp: true };
   station.headless = true;
+  // things put under the tap / in the colander go where the water falls in the basin
+  station.targetHook = (to) => {
+    if (to !== 'underTap' && to !== 'colander') return null;
+    const w = workFrame();
+    const F = w && scene.k3.fx[w.fx];
+    if (!F || !F.anchors.basin) return null;
+    const p = scene.workPoint(w, F.anchors.basin.clone().setY(w.O.y));
+    return { x: p.x, y: p.y, r: 110 };
+  };
   $('cross').hidden = true;
   $('fwIcon').textContent = (ACTIONS[s.do] && ACTIONS[s.do].icon) || '🍳';
   $('fwName').textContent = s.name;
@@ -851,6 +860,7 @@ function closeStation(silent = false) {
   $('fpWork').hidden = true;
   document.body.classList.remove('fpwork');
   station.headless = false;
+  station.targetHook = null;
   if (!S.working) { $('station').hidden = true; return; }
   const sid = S.working.sid;
   const st = sid && S.M.cook && S.M.cook.steps[sid];

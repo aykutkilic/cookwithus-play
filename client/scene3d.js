@@ -1041,7 +1041,8 @@ export class Scene3D {
     let O = kind === 'hob' ? pick('burners', 'top') : kind === 'sink' ? pick('basin', 'top') : ['oven', 'dome', 'tandoor'].includes(kind) ? pick('inside', 'mouth', 'top')
       : kind === 'chill' ? pick('shelf', 'top') : pick('board', 'top', 'mouth', 'basin', 'inside', 'shelf');
     if (!O) return null;
-    if (kind === 'sink') O = O.clone().setY(COUNTER_H); // (the worktop round the basin: what's carried over stays above it)
+    // (the sink: under the tap's spout, at the worktop – the basin lies in front of it, towards me)
+    if (kind === 'sink') O = (A.spout || O).clone().setY(COUNTER_H);
     const N = F.front.clone();
     return { fx: fxId, kind, slot, O: O.clone(), N, R: new THREE.Vector3().crossVectors(N.clone().negate(), UP).normalize(), U: UP.clone(), S: scale };
   }
@@ -1051,6 +1052,12 @@ export class Scene3D {
   workWorld(w, x, y) {
     const p = w.O.clone().addScaledVector(w.R, (x - MAIN.x) * w.S);
     return y <= MAIN.y ? p.addScaledVector(w.U, (MAIN.y - y) * w.S) : p.addScaledVector(w.N, (y - MAIN.y) * w.S);
+  }
+  // a point of the kitchen as a close-up point (on the plane, or on the worktop in front of it)
+  workPoint(w, P) {
+    const d = P.clone().sub(w.O);
+    const x = MAIN.x + d.dot(w.R) / w.S, up = d.dot(w.U);
+    return up > 0.001 ? { x, y: MAIN.y - up / w.S } : { x, y: MAIN.y + d.dot(w.N) / w.S };
   }
   // the close-up point under this point of the screen
   workAt(w, cx, cy) {
@@ -1130,7 +1137,10 @@ export class Scene3D {
       if (!['tongs', 'ladle', 'spoon', 'pizzaPeel', 'spatula'].includes(tool)) tool = 'hand';
     }
     if (tool === 'grab') tool = 'hand';
-    const wi = this.fpSlots[1] && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
+    // (the hand already holding what's carried does it; else the free one)
+    const srcKey = g.source && g.source.id ? `${g.source.type === 'vessel' ? 'v' : 'i'}:${g.source.id}` : null;
+    const held = srcKey ? this.fpSlots.indexOf(srcKey) : -1;
+    const wi = held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : this.fpSlots[1] && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
