@@ -26,7 +26,7 @@ import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
 const LIGHTS = 6;
-const GLIDE_S = 0.45;  // a thing taken / put down travels this long, in a little arc
+const GLIDE_S = 0.6;   // a thing taken / put down travels this long, low, settling gently
 const REACH_S = 0.55;  // and the cook reaches out for it
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
 const UP = new THREE.Vector3(0, 1, 0);
@@ -637,8 +637,11 @@ export class Scene3D {
     if (meRec) {
       for (let i = 0; i < 2; i++) {
         const r = this.fpArms.reaching(i);
-        const k = r && !r.take && !r.released ? r.key : this.fpSlots[i];
-        if (!k || out.has(k)) continue;
+        const putting = r && !r.take && !r.released ? r.key : null;
+        const k = putting || this.fpSlots[i];
+        if (!k || (out.has(k) && !putting)) continue;
+        // (being put away: the hand takes it right to its spot on the shelf, and only there lets go)
+        if (putting && out.has(k) && k[0] === 'i') r.world = out.get(k).pos.clone().addScaledVector(UP, 0.01);
         // (where it lay till the hand closes on it; then, if the hand only got
         // within arm's length of it, it comes the rest of the way)
         if (r && r.key === k && r.take && !r.grabbed) { out.set(k, { pos: r.src, yaw: r.srcYaw, sig: 'fp:lying', fp: true, size: 0.24 }); continue; }
@@ -685,9 +688,10 @@ export class Scene3D {
     if (g.sig !== sig) { g.fromHand = g.sig === 'fp'; g.sig = sig; g.from = g.pos.clone(); g.t = 0; }
     if (g.t < 1) {
       g.t = Math.min(1, g.t + this.dt / GLIDE_S);
-      const e = g.t * g.t * (3 - 2 * g.t);
+      // (set down, never tossed: out of a hand it slows as it lands; only a little lift over the way)
+      const e = g.fromHand ? 1 - (1 - g.t) ** 3 : g.t * g.t * (3 - 2 * g.t);
       g.pos.lerpVectors(g.from, target, e);
-      g.pos.y += Math.sin(Math.PI * g.t) * 0.12 * Math.min(1, g.from.distanceTo(target) * 1.5);
+      g.pos.y += Math.sin(Math.PI * g.t) * 0.035 * Math.min(1, g.from.distanceTo(target) * 1.5);
     } else g.pos.copy(target);
     return g.pos;
   }
@@ -708,18 +712,23 @@ export class Scene3D {
         if (!F && !kept) continue;
         let p = null;
         const A = F ? F.anchors : {};
-        if (kept) p = kept.pos;
-        else if (A.burners && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner') && A.burners[v.at.slot]) p = A.burners[v.at.slot];
-        else if (A.mouth) p = A.mouth;
-        else if (A.inside) p = null; // shut in the oven
-        else if (A.basin && F.f.type === 'sink') p = A.basin.clone().setY(A.basin.y + 0.02);
-        else if (F.f.type === 'fridge') p = A.shelf; // chilling (behind the door)
+        // where it stands on its fixture (also while my hand is still setting it down there)
+        let stand = null;
+        if (!F) stand = null;
+        else if (A.burners && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner') && A.burners[v.at.slot]) stand = A.burners[v.at.slot];
+        else if (A.mouth) stand = A.mouth;
+        else if (A.inside) stand = null; // shut in the oven
+        else if (A.basin && F.f.type === 'sink') stand = A.basin.clone().setY(A.basin.y + 0.02);
+        else if (F.f.type === 'fridge') stand = A.shelf; // chilling (behind the door)
         else if (A.spots) {
-          const n = spotUse.get(v.at.fx) || 0; spotUse.set(v.at.fx, n + 1); p = A.spots[Math.min(n, A.spots.length - 1)];
+          const n = spotUse.get(v.at.fx) || 0; spotUse.set(v.at.fx, n + 1); stand = A.spots[Math.min(n, A.spots.length - 1)];
           // (a bowl / plate on the board – unless something's being worked on there)
-          if (n === 0 && A.board && (v.kind === 'bowl' || v.kind === 'plate' || v.kind === 'blender') && !(view.activeAt && view.activeAt.has(v.at.fx))) p = A.board;
+          if (n === 0 && A.board && (v.kind === 'bowl' || v.kind === 'plate' || v.kind === 'blender') && !(view.activeAt && view.activeAt.has(v.at.fx))) stand = A.board;
         }
-        else if (A.top) p = A.top;
+        else if (A.top) stand = A.top;
+        // (my hand setting it down: it goes right to where it will stand, and lets go there)
+        if (kept && stand && this.fpGripAt) for (const { r, i } of this.fpPuts(`v:${id}`)) { const gp = this.fpGripAt(`v:${id}`, i, stand, 0); if (gp) { r.world = gp.world; if (gp.aimAt) r.aimAt = gp.aimAt; } }
+        p = kept ? kept.pos : stand;
         if (!p) continue;
         seen.add(id);
         let rec = this.vessels.get(id);
@@ -746,6 +755,58 @@ export class Scene3D {
     }
     for (const [id, rec] of this.vessels) if (!seen.has(id)) rec.group.visible = false; else rec.group.visible = true;
     this.spotsTaken = spotUse; // (the food there takes the spots after these)
+    this.updateTemps(D, dt);
+  }
+
+  // How hot things are – a tag with its temperature on anything hot. (Worked
+  // out here from the heat: a pan on the flame climbs to its setting's
+  // temperature, water follows its boil to 100 °C, an oven is at its heat;
+  // off the heat it cools back down.)
+  updateTemps(D, dt) {
+    this.temps = this.temps || new Map();
+    this.tempTags = this.tempTags || new Map();
+    const shown = new Set();
+    for (const [id, v] of Object.entries((D && D.vessels) || {})) {
+      const F = v.at && this.k3.fx[v.at.fx];
+      const oven = !!F && v.heat > 0 && !v.onHob && !!F.anchors.inside;
+      const wet = v.water > 0.05 && !oven;
+      let want = 20;
+      if (v.heat > 0 && v.at) want = oven ? (['pizzaOven', 'stoneOven', 'tandoor'].includes(F.f.type) ? 400 : 220) : wet ? 20 + 80 * Math.min(1, (v.boil || 0) / 0.35) : [20, 140, 180, 230][Math.min(3, v.heat)];
+      const t0 = this.temps.get(id) ?? want; // (first seen: already as hot as it should be)
+      const rate = wet ? 3 : want > t0 ? 0.09 : 0.025;
+      const t1 = t0 + (want - t0) * Math.min(1, dt * rate);
+      this.temps.set(id, t1);
+      if (t1 < 45) continue;
+      const rec = this.vessels.get(id);
+      let at = null;
+      if (rec && rec.group.visible) {
+        // (over its far rim, so it never covers what's in it)
+        const away = rec.group.position.clone().sub(this.camera.position).setY(0);
+        if (away.lengthSq() > 1e-6) away.normalize();
+        at = rec.group.position.clone().addScaledVector(away, this.firstPerson ? rec.r * 1.15 : 0).addScaledVector(UP, rec.h + (this.firstPerson ? 0.04 : 0.2));
+      }
+      else if (oven) at = F.anchors.inside.clone().addScaledVector(F.front, 0.38).addScaledVector(UP, 0.22);
+      if (!at) continue;
+      const tag = this.tempTag(`v:${id}`, t1);
+      tag.position.copy(at);
+      const k = this.firstPerson ? 0.07 : 0.3;
+      tag.scale.set(k, k * 56 / 160, 1);
+      tag.visible = true;
+      shown.add(`v:${id}`);
+    }
+    for (const [key, tag] of this.tempTags) if (!shown.has(key)) tag.visible = false;
+  }
+  tempTag(key, t) {
+    let tag = this.tempTags.get(key);
+    if (!tag) {
+      tag = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false }));
+      tag.renderOrder = 12;
+      this.scene.add(tag);
+      this.tempTags.set(key, tag);
+    }
+    const c = Math.round(t / 5) * 5;
+    if (tag.userData.c !== c) { tag.userData.c = c; tag.material.map = tempTexture(c); tag.material.needsUpdate = true; }
+    return tag;
   }
 
   // ------------------------------------------------------------------ food on the boards (2D drawings as standees)
@@ -828,24 +889,33 @@ export class Scene3D {
       const ov = this.work && this.work.ov.get(`i:${id}`);
       // (at work: on the board out of its container – which stands beside it; in it, under the tap, being tipped into the pan)
       if (ov) { put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, this.work.yaw || 0, ov.box ? { ...ov.box, of: it } : null); continue; }
+      // where it lies on a counter, the sink, a table … (its spot there)
+      const lie = () => {
+        if (it.used && !it.at) return null;
+        const fxId = it.at || (view.activeItems && view.activeItems.get(id));
+        const F = fxId && this.k3.fx[fxId];
+        if (!F || F.anchors.shelfL) return null;
+        const n = perFx.get(fxId) || 0;
+        perFx.set(fxId, n + 1);
+        const A = F.anchors;
+        const active = view.activeAt && view.activeAt.get(fxId) === id;
+        const taken = (this.spotsTaken && this.spotsTaken.get(fxId)) || 0;
+        const pos = active && A.board ? A.board : A.spots ? A.spots[(n + taken) % A.spots.length] : A.top;
+        return pos ? { pos, fxId, active } : null;
+      };
       const kept = this.stashAt && this.stashAt.get(`i:${id}`);
       if (kept) {
         // in the fridge / on the shelf, or in someone's hands – in its container
+        // (my hand setting it down on a counter: it goes right to the spot it will lie on)
+        const r = it.at && this.fpPutting(`i:${id}`);
+        const L = r && lie();
+        if (L) r.world = L.pos.clone().addScaledVector(UP, 0.01);
         put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17, kept.yaw || 0, { of: it });
         continue;
       }
-      if (it.used && !it.at) continue;
-      const fxId = it.at || (view.activeItems && view.activeItems.get(id));
-      if (!fxId) continue;
-      const F = this.k3.fx[fxId];
-      if (!F) continue;
-      const n = perFx.get(fxId) || 0;
-      perFx.set(fxId, n + 1);
-      const A = F.anchors;
-      const active = view.activeAt && view.activeAt.get(fxId) === id;
-      const taken = (this.spotsTaken && this.spotsTaken.get(fxId)) || 0;
-      const pos = active && A.board ? A.board : A.spots ? A.spots[(n + taken) % A.spots.length] : A.top;
-      if (!pos) continue;
+      const L = lie();
+      if (!L) continue;
+      const { pos, fxId, active } = L;
       const done = it.cut && (it.k || 0) >= (it.n || 0);
       const tex = () => (done && !active ? this.spriteFor(it.kind, null, it.cut) : this.spriteFor(it.kind, it));
       const at = this.glide(`i:${id}`, `a:${fxId}`, pos), g = this.glides.get(`i:${id}`);
@@ -1024,6 +1094,7 @@ export class Scene3D {
       if (h === 'side') return { world: base.clone().add(right.clone().multiplyScalar((i ? 1 : -1) * ((vr ? vr.r : 0.13) + 0.035))).setY(base.y + (vr ? vr.h * 0.8 : 0.1)) };
       return { world: base.clone().setY(base.y + (vr ? vr.h * 0.5 : 0.04)) };
     };
+    this.fpGripAt = gripAt;
     for (const [i, k] of came) {
       const g = this.glides.get(k);
       if (!g) continue;
@@ -1081,6 +1152,15 @@ export class Scene3D {
     if (k[0] === 'v' && A.burners && (t.onHob || F.f.type === 'stove') && A.burners[t.at.slot]) return A.burners[t.at.slot];
     return A.board || A.basin || (A.spots && A.spots[0]) || A.top || A.mouth || null;
   }
+
+  // my hands' reaches putting this thing down, on their way: [{r, i}] (a big pot: both)
+  fpPuts(key) {
+    const out = [];
+    if (!this.fpOn) return out;
+    for (let i = 0; i < 2; i++) { const r = this.fpArms.reaching(i); if (r && !r.take && !r.released && r.key === key) out.push({ r, i }); }
+    return out;
+  }
+  fpPutting(key) { const p = this.fpPuts(key); return p.length ? p[0].r : null; }
 
   // where a thing in my hand i is drawn: {pos, yaw}
   fpAttach(k, i, me) {
@@ -1864,6 +1944,29 @@ function updateVessel(rec, v, t, solid = false) {
     b.position.set(Math.cos(i * 2.1) * r * 0.5, rec.liquid.position.y + 0.004, Math.sin(i * 2.1) * r * 0.5);
     b.scale.setScalar(0.4 + ph * v.boil);
   });
+}
+
+// a temperature tag's picture: a little thermometer and the degrees, warmer colours as it gets hotter
+const TEMP_TEX = new Map();
+function tempTexture(c) {
+  let tex = TEMP_TEX.get(c);
+  if (tex) return tex;
+  const cv = document.createElement('canvas');
+  cv.width = 160; cv.height = 56;
+  const x = cv.getContext('2d');
+  const f = Math.max(0, Math.min(1, (c - 45) / 180));
+  const col = f < 0.5 ? `rgb(255,${Math.round(211 - f * 2 * 70)},${Math.round(77 - f * 2 * 40)})` : `rgb(${Math.round(255 - (f - 0.5) * 2 * 23)},${Math.round(141 - (f - 0.5) * 2 * 54)},${Math.round(37 + (f - 0.5) * 2 * 21)})`;
+  x.fillStyle = col; x.strokeStyle = '#3a2a1e'; x.lineWidth = 5;
+  x.beginPath(); x.roundRect(4, 4, 152, 48, 24); x.fill(); x.stroke();
+  // (the thermometer)
+  x.fillStyle = '#fff'; x.beginPath(); x.roundRect(22, 12, 10, 24, 5); x.fill(); x.beginPath(); x.arc(27, 38, 8, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#d8261c'; x.beginPath(); x.roundRect(24.5, 22 - f * 8, 5, 18 + f * 8, 2.5); x.fill(); x.beginPath(); x.arc(27, 38, 5.5, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#3a2a1e'; x.font = '700 30px Fredoka, system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(`${c} °C`, 92, 30);
+  tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  TEMP_TEX.set(c, tex);
+  return tex;
 }
 
 // poured (oil, milk, stock …) or melted on the heat (butter): the surface, not a thing in it

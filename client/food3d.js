@@ -14,6 +14,7 @@
 // is 80 px tall: 6 cm-ish next to the cook's hand).
 import * as THREE from 'three';
 import { artOf, artPal, normCut, sizeArt, defaultCount, pieceCol, roundDims, tubeOf, BLOCK_SIZE, mixHex, doughFlatGeom, artHash } from './art.js';
+import { ingName } from '../shared/ingredients.js';
 
 export const FOOD_K = 0.00075;
 const K = FOOD_K;
@@ -141,7 +142,7 @@ export function boxSpec(kind, st) {
     let size = BOX_SIZES.findIndex((b) => b.w * b.d * 0.8 >= q * fw * fd && Math.min(b.w, b.d) >= Math.min(fw, fd) * 1.02 && Math.max(b.w, b.d) >= s * 0.9);
     if (size < 0) size = 2;
     const h = artHash(typeof kind === 'string' ? kind : JSON.stringify(kind));
-    sp = { size, style: ['glass', 'clear', 'plastic'][h % 3], color: PLASTIC[(h >> 3) % PLASTIC.length] };
+    sp = { size, style: ['glass', 'clear', 'plastic'][h % 3], color: PLASTIC[(h >> 3) % PLASTIC.length], label: typeof kind === 'string' ? ingName(kind, q) : '' };
     SPECS.set(key, sp);
   }
   return sp;
@@ -163,6 +164,30 @@ const RIM_MAT = {
   clear: new THREE.MeshStandardMaterial({ color: '#f4f8fa', roughness: 0.4, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
 };
 const WATER_MAT = new THREE.MeshStandardMaterial({ color: '#9fd0ea', roughness: 0.1, transparent: true, opacity: 0.45, depthWrite: false });
+// A label on the container saying what's in it: a strip of paper, written on
+const LABELS = new Map();
+function labelMat(text) {
+  let m = LABELS.get(text);
+  if (m) return m;
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 72;
+  const x = c.getContext('2d');
+  x.fillStyle = '#fbf6e6'; x.fillRect(0, 0, 256, 72);
+  x.strokeStyle = 'rgba(120,100,70,0.35)'; x.lineWidth = 3; x.strokeRect(2, 2, 252, 68);
+  x.fillStyle = '#3a2a1e';
+  let size = 44;
+  do { x.font = `700 ${size}px Fredoka, "Comic Sans MS", system-ui, sans-serif`; size -= 2; } while (x.measureText(text).width > 236 && size > 18);
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(text, 128, 38);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  m = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 });
+  LABELS.set(text, m);
+  return m;
+}
+const LABEL_GEO = new THREE.PlaneGeometry(1, 1);
+
 // the container itself (origin: the middle of its floor) – .userData.water: its water, scaled to how full
 function containerMesh(sp) {
   const b = BOX_SIZES[sp.size], m = boxMat(sp.style, sp.color), t = sp.style === 'glass' ? 0.004 : 0.0025;
@@ -189,6 +214,20 @@ function containerMesh(sp) {
   rg.scale.set(b.w + t * 4, 0.008, b.d + t * 4);
   rg.position.y = b.h + t - 0.003;
   g.add(rg);
+  // what's in it, on a label on each side (one always faces you)
+  if (sp.label) {
+    const m2 = labelMat(sp.label), lean = Math.atan(0.07 * Math.max(b.w, b.d) / b.h), y = t + b.h * 0.5;
+    for (const [nx, nz, len] of [[0, 1, b.w], [0, -1, b.w], [1, 0, b.d], [-1, 0, b.d]]) {
+      const lw = Math.min(len * 0.78, b.h * 2.6), lh = lw * 72 / 256;
+      const lab = new THREE.Mesh(LABEL_GEO, m2);
+      const half = (nx ? b.w : b.d) / 2 + t + 0.0015, wid = (nx ? b.w : b.d);
+      lab.scale.set(lw, lh, 1);
+      lab.position.set(nx * (half - wid * 0.035), y, nz * (half - wid * 0.035));
+      lab.rotation.set(0, Math.atan2(nx, nz), 0);
+      lab.rotateX(lean); // (leaning out with the wall)
+      g.add(lab);
+    }
+  }
   const water = new THREE.Mesh(GEO.box, WATER_MAT);
   water.visible = false;
   g.add(water);

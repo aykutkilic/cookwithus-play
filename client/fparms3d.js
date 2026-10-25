@@ -22,7 +22,11 @@ const LEAN = 0.16; // how far you lean in toward something out of reach
 const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05);
 const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // the right elbow points down, out and back
 const WRIST = 1.1; // how far a hand bends from its forearm (rad) before the forearm follows it round
-const OUT = 0.26, BACK = 0.32; // a reach: out to the thing, and back
+// a reach: out to the thing and back – taking, the hand closes on it; putting
+// down, it comes in from a little above, lowers it, rests a moment and lets go
+const OUT_TAKE = 0.42, OUT_PUT = 0.55, SETTLE = 0.14, BACK = 0.4, LIFT = 0.06;
+const outOf = (r) => (r.take ? OUT_TAKE : OUT_PUT);
+const spanOf = (r) => outOf(r) + (r.take ? 0 : SETTLE) + BACK;
 const v = (x, y, z) => new THREE.Vector3(x, y, z);
 const Z = v(0, 0, 1); // (hand space) toward the elbow
 
@@ -152,9 +156,11 @@ export class FpArms {
     h.reach = { t: 0, p: 0, from: null, lean, ...r };
   }
   reaching(i) { return this.hands[i].reach; }
+  // the world's up, in my camera's space (where the arms are)
+  upLocal() { return new THREE.Vector3(0, 1, 0).transformDirection(this.camera.matrixWorldInverse); }
   cancel() { for (const h of this.hands) h.reach = null; }
   // how far I'm leaning in now
-  lean() { return Math.max(...this.hands.map((h) => (h.reach ? h.reach.lean * Math.sin(Math.PI * Math.min(1, h.reach.t / (OUT + BACK))) : 0))); }
+  lean() { return Math.max(...this.hands.map((h) => (h.reach ? h.reach.lean * Math.sin(Math.PI * Math.min(1, h.reach.t / spanOf(h.reach))) : 0))); }
 
   farPose(h, r) {
     const tc = this.camera.worldToLocal(r.world.clone());
@@ -195,15 +201,23 @@ export class FpArms {
         r.t += dt;
         if (!r.from) r.from = { wrist: h.wrist.clone(), q: h.q.clone(), curl: h.curl };
         const far = this.farPose(h, r);
-        if (r.t < OUT) {
-          const e = ease(r.t / OUT);
+        const out = outOf(r), hold = out + (r.take ? 0 : SETTLE);
+        if (r.t < out) {
+          const e = ease(r.t / out);
           h.wrist.lerpVectors(r.from.wrist, far.wrist, e);
+          // (putting down: over the spot first, then lowered onto it)
+          if (!r.take) h.wrist.addScaledVector(this.upLocal(), LIFT * ease(Math.min(1, r.t / out / 0.3)) * (1 - ease(Math.max(0, (r.t / out - 0.5) / 0.5))));
           h.q.slerpQuaternions(r.from.q, far.q, e);
           h.curl += (far.curl - h.curl) * Math.min(1, dt * 18);
           r.p = e;
+        } else if (r.t < hold) {
+          // (set down: a moment's rest before the hand lets go)
+          h.wrist.copy(far.wrist);
+          h.q.copy(far.q);
+          r.p = 1;
         } else {
           if (!r.at) { r.at = true; if (r.take) r.grabbed = true; else r.released = true; }
-          const u = ease((r.t - OUT) / BACK);
+          const u = ease((r.t - hold) / BACK);
           h.wrist.lerpVectors(far.wrist, want.wrist, u);
           h.q.slerpQuaternions(far.q, want.q, u);
           h.curl += ((r.take ? want.curl : 0.3) - h.curl) * Math.min(1, dt * 16);
