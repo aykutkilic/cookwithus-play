@@ -1,15 +1,19 @@
 // Moving the cook, as in the football game: arrow keys / WASD (E or Space to
-// use what's in front of you, Q for every option there), or on phones and
-// tablets a floating thumb stick on the left, a big Use button on the right
-// and a little ⋯ button for every option. In first person, Ctrl (or C) held
-// crouches and Space held stands you up on your toes (E uses); on a touch
-// screen, two little ⬇ ⬆ buttons do that. Directions are in
+// use what's in front of you, Q – or Tab – for every option there), or on
+// phones and tablets a floating thumb stick on the left, a big Use button on
+// the right and a little ⋯ button for every option. In first person it's a
+// shooter: W / S walk, A / D step sideways, ← → turn (the mouse looks round),
+// E is your right hand and Q your left (held: the hand holds on), Tab every
+// option, Ctrl (or C) held crouches and Space held stands you up on your toes;
+// on a touch screen, two little ⬇ ⬆ buttons do that. Directions are in
 // screen space ("up" is away from the camera); the scene turns them into
 // kitchen directions.
 
 export class Controls {
-  constructor({ onUse, onMore, onView, onFirst, onMenuMove }) {
+  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep }) {
     this.onUse = onUse;
+    this.onHand = onHand;   // first person: (hand – 1 right, 0 left, down?)
+    this.onStep = onStep;   // a move key just pressed
     this.onMore = onMore;
     this.onView = onView;
     this.onFirst = onFirst;
@@ -26,14 +30,20 @@ export class Controls {
       if (isTyping(e)) return;
       const k = e.key.toLowerCase();
       if (this.menuOpen && ['arrowup', 'w', 'arrowdown', 's'].includes(k)) { this.onMenuMove(k === 'arrowup' || k === 'w' ? -1 : 1); e.preventDefault(); return; }
-      if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); }
+      if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); if (!e.repeat && this.onStep) this.onStep(); }
       if (this.fp && (k === 'control' || k === 'c' || k === ' ')) { this.keys.add(k === ' ' ? 'space' : k); e.preventDefault(); this.first(); return; }
+      if (k === 'tab') { e.preventDefault(); if (!e.repeat && this.onMore) { this.first(); this.onMore(); } return; }
+      if (this.fp && this.onHand && !this.menuOpen && (k === 'e' || k === 'q')) { e.preventDefault(); if (!e.repeat) { this.first(); this.onHand(k === 'e' ? 1 : 0, true); } return; }
       if ((k === 'e' || k === ' ' || k === 'enter') && !e.repeat) { e.preventDefault(); this.first(); this.onUse(); }
       if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
       if (k === 'f2' && !e.repeat && this.onView) { e.preventDefault(); this.first(); this.onView(); }
     });
-    addEventListener('keyup', (e) => { const k = e.key.toLowerCase(); this.keys.delete(k === ' ' ? 'space' : k); });
-    addEventListener('blur', () => this.keys.clear());
+    addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      this.keys.delete(k === ' ' ? 'space' : k);
+      if (this.onHand && (k === 'e' || k === 'q')) this.onHand(k === 'e' ? 1 : 0, false);
+    });
+    addEventListener('blur', () => { this.keys.clear(); if (this.onHand) { this.onHand(1, false); this.onHand(0, false); } });
 
     // the touch layer
     const root = document.createElement('div');
@@ -103,14 +113,22 @@ export class Controls {
     this.knob.style.transform = `translate(calc(-50% + ${this.sx * kd}px), calc(-50% + ${this.sy * kd}px))`;
   }
 
-  // screen-space direction {x, y, mag}; y down is towards the camera
+  // screen-space direction {x, y, mag, stick}; y down is towards the camera
+  // (first person: the keys' x is a step sideways – ← → turn instead, turnDir())
   dir() {
     if (!this.enabled) return { x: 0, y: 0, mag: 0 };
-    if (this.stick && this.mag > 0) return { x: this.sx, y: this.sy, mag: this.mag };
+    if (this.stick && this.mag > 0) return { x: this.sx, y: this.sy, mag: this.mag, stick: true };
     let x = 0, y = 0;
-    for (const k of this.keys) { const m = MOVE[k]; if (m) { x += m[0]; y += m[1]; } }
+    for (const k of this.keys) { const m = MOVE[k]; if (m && !(this.fp && TURNS[k])) { x += m[0]; y += m[1]; } }
     const d = Math.hypot(x, y);
     return d ? { x: x / d, y: y / d, mag: 1 } : { x: 0, y: 0, mag: 0 };
+  }
+  // first person: ← → held (1 turns right)
+  turnDir() {
+    if (!this.fp || !this.enabled) return 0;
+    let t = 0;
+    for (const k of this.keys) if (TURNS[k]) t += TURNS[k];
+    return t;
   }
 
   // how high I'd stand: -1 crouching, 1 on my toes, 0 standing
@@ -142,6 +160,7 @@ const MOVE = {
   arrowup: [0, -1], w: [0, -1], arrowdown: [0, 1], s: [0, 1],
   arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0],
 };
+const TURNS = { arrowleft: -1, arrowright: 1 };
 
 function isTyping(e) {
   const t = e.target;

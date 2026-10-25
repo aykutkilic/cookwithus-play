@@ -109,6 +109,7 @@ export class Scene3D {
     this.scene.add(this.camera); // (its children – my arms in first person – are drawn too)
     this.fpArms = new FpArms(this.camera);
     this.fpSlots = [null, null]; // what my left and right hands hold (first person)
+    this.fpWant = new Map();     // (a thing being taken → the hand taking it)
     this.fpHold = new Map();     // thing -> how it's held ('handle', 'palm', 'side')
     this.camTarget = new THREE.Vector3();
     this.camPos = new THREE.Vector3();
@@ -219,6 +220,16 @@ export class Scene3D {
   }
 
   zoomBy(f) { if (!this.firstPerson) this.zoom = Math.max(0.45, Math.min(1.6, this.zoom / f)); }
+  // first person: my eyes, standing at (x, y) facing yaw, leaning in by lean
+  // (a little above the chibi head and a step back)
+  eyeAt(x, y, yaw, eyeOff = 0, lean = 0) {
+    return new THREE.Vector3(x - Math.sin(yaw) * (0.14 - lean), EYE_H + eyeOff - lean * 0.35, y - Math.cos(yaw) * (0.14 - lean));
+  }
+  // how far I lean in over work at O (further for the back burner, the middle of the sink;
+  // hardly at all for the knob on the stove's front, the tap's lever – real: the pan stays in view too)
+  workLeanAt(O, x, y, real = false) { return real ? 0 : Math.max(0.18, Math.min(0.42, Math.hypot(O.x - x, O.z - y) - 0.42)); }
+  // first person, the mouse looking round: the view turns at once (no easing after it)
+  lookBy(yaw, pitch) { if (this.fpCam) { this.fpCam.yaw += yaw; this.fpCam.pitch += pitch; } }
 
   // F2: looking through my cook's eyes, or at the whole room
   setFirstPerson(on) {
@@ -429,10 +440,10 @@ export class Scene3D {
       // (and a little closer while working at something)
       // (further in for something at the back – the back burner, the middle of the sink)
       const wo = this.work && !this.work.idle && this.work.O;
-      const wantLean = wo ? Math.max(0.18, Math.min(0.42, Math.hypot(wo.x - me.x, wo.z - me.y) - 0.42)) : 0;
+      const wantLean = wo ? this.workLeanAt(wo, me.x, me.y, this.work.real) : 0;
       this.workLean = (this.workLean || 0) + (wantLean - (this.workLean || 0)) * (1 - Math.exp(-dt * 4));
       const lean = Math.max(this.fpArms.lean(), this.workLean);
-      const eye = new THREE.Vector3(me.x - Math.sin(yaw) * (0.14 - lean), EYE_H + (view.eyeOff || 0) - lean * 0.35, me.y - Math.cos(yaw) * (0.14 - lean));
+      const eye = this.eyeAt(me.x, me.y, yaw, view.eyeOff || 0, lean);
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       this.camera.position.copy(eye);
       this.camTarget.copy(eye).add(dir);
@@ -934,7 +945,9 @@ export class Scene3D {
       if (slots.includes(k)) continue;
       const h = holdOf(k);
       this.fpHold.set(k, h);
-      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = slots[1] == null ? 1 : 0; slots[i] = k; came.push([i, k]); }
+      const want = this.fpWant.get(k);
+      this.fpWant.delete(k);
+      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = want != null && slots[want] == null ? want : slots[1] == null ? 1 : 0; slots[i] = k; came.push([i, k]); }
     }
     if (!on) { this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
     this.fpArms.setLook(lookOf(me.avatar));
@@ -984,7 +997,8 @@ export class Scene3D {
     }
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {
-      const i = holds[1] == null ? 1 : holds[0] == null ? 0 : -1;
+      const want = view.fpGrab.hand;
+      const i = want >= 0 && holds[want] == null ? want : holds[1] == null ? 1 : holds[0] == null ? 0 : -1;
       if (i >= 0) holds[i] = { kind: 'grab', at: handAt(view.fpGrab.w, i ? 1 : -1) };
     }
     this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t });
@@ -1128,7 +1142,7 @@ export class Scene3D {
     if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
-    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z) };
+    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st) };
     // the food worked on stands right on the work spot (under the tap, on the board), as big as the gesture has it
     if (g.subject && g.subject.type === 'item' && D && D.items[g.subject.id] && !['drag', 'dip'].includes(g.kind)) {
       const b = st.subjectBox();
@@ -1146,7 +1160,8 @@ export class Scene3D {
     // (the hand already holding what's carried does it; else the free one)
     const srcKey = g.source && g.source.id ? `${g.source.type === 'vessel' ? 'v' : 'i'}:${g.source.id}` : null;
     const held = srcKey ? this.fpSlots.indexOf(srcKey) : -1;
-    const wi = held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : this.fpSlots[1] && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
+    // (Q – the left hand – doing it, if it's free)
+    const wi = held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
