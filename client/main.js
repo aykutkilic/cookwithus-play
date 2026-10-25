@@ -105,7 +105,8 @@ function startOwnKitchen(opts = {}) {
   let recipe = pref.recipe || store.get('recipe', 'boiled-eggs');
   const r = recipeById(recipe);
   if (!r || !canCook(r, buildKitchen(pref.size, pref.cuisine)).ok) recipe = 'boiled-eggs';
-  const host = new HostSession({ name: `${S.profile.name}'s kitchen`, size: pref.size, cuisine: pref.cuisine, recipe }, (state, code) => {
+  // (Şakir comes by now and then – not in automated test runs: ?nosakir)
+  const host = new HostSession({ name: `${S.profile.name}'s kitchen`, size: pref.size, cuisine: pref.cuisine, recipe, incidents: !params.has('nosakir') }, (state, code) => {
     if (S.host !== host) return;
     S.inviteState = state; S.code = code;
     refreshTop();
@@ -273,6 +274,10 @@ function onEvent(e) {
       if (!mine) sfx.play({ chop: 'chop', strokes: 'scrub', circle: 'stir', peel: 'peel', crack: 'crack', place: 'plop', flick: 'whoosh', drag: 'clunk', tap: 'tap' }[e.g] || 'pop', 0.25);
       break;
     case 'finish': sfx.play('fanfare'); break;
+    // Şakir
+    case 'sakirComes': sfx.play('whoosh', 0.5); toast('👻 Uh-oh… Şakir is floating about the kitchen', 3500); break;
+    case 'sakir': { sfx.play('clunk'); const it = S.M.cook && S.M.cook.items[e.id]; toast(`👻 Şakir bumped the ${it ? thingName(S.M.cook, S.x, `i:${e.id}`) : 'food'} off the counter! Fresh ones are back – do them again (and sweep up the bits)`, 5200); break; }
+    case 'sakirMiss': toast('👻 Şakir floated by… and missed. Phew!', 2600); break;
     default: break;
   }
 }

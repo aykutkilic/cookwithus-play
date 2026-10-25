@@ -12,8 +12,9 @@
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
   recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange,
-  setSpeed, skipWait, SPEEDS, skipDw, refresh,
+  setSpeed, skipWait, SPEEDS, skipDw, refresh, sakirTick, sakirStart,
 } from './cook.js';
+import { ingName } from './ingredients.js';
 import { sanitizeProfile, QUICK_CHAT, COOK_COLORS } from './names.js';
 
 export const PROTOCOL = 1;
@@ -22,8 +23,9 @@ const POS_MS = 100;
 const CLOCK_MS = 250;
 
 export class Room {
-  constructor(code, { name = 'Kitchen', size = 'small', cuisine = 'turkish', recipe = null } = {}) {
+  constructor(code, { name = 'Kitchen', size = 'small', cuisine = 'turkish', recipe = null, incidents = false } = {}) {
     this.code = code;
+    this.incidents = incidents; // (Şakir may come by)
     this.name = String(name).replace(/[<>]/g, '').slice(0, 28);
     this.members = new Map();   // client id -> member
     this.hostId = null;         // the cook who opened the kitchen – picks recipe & kitchen
@@ -236,6 +238,7 @@ export class Room {
     this.now = nowMs;
     if (this.cook && dt > 0) {
       const ev = tickCook(this.cook, this.x, this.kitchen, dt);
+      if (this.incidents || this.cook.sakir) ev.push(...this.sakirEvents(sakirTick(this.cook, this.x, this.kitchen, dt)));
       if (ev.length) { this.ev.push(...ev); this.flush(true); }
     }
     if (nowMs - this.lastFlush >= FLUSH_MS) this.flush();
@@ -244,6 +247,25 @@ export class Room {
   }
 
   flushSoon() { this.lastFlush = 0; }
+
+  // (Şakir's doings, told in the chat too)
+  sakirEvents(ev) {
+    for (const e of ev) {
+      const it = this.cook.items[e.id];
+      const name = it ? ingName(it.kind, it.qty).toLowerCase() : 'something';
+      if (e.k === 'sakirComes') this.system('👻 Uh-oh… Şakir is floating about the kitchen');
+      if (e.k === 'sakir') this.system(`👻 Şakir bumped into the ${name} – they went flying! Fresh ones are back where they came from: do them again (and sweep up the bits).`);
+      if (e.k === 'sakirMiss') this.system('👻 Şakir floated by and missed. Phew!');
+    }
+    return ev;
+  }
+  // (try it out: Şakir comes right now, if there's something for him to bump)
+  sakirNow() {
+    if (!this.cook) return false;
+    const ev = this.sakirEvents(sakirStart(this.cook, this.x, this.kitchen));
+    if (ev.length) { this.ev.push(...ev); this.flush(true); }
+    return ev.length > 0;
+  }
 
   // ------------------------------------------------------------ outgoing
 
@@ -347,7 +369,10 @@ const r2 = (v) => Math.round(v * 100) / 100;
 // timers tick constantly: their t/over go out with the clock, not as step changes
 function stepKey(st) { return JSON.stringify(st, (k, v) => (k === 't' || k === 'over' ? undefined : v)); }
 function vesselKey(v) { return JSON.stringify(v, (k, val) => (k === 'boil' || k === 'hot' ? undefined : val)); }
-function metaOf(C) { return { speed: C.speed, started: C.started, finished: C.finished, stars: C.stars, credits: C.credits, bagsOut: C.bagsOut }; }
+function metaOf(C) {
+  const sk = C.sakir;
+  return { speed: C.speed, started: C.started, finished: C.finished, stars: C.stars, credits: C.credits, bagsOut: C.bagsOut, sakir: sk ? { id: sk.id, fx: sk.fx, n: sk.n, hit: sk.hit, miss: sk.miss || 0 } : null };
+}
 function freshSent() { return { steps: {}, items: {}, vessels: {}, fx: {}, scraps: {}, bins: {}, carry: {}, dw: {}, meta: '' }; }
 function metaKey(C) { return JSON.stringify(metaOf(C)); }
 

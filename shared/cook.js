@@ -143,6 +143,7 @@ export function newCook(r, kitchen) {
     bins: {},    // bin fixture -> {fill, bags}
     carry: {},   // cook -> {n, kinds}: scraps in their hands (null when empty)
     dw: {},      // dishwasher fixture -> {run, t}: running, how long
+    sakir: null, // Şakir about the kitchen: {id, fx, t, hit, n}
     bagsOut: 0,  // full bags taken out to the back door
   };
   refresh(C, x);
@@ -1115,6 +1116,80 @@ export function tickCook(C, x, K, dt) {
     v.boil = Math.round(v.boil * 1000) / 1000;
   }
   return ev;
+}
+
+// ------------------------------------------------------------------ Şakir
+// Now and then – rarely – Şakir, a big, smiling, red, see-through ghost of a
+// ball, drifts slowly through the kitchen and bumps into something: prepped
+// food out on a counter goes flying. Fresh ones are back in the fridge (or on
+// the shelf); the washing and cutting done on it is to do again, and the bits
+// on the counter are to sweep up. Never in the first two minutes, at most
+// twice a dish, minutes apart. (The host runs it: everyone sees the same.)
+export const SAKIR = { first: 120, gap: 240, perSec: 1 / 300, max: 2, travel: 7, after: 4 };
+
+// the steps done on a thing that Şakir's bump undoes (washed, peeled, cut … – not what used it up)
+function workedOn(C, x, id) {
+  return x.steps.filter((s) => (s.item === id || s.target === id) && !s.into && !s.from && C.steps[s.id].s === 'done' && ['board', 'sink'].includes((ACTIONS[s.do] || {}).cap));
+}
+// What Şakir could knock over: food out on a counter / the sink / a table that's
+// had work done on it, not used yet, nobody busy with it (and not made in the kitchen)
+export function sakirTargets(C, x, K) {
+  const out = [];
+  for (const [id, it] of Object.entries(C.items)) {
+    if (it.hidden || it.in || it.used || it.staple || it.held != null || !it.at) continue;
+    const f = fixtureById(K, it.at);
+    if (!f || isStore(f) || !(f.caps.includes('board') || f.caps.includes('plate') || f.caps.includes('sink'))) continue;
+    if (x.steps.some((s) => s.makes === id || (s.makes2 || []).includes(id))) continue;
+    if (inUse(C, x, `i:${id}`) != null || halfDone(C, x, `i:${id}`, it.at)) continue;
+    if (!workedOn(C, x, id).length) continue;
+    out.push(id);
+  }
+  return out;
+}
+// The bump: the food is gone (fresh back in the store), its work to do again, bits to sweep up.
+export function sakirHit(C, x, K, id) {
+  const it = C.items[id];
+  const fresh = newCook(recipeById(C.recipe), K).items[id];
+  if (!it || !fresh) return null;
+  const fx = it.at;
+  for (const s of workedOn(C, x, id)) {
+    const old = C.steps[s.id];
+    C.steps[s.id] = { s: 'open', ph: 0, k: 0, v: 0, by: null, fx: null, slot: 0, t: 0, over: 0, q: 1, claim: old.claim || [], extra: [], who: [] };
+  }
+  for (const k of Object.keys(it)) delete it[k];
+  Object.assign(it, fresh);
+  addScraps(C, fx, { n: 2, kind: it.kind });
+  return fx;
+}
+// Each tick (the host): maybe Şakir comes; drifting in; the bump; off again. Events:
+// {k: 'sakirComes', id, fx}, {k: 'sakir', id, fx} (it went flying), {k: 'sakirMiss'}.
+export function sakirTick(C, x, K, dt, rng = Math.random) {
+  const ev = [];
+  if (!C.started || C.finished) return ev;
+  const sk = C.sakir;
+  if (sk) {
+    sk.t += dt;
+    if (!sk.hit && sk.t >= SAKIR.travel) {
+      sk.hit = 1;
+      if (sakirTargets(C, x, K).includes(sk.id) && sakirHit(C, x, K, sk.id)) ev.push({ k: 'sakir', id: sk.id, fx: sk.fx });
+      else { sk.miss = 1; ev.push({ k: 'sakirMiss', id: sk.id }); }
+    }
+    if (sk.t >= SAKIR.travel + SAKIR.after) C.sakir = null;
+    return ev;
+  }
+  if ((C.sakirN || 0) >= SAKIR.max || C.elapsed < SAKIR.first || C.elapsed - (C.sakirLast ?? -1e9) < SAKIR.gap) return ev;
+  if (rng() > SAKIR.perSec * dt) return ev;
+  return sakirStart(C, x, K, rng);
+}
+// (here he comes – also for trying it out)
+export function sakirStart(C, x, K, rng = Math.random) {
+  const t = sakirTargets(C, x, K);
+  if (!t.length || C.sakir) return [];
+  const id = t[Math.floor(rng() * t.length)];
+  C.sakirN = (C.sakirN || 0) + 1;
+  C.sakirLast = C.elapsed;
+  C.sakir = { id, fx: C.items[id].at, t: 0, hit: 0, n: C.sakirN };
+  return [{ k: 'sakirComes', id, fx: C.sakir.fx }];
 }
 
 export function setSpeed(C, s) {

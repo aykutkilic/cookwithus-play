@@ -22,6 +22,7 @@ import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
+import { SAKIR } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
@@ -424,6 +425,7 @@ export class Scene3D {
     this.updateWorkFx(dt);
     this.updateMarker(view);
     this.updateLights(view);
+    this.updateSakir(view, dt);
     this.updateSteam(dt);
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
@@ -1715,6 +1717,113 @@ export class Scene3D {
     return p;
   }
 
+  // ------------------------------------------------------------------ Şakir
+  // A big, smiling, red, see-through ghost of a ball, a ghostly tail behind
+  // him: he drifts in slowly to the food on the counter, bumps it – it flies
+  // off onto the floor – has a laugh and floats off, fading.
+  buildSakir() {
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 32, 20), new THREE.MeshStandardMaterial({ color: '#ff3a3a', emissive: '#ff1a1a', emissiveIntensity: 0.4, roughness: 0.15, transparent: true, opacity: 0.42, depthWrite: false }));
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.19, 20, 14), new THREE.MeshBasicMaterial({ color: '#ff8a8a', transparent: true, opacity: 0.28, depthWrite: false }));
+    const g = new THREE.Group();
+    g.add(body, core);
+    const faces = { happy: sakirFace(false), laugh: sakirFace(true) };
+    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: faces.happy, transparent: true, depthWrite: false }));
+    face.scale.set(0.44, 0.44, 1);
+    g.add(face);
+    const name = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTexture('Şakir'), transparent: true, depthTest: false, depthWrite: false }));
+    name.scale.set(0.34, 0.11, 1);
+    name.position.y = 0.44;
+    name.renderOrder = 12;
+    g.add(name);
+    const tail = [];
+    for (let i = 0; i < 5; i++) {
+      const t = new THREE.Mesh(body.geometry, new THREE.MeshStandardMaterial({ color: '#ff3a3a', emissive: '#ff1a1a', emissiveIntensity: 0.3, transparent: true, opacity: 0.22 - i * 0.04, depthWrite: false }));
+      t.scale.setScalar(0.72 - i * 0.12);
+      t.visible = false;
+      this.scene.add(t);
+      tail.push(t);
+    }
+    g.visible = false;
+    this.scene.add(g);
+    return { g, body, core, face, faces, name, tail, hist: [], n: 0, t: 0, drops: [] };
+  }
+  updateSakir(view, dt) {
+    const R = this.sakirRig || (this.sakirRig = this.buildSakir());
+    const sk = view.C && view.C.sakir;
+    // the food he knocked off, falling to the floor and lying there a while
+    R.drops = R.drops.filter((d) => {
+      d.life += dt;
+      if (!d.still) {
+        d.v.y -= 9.8 * dt;
+        d.o.position.addScaledVector(d.v, dt);
+        d.o.rotation.x += d.spin.x * dt; d.o.rotation.z += d.spin.z * dt;
+        if (d.o.position.y <= 0.02) { d.o.position.y = 0.02; if (Math.abs(d.v.y) < 0.6) d.still = true; d.v.y = -d.v.y * 0.3; d.v.x *= 0.5; d.v.z *= 0.5; }
+      }
+      if (d.life > 7) { this.scene.remove(d.o); return false; }
+      return true;
+    });
+    if (!sk) { R.g.visible = false; R.tail.forEach((t) => { t.visible = false; }); R.hist = []; return; }
+    if (sk.n !== R.n) {
+      // here he comes: from the room, toward the food lying on the counter
+      R.n = sk.n; R.t = 0; R.hitDone = false; R.hist = [];
+      const F = this.k3.fx[sk.fx];
+      const shown = this.foods.get(`item:${sk.id}`), spr = this.sprites.get(`item:${sk.id}`);
+      const vis = shown && shown.g.visible ? shown.g : spr && spr.visible ? spr : null;
+      R.P = vis ? vis.position.clone() : F ? (F.anchors.board || F.anchors.top || new THREE.Vector3(F.f.x + 0.5, COUNTER_H, F.f.y + 0.5)).clone() : new THREE.Vector3();
+      R.front = F ? F.front.clone() : new THREE.Vector3(0, 0, 1);
+      R.side = new THREE.Vector3().crossVectors(R.front, UP).normalize();
+      R.from = R.P.clone().addScaledVector(R.front, 2.6).addScaledVector(R.side, 1.3).addScaledVector(UP, 0.9);
+      R.dropSrc = vis;
+      R.face.material.map = R.faces.happy; R.face.material.needsUpdate = true;
+    }
+    R.t += dt;
+    const T = SAKIR.travel, A = SAKIR.after, t = R.t;
+    const smooth = (u) => u * u * (3 - 2 * u);
+    let pos, fade = 1;
+    const at = R.P.clone().addScaledVector(UP, 0.26).addScaledVector(R.front, 0.14);
+    if (t < T) {
+      const u = Math.min(1, t / T);
+      pos = R.from.clone().lerp(at, smooth(u)).addScaledVector(UP, Math.sin(t * 2.2) * 0.06 * (1 - u * 0.5)).addScaledVector(R.side, Math.sin(t * 1.3) * 0.15 * (1 - u));
+      fade = Math.min(1, t / 1.2);
+    } else {
+      // the bump – then a laugh, and off he floats, fading
+      if (!R.hitDone && sk.hit) {
+        R.hitDone = true;
+        R.bumpT = 0;
+        R.face.material.map = R.faces.laugh; R.face.material.needsUpdate = true;
+        this.glides.delete(`i:${sk.id}`); // (the fresh ones are simply back where they're kept)
+        if (!sk.miss && R.dropSrc) {
+          const o = R.dropSrc.clone();
+          o.position.copy(R.P);
+          o.visible = true;
+          this.scene.add(o);
+          R.drops.push({ o, v: R.front.clone().multiplyScalar(0.9).addScaledVector(R.side, -0.5).addScaledVector(UP, 1.4), spin: new THREE.Vector3(6, 0, 4), life: 0, still: false });
+        }
+      }
+      const u = Math.min(1, (t - T) / A);
+      pos = at.clone().addScaledVector(R.front, 1.6 * u * u).addScaledVector(UP, 1.2 * u + Math.sin(t * 6) * 0.03).addScaledVector(R.side, -0.8 * u);
+      fade = 1 - u;
+    }
+    R.g.visible = true;
+    R.g.position.copy(pos);
+    // (squashed by the bump, wobbling as he floats)
+    R.bumpT = (R.bumpT ?? 9) + dt;
+    const sq = R.hitDone ? Math.max(0, 1 - R.bumpT * 2.5) : 0;
+    R.g.scale.set(1 + 0.25 * sq + Math.sin(t * 3) * 0.03, 1 - 0.22 * sq + Math.cos(t * 3) * 0.03, 1 + 0.25 * sq);
+    R.body.material.opacity = 0.42 * fade; R.core.material.opacity = 0.28 * fade;
+    R.face.material.opacity = fade; R.name.material.opacity = fade;
+    // his face turned to me
+    const toCam = this.camera.position.clone().sub(pos).normalize();
+    R.face.position.copy(toCam.multiplyScalar(0.2));
+    R.hist.push(pos.clone());
+    if (R.hist.length > 40) R.hist.shift();
+    R.tail.forEach((m, i) => {
+      const h = R.hist[R.hist.length - 1 - (i + 1) * 5];
+      m.visible = !!h;
+      if (h) { m.position.copy(h); m.material.opacity = (0.22 - i * 0.04) * fade; }
+    });
+  }
+
   // ------------------------------------------------------------------ lights
 
   updateLights(view) {
@@ -1989,6 +2098,44 @@ function updateVessel(rec, v, t, solid = false) {
     b.position.set(Math.cos(i * 2.1) * r * 0.5, rec.liquid.position.y + 0.004, Math.sin(i * 2.1) * r * 0.5);
     b.scale.setScalar(0.4 + ph * v.boil);
   });
+}
+
+// Şakir's face (on a see-through sprite): big eyes and a grin – or laughing, eyes screwed up
+function sakirFace(laugh) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const x = c.getContext('2d');
+  x.lineCap = 'round';
+  // blush
+  x.fillStyle = 'rgba(255,170,190,0.75)';
+  for (const sx of [70, 186]) { x.beginPath(); x.ellipse(sx, 150, 26, 15, 0, 0, Math.PI * 2); x.fill(); }
+  x.strokeStyle = '#4a0a10'; x.fillStyle = '#4a0a10'; x.lineWidth = 12;
+  if (laugh) {
+    for (const sx of [88, 168]) { x.beginPath(); x.arc(sx, 112, 20, Math.PI * 1.1, Math.PI * 1.9); x.stroke(); }
+  } else {
+    for (const sx of [88, 168]) {
+      x.beginPath(); x.ellipse(sx, 108, 17, 24, 0, 0, Math.PI * 2); x.fill();
+      x.fillStyle = '#fff'; x.beginPath(); x.arc(sx + 6, 98, 7, 0, Math.PI * 2); x.fill(); x.fillStyle = '#4a0a10';
+    }
+  }
+  // the grin (wide open when he laughs)
+  x.beginPath();
+  if (laugh) { x.moveTo(70, 150); x.quadraticCurveTo(128, 250, 186, 150); x.closePath(); x.fill(); x.fillStyle = '#ff7a8a'; x.beginPath(); x.ellipse(128, 196, 30, 14, 0, 0, Math.PI * 2); x.fill(); } else { x.moveTo(74, 156); x.quadraticCurveTo(128, 214, 182, 156); x.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+// a name, in white with a dark edge
+function nameTexture(text) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 84;
+  const x = c.getContext('2d');
+  x.font = '700 56px Fredoka, system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.lineWidth = 10; x.strokeStyle = '#4a0a10'; x.strokeText(text, 128, 44);
+  x.fillStyle = '#fff'; x.fillText(text, 128, 44);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 // a temperature tag's picture: a little thermometer and the degrees, warmer colours as it gets hotter
