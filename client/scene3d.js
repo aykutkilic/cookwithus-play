@@ -766,7 +766,8 @@ export class Scene3D {
     const show = (slot, tex, pos, size) => { this.placeSprite(slot, tex, pos, size); used.add(slot); };
     // first person: the food itself, in 3D (the room view keeps its cartoon standees)
     const fp = this.firstPerson;
-    const food = (slot, kind, st, pos, yaw = 0) => { this.placeFood(slot, kind, st, pos, yaw); used.add(slot); };
+    const usedFood = new Set();
+    const food = (slot, kind, st, pos, yaw = 0) => { this.placeFood(slot, kind, st, pos, yaw); usedFood.add(slot); };
     const put = (slot, kind, st, tex, pos, size, yaw = 0) => (fp ? food(slot, kind, st, pos, yaw) : show(slot, tex(), pos, size));
     const yawAt = (fxId) => { const F = fxId && this.k3.fx[fxId]; return F ? Math.atan2(F.front.x, F.front.z) : 0; };
     // what's being worked on, and prepped piles waiting
@@ -822,7 +823,7 @@ export class Scene3D {
       put(`scraps:${fxId}`, { type: 'scraps', c1: skin, n: Math.min(6, sc.n) }, {}, () => this.scrapTex(kind, sc.n), F.anchors.scraps, 0.16 + Math.min(4, sc.n) * 0.02, yawAt(fxId));
     }
     for (const [slot, s] of this.sprites) if (!used.has(slot)) s.visible = false;
-    for (const [slot, f] of this.foods) if (!used.has(slot)) f.g.visible = false;
+    for (const [slot, f] of this.foods) if (!usedFood.has(slot)) f.g.visible = false;
   }
 
   scrapTex(kind, n) {
