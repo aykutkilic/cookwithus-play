@@ -1774,7 +1774,7 @@ export class Scene3D {
   }
   // (portioning a bunch: its container in the middle of the board, the new one on its right – clear of
   // the board's own tools on the left and the stack of empty containers beyond its right edge)
-  portionSpot(w, side) { return side < 0 ? w.O.clone() : w.O.clone().addScaledVector(w.R, 0.2).addScaledVector(w.N, 0.04); }
+  portionSpot(w, side) { return side < 0 ? w.O.clone().addScaledVector(w.R, -0.06).addScaledVector(w.N, -0.03) : w.O.clone().addScaledVector(w.R, 0.2).addScaledVector(w.N, 0.06); }
   // (several worked one at a time: where those done pile up, at the board's back right)
   pileSpot(w) { return w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, -0.085); }
   // the point on the board under this point of the work plane, as it's seen (what the pointer's over)
