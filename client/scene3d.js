@@ -1036,6 +1036,10 @@ export class Scene3D {
         // (at work, first person: tipped to pour, tossed …)
         if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
         if (ov) { rec.group.position.copy(ov.pos); this.glides.set(`v:${id}`, { sig: 'work', pos: ov.pos.clone(), from: null, t: 1 }); }
+        // (a pot with a lid of its own keeps it on while it's put away – in a cupboard, on the pantry's shelf – and
+        // while it's carried empty; it comes off as the pot's set down to cook)
+        const empty = !(v.contents && v.contents.length) && !(v.water > 0.05) && !(v.items && v.items.length) && !v.dirty;
+        rec.stowed = rec.ownLid && !ov && !!kept && (kept.stored || !!kept.place || ((kept.held || kept.fp) && empty));
         updateVessel(rec, v, this.t, this.firstPerson);
         // dirty: a smear of what was in it (going as it's scrubbed) – and the suds while it's washed
         const wl = this.work && this.work.washing && this.work.washing.vid === id ? this.work.washing : null;
@@ -2747,6 +2751,7 @@ export function buildVessel(kind) {
   g.add(liquid);
   rec.liquid = liquid;
   const lid = vm.lid || new THREE.Group();
+  rec.ownLid = !!vm.lid;
   if (!vm.lid) {
     lid.add(lathe([[rec.r * 1.02, 0], [rec.r * 0.9, 0.025], [rec.r * 0.4, 0.04], [0, 0.045]], mat('#c9ccd2', { metal: 0.8, rough: 0.3, double: true }), 0, 0, 0, 20));
     lid.add(ball(0.018, mat('#3a3a42'), 0, 0.05, 0));
@@ -2781,7 +2786,7 @@ function updateVessel(rec, v, t, solid = false) {
     rec.liquid.material.opacity = level > 0.02 && !v.liquid ? 0.72 : solid && !v.liquid ? 0.55 : 0.96;
     if (v.cook) rec.liquid.material.color.lerp(new THREE.Color('#8a4a1a'), Math.min(0.5, v.cook * 0.4));
   }
-  rec.lid.visible = !!v.lid;
+  rec.lid.visible = !!v.lid || !!rec.stowed;
   rec.towel.visible = !!v.towel;
   // bits of what's inside, bobbing
   const kinds = solid ? [] : (v.contents || []).filter((c) => c.kind !== 'water');
