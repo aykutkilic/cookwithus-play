@@ -9,7 +9,8 @@
 import * as THREE from 'three';
 import { FIXTURES, BAYS, glassDoor, wallUnits, counterDecor as decorOf } from '../shared/kitchens.js';
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
-import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, chefKnife, peelerMesh, boxGrater } from './parts3d.js';
+import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake } from './parts3d.js';
+import { chefKnifeMesh, peelerMesh, graterMesh, crockMesh } from './props3d.js';
 import { containerNest } from './food3d.js';
 
 export const COUNTER_H = 0.46;
@@ -125,7 +126,7 @@ export function buildKitchen3D(K) {
     if (d.anchors.board) {
       const b = d.anchors.board, up = v3(0, 1, 0);
       const flat = (o, dir, along) => { const a = dir.clone().normalize(); o.quaternion.setFromRotationMatrix(along === 'x' ? new THREE.Matrix4().makeBasis(a, new THREE.Vector3().crossVectors(up, a), up) : new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(a, up), a, up)); };
-      const knife = chefKnife(), peeler = peelerMesh(), grater = boxGrater();
+      const knife = chefKnifeMesh(), peeler = peelerMesh(), grater = graterMesh();
       knife.position.set(b.x - 0.12, b.y + 0.007, b.z + 0.125);
       flat(knife, v3(-0.35, 0, -1), 'x');
       peeler.position.set(b.x - 0.035, b.y + 0.0065, b.z + 0.145);
@@ -1009,8 +1010,9 @@ function counterDecor(g, ctx, d, k) {
   const y = COUNTER_H;
   const x = k % 2 ? 0.34 : -0.34, z = -0.34;
   if (k === 0) {
-    g.add(cyl(0.058, 0.052, 0.1, mat(T.tileB, { rough: 0.35 }), x, y, z, 14));
-    g.add(cyl(0.05, 0.05, 0.004, mat('#3a2a20', { rough: 0.9 }), x, y + 0.085, z, 14)); // (inside it, dark)
+    const crock = crockMesh(T.tileB);
+    crock.position.set(x, y, z);
+    g.add(crock);
     d.anchors.crock = [0, 1, 2, 3].map((i) => v3(x + (i - 1.5) * 0.016, y + 0.055, z + (i % 2 ? 0.01 : -0.01)));
   }
   if (k === 1 || k === 2) d.anchors.corner = [v3(x, y, z), v3(x + (k % 2 ? -0.1 : 0.1), y, z)];

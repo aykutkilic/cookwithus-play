@@ -22,13 +22,15 @@ import { FpArms, SHOULDER, BRISK, APART } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
-import { mat, M, ball, cyl, lathe, ring, box, rod, v3, chefKnife, peelerMesh, boxGrater, utensilMesh, utensilFoot } from './parts3d.js';
+import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
+import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt } from './props3d.js';
 import { BOARD_TOOLS, boardUnits } from '../shared/actions.js';
 import { SAKIR, phaseTarget } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
 const LIGHTS = 6;
+const KNIFE_EDGE = knifeEdgeAt(0.08); // (how far below the knife's line its edge is where it cuts – props3d.js)
 const GLIDE_S = 0.6 / BRISK;   // a thing taken / put down travels this long, low, settling gently
 const REACH_S = 0.55 / BRISK;  // and the cook reaches out for it
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
@@ -48,9 +50,11 @@ const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
 // – about two thirds of the way along it from the pan (the golden ratio, a little more): not at its end
 // (the long handle runs from the rim, r out, to 0.18 further – see buildVessel)
-const GRIP_T = 0.64;
-const handleGrip = (r, h) => new THREE.Vector3(r + 0.18 * GRIP_T, h * (0.85 + 0.1 * GRIP_T), 0.04 * GRIP_T);
-const GRIP3D = { saucepan: handleGrip(0.11, 0.1), pan: handleGrip(0.15, 0.04), cezve: handleGrip(0.05, 0.09) };
+// (where a hand holds a pan by its long handle: GRIP3D, props3d.js – two thirds along it)
+// the tools the work puts in my hand that are the kitchen's own utensils (props3d.js), and how far below the
+// fist each one's working end reaches (from its model)
+const WORK_UTENSIL = { spoon: 'woodSpoon', ladle: 'ladle', whisk: 'whisk', masher: 'masher', spatula: 'spatula', tongs: 'tongs', peeler: 'peeler' };
+for (const [t, k] of Object.entries(WORK_UTENSIL)) TOOL_LEN[t] = utensilMesh(k).userData.foot * 0.88;
 const mobile = matchMedia('(pointer: coarse)').matches;
 // ?lite: no shadows or ambient occlusion and a low frame rate (slow machines, headless tests)
 export const LITE = new URLSearchParams(location.search).has('lite');
@@ -938,7 +942,7 @@ export class Scene3D {
       }
       rec.g.position.copy(pos);
       // (standing on its foot; lying, just above what it lies on)
-      if (!(kept && (kept.q || kept.held))) rec.g.position.y += up ? utensilFoot(t.kind) : kept && kept.lie === 'crock' ? 0 : 0.004;
+      if (!(kept && (kept.q || kept.held))) rec.g.position.y += up ? rec.g.userData.foot || 0 : kept && kept.lie === 'crock' ? 0 : (rec.g.userData.under || 0) + 0.0008;
       rec.g.quaternion.copy(q);
       rec.g.visible = true;
       seen.add(id);
@@ -2240,7 +2244,7 @@ export class Scene3D {
     const F = this.k3.fx[w.fx], o = F && F.parts.tools && F.parts.tools[t];
     if (!o) return null;
     o.updateMatrixWorld(true);
-    return o.localToWorld(t === 'knife' ? new THREE.Vector3(-0.0145, -0.006, 0) : t === 'grater' ? new THREE.Vector3(0, -0.012, 0) : new THREE.Vector3(0, -0.004, 0));
+    return o.localToWorld(t === 'knife' ? new THREE.Vector3(-0.016, -0.003, 0) : t === 'grater' ? new THREE.Vector3(0, -0.012, 0) : new THREE.Vector3(0, -0.004, 0));
   }
 
   // what was just put in a container (and the bunch's own one, with what's left) stays where it was put
@@ -2257,7 +2261,7 @@ export class Scene3D {
   knifeAt(E, d, tilt) {
     const xA = d.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(UP, -Math.sin(tilt)).normalize();
     const zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
-    const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, 0.022);
+    const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, KNIFE_EDGE);
     return { xA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
   }
 
@@ -2317,7 +2321,7 @@ export class Scene3D {
     if (!T || !this.firstPerson) { if (fx.tool) fx.tool.visible = false; } else {
       if (!fx.tool || fx.toolKind !== T.kind) {
         if (fx.tool) this.scene.remove(fx.tool);
-        fx.tool = T.kind === 'knife' ? chefKnife() : T.kind === 'peeler' ? peelerMesh() : T.kind === 'grater' ? boxGrater() : toolMesh(T.kind);
+        fx.tool = T.kind === 'knife' ? chefKnifeMesh() : T.kind === 'peeler' ? peelerMesh() : T.kind === 'grater' ? graterMesh() : WORK_UTENSIL[T.kind] ? utensilMesh(WORK_UTENSIL[T.kind]) : toolMesh(T.kind);
         fx.toolKind = T.kind;
         fx.tool.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         this.scene.add(fx.tool);
@@ -2730,59 +2734,23 @@ function disposeTree(o) {
 
 // ------------------------------------------------------------------ vessel models
 
-const VCOL = { pot: '#c9ccd2', bigPot: '#c9ccd2', copperPot: '#d0804a', cocotte: '#c0412d', saucepan: '#c9ccd2', pan: '#3a3a42', paellaPan: '#4a4a52' };
-
-function buildVessel(kind) {
-  const g = new THREE.Group();
-  const rec = { kind, group: g, h: 0.1, r: 0.12, liquid: null, lid: null, bits: [], bubbles: [] };
-  const metal = (c) => mat(c, { metal: c === '#c9ccd2' ? 0.85 : 0.5, rough: c === '#c9ccd2' ? 0.28 : 0.4 });
-  const potLike = (r, h, c, handles = 2, long = false) => {
-    rec.r = r; rec.h = h;
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.95, h, 24, 1, true), metal(c));
-    body.position.y = h / 2;
-    body.material.side = THREE.DoubleSide;
-    g.add(body);
-    g.add(cyl(r * 0.95, r * 0.95, 0.006, metal(c), 0, 0, 0, 24));
-    g.add(ring(r, 0.008, metal(c), 0, h, 0, 24));
-    if (handles === 2) for (const sx of [-1, 1]) { const hd = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.007, 6, 10, Math.PI), metal(c)); hd.position.set(sx * (r + 0.01), h * 0.8, 0); hd.rotation.set(0, sx > 0 ? -Math.PI / 2 : Math.PI / 2, 0); g.add(hd); }
-    if (long) g.add(rod(v3(r, h * 0.85, 0), v3(r + 0.18, h * 0.95, 0.04), 0.012, mat('#2a2a30', { rough: 0.5 }))); // (held at GRIP3D, along it)
-  };
-  switch (kind) {
-    case 'pot': potLike(0.13, 0.15, VCOL.pot); break;
-    case 'bigPot': potLike(0.16, 0.2, VCOL.bigPot); break;
-    case 'copperPot': potLike(0.13, 0.15, VCOL.copperPot); break;
-    case 'cocotte': potLike(0.15, 0.14, VCOL.cocotte); break;
-    case 'saucepan': potLike(0.11, 0.1, VCOL.saucepan, 0, true); break;
-    case 'pan': potLike(0.15, 0.04, VCOL.pan, 0, true); break;
-    case 'paellaPan': potLike(0.3, 0.04, VCOL.paellaPan, 2); break;
-    case 'bowl': rec.r = 0.13; rec.h = 0.08; g.add(lathe([[0, 0], [0.06, 0.005], [0.12, 0.05], [0.13, 0.08]], mat('#f2efe6', { rough: 0.35, double: true }), 0, 0, 0, 20)); g.add(ring(0.128, 0.006, mat('#5aa0c8'), 0, 0.075, 0, 20)); break;
-    case 'colander': rec.r = 0.13; rec.h = 0.08; g.add(lathe([[0, 0], [0.08, 0.01], [0.13, 0.08]], M.steel(), 0, 0, 0, 20)); break;
-    case 'tray': case 'peel': rec.r = 0.2; rec.h = 0.02; g.add(box(0.4, 0.02, 0.3, M.steelDark(), 0, 0, 0)); break;
-    case 'bakingDish': rec.r = 0.18; rec.h = 0.06; g.add(box(0.36, 0.06, 0.24, mat('#f2efe6', { rough: 0.3 }), 0, 0, 0)); g.add(box(0.32, 0.005, 0.2, mat('#d8603a'), 0, 0.058, 0)); break;
-    case 'plate': rec.r = 0.13; rec.h = 0.015; g.add(cyl(0.13, 0.1, 0.015, mat('#ffffff', { rough: 0.3 }), 0, 0, 0, 24)); g.add(ring(0.11, 0.004, mat('#5aa0c8'), 0, 0.016, 0, 24)); break;
-    case 'glass': rec.r = 0.035; rec.h = 0.1; g.add(lathe([[0, 0], [0.03, 0.005], [0.022, 0.05], [0.036, 0.1]], mat('#f4f8fa', { rough: 0.05, opacity: 0.5, double: true }), 0, 0, 0, 14)); break;
-    case 'cup': rec.r = 0.045; rec.h = 0.06; potLike(0.045, 0.06, '#ffffff', 0); break;
-    case 'cezve': rec.r = 0.05; rec.h = 0.09; potLike(0.05, 0.09, '#d0804a', 0, true); break;
-    case 'kettle': case 'caydanlik': {
-      rec.r = 0.1; rec.h = kind === 'caydanlik' ? 0.24 : 0.16;
-      g.add(lathe([[0, 0], [0.11, 0.01], [0.12, 0.08], [0.08, 0.15], [0.04, 0.16]], mat(kind === 'kettle' ? '#e8e2d4' : '#d9dde4', { metal: 0.6, rough: 0.3 }), 0, 0, 0, 20));
-      g.add(rod(v3(0.1, 0.06, 0), v3(0.17, 0.13, 0), 0.012, M.steel()));
-      if (kind === 'caydanlik') g.add(lathe([[0, 0], [0.06, 0.005], [0.07, 0.05], [0.04, 0.08], [0.015, 0.09]], mat('#e8b84a', { metal: 0.6, rough: 0.3 }), 0, 0.16, 0, 16));
-      break;
-    }
-    case 'blender': rec.r = 0.07; rec.h = 0.22; g.add(box(0.14, 0.06, 0.14, mat('#3a3a42'), 0, 0, 0)); g.add(cyl(0.07, 0.06, 0.16, mat('#dbe8ef', { rough: 0.05, opacity: 0.45, double: true }), 0, 0.06, 0, 16)); break;
-    case 'skewer': rec.r = 0.15; rec.h = 0.03; for (let i = 0; i < 3; i++) g.add(rod(v3(-0.15, 0.02, -0.05 + i * 0.05), v3(0.15, 0.02, -0.05 + i * 0.05), 0.004, M.steel())); break;
-    default: potLike(0.12, 0.12, '#c9ccd2'); break;
-  }
+// A pot, a pan, a dish …: its model (props3d.js, after the real one), with what goes with it here – the
+// liquid's surface, the lid, the towel over it, bits floating about, the bubbles.
+export function buildVessel(kind) {
+  const vm = vesselModel(kind) || vesselModel('pot');
+  const g = vm.group;
+  const rec = { kind, group: g, h: vm.h, r: vm.r, liquid: null, lid: null, bits: [], bubbles: [] };
   // liquid surface, lid, and bits floating about
   const liquid = new THREE.Mesh(new THREE.CircleGeometry(rec.r * 0.92, 24), new THREE.MeshStandardMaterial({ color: '#8fc8ea', roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.88 }));
   liquid.rotation.x = -Math.PI / 2;
   liquid.visible = false;
   g.add(liquid);
   rec.liquid = liquid;
-  const lid = new THREE.Group();
-  lid.add(lathe([[rec.r * 1.02, 0], [rec.r * 0.9, 0.025], [rec.r * 0.4, 0.04], [0, 0.045]], mat('#c9ccd2', { metal: 0.8, rough: 0.3, double: true }), 0, 0, 0, 20));
-  lid.add(ball(0.018, mat('#3a3a42'), 0, 0.05, 0));
+  const lid = vm.lid || new THREE.Group();
+  if (!vm.lid) {
+    lid.add(lathe([[rec.r * 1.02, 0], [rec.r * 0.9, 0.025], [rec.r * 0.4, 0.04], [0, 0.045]], mat('#c9ccd2', { metal: 0.8, rough: 0.3, double: true }), 0, 0, 0, 20));
+    lid.add(ball(0.018, mat('#3a3a42'), 0, 0.05, 0));
+  }
   lid.position.y = rec.h;
   lid.visible = false;
   g.add(lid);
