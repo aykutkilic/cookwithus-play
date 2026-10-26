@@ -17,7 +17,7 @@ import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
 import { VESSELS, twoHanded, INGREDIENTS } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
-import { FpArms, SHOULDER, BRISK } from './fparms3d.js';
+import { FpArms, SHOULDER, BRISK, APART } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
@@ -1169,7 +1169,7 @@ export class Scene3D {
     const r = Math.random();
     const rest = r < 0.4 ? [true, true] : r < 0.6 ? [true, false] : r < 0.8 ? [false, true] : [false, false];
     const pick = (a, b) => a + Math.random() * (b - a);
-    this.mood = { id: (M ? M.id : 0) + 1, until: this.t + pick(30, 120), rest, curl: [pick(0.05, 0.35), pick(0.05, 0.35)], pref: [0, 1].map(() => ({ f: pick(0.05, 0.16), o: pick(0.06, 0.2) })) };
+    this.mood = { id: (M ? M.id : 0) + 1, until: this.t + pick(30, 120), rest, curl: [pick(0.05, 0.35), pick(0.05, 0.35)], pref: [0, 1].map(() => ({ f: pick(0.05, 0.16), o: pick(0.06, 0.2) * APART })) };
     return this.mood;
   }
   // Where my idle hands rest: flat on a worktop near its edge, as I stand – a little out from each
@@ -1187,7 +1187,7 @@ export class Scene3D {
     const inFrom = (q, y) => { for (let k = 0.02; k < 0.6; k += 0.02) if (!on(q.clone().addScaledVector(fwd, -k), y)) return k; return 0.6; };
     return [-1, 1].map((s) => {
       const sh = body.pos.clone().addScaledVector(right, s * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(fwd, -SHOULDER.z);
-      const want = (pref && pref[s < 0 ? 0 : 1]) || { f: 0.1, o: 0.12 };
+      const want = (pref && pref[s < 0 ? 0 : 1]) || { f: 0.1, o: 0.12 * APART };
       let best = null, cost = Infinity;
       for (let f = -0.02; f <= most + 0.001; f += 0.02) for (let o = -0.1; o <= 0.401; o += 0.02) {
         const P = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);

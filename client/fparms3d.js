@@ -20,7 +20,8 @@ const HS = 0.5;
 const UPPER = 0.17, FORE = 0.155, SLIDE = 0.3; // arm bones; how far the (unseen) shoulder may come forward
 const REACH = (UPPER + FORE) * 0.985 + SLIDE;  // further than that, the hand stops (and the thing comes to it)
 const LEAN = 0.16; // how far you lean in toward something out of reach
-export const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05); // (the right one, from my eyes)
+export const APART = 0.9; // how far apart my arms are (1: as they were first made – a little wide)
+export const SHOULDER = new THREE.Vector3(0.12 * APART, -0.24, 0.05); // (the right one, from my eyes)
 const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // the right elbow points down, out and back
 const WRIST = 0.75; // how far a hand bends from its forearm (rad) before the forearm follows it round
 const WRIST_REST = 1.2; // (resting flat on a worktop, the arm coming down to it: further back)
@@ -69,6 +70,7 @@ const HOLDS = {
   rest: { at: v(0.14, -0.3, -0.25), grip: UNDER_PALM, a: v(0, 0, -1), b: v(-0.3, -0.2, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.1, flat: true },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
+for (const H of Object.values(HOLDS)) H.at.x *= APART; // (as close together as my shoulders)
 
 // The rotation turning hand direction a to b, twisted round b so that hand
 // direction c comes nearest pref (exactly: both seen end-on down b, the angle
