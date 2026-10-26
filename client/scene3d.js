@@ -40,7 +40,7 @@ const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktop
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
 const REST_EDGE = 0.05; // (and the wrist about this far in from the worktop's near edge)
 const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
-const REST_AFTER = 50; // (and not straight away: only once I've stood there this long, s – or up to 20 s more)
+const REST_AFTER = 50; // (and not straight away – standing there or working at it: only once I've been there this long, s – or up to 20 s more)
 const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
@@ -1326,11 +1326,12 @@ export class Scene3D {
         if (h.dir) { dir = h.dir.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) dir.x = -dir.x; }
         holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
       });
-      // (a hand with nothing to do rests on the worktop beside it, as the mood takes me – or hangs at my side
-      // out of sight; so does one whose thing the work has elsewhere – the pan my other hand is holding under the tap)
+      // (a hand with nothing to do rests on the worktop beside it, as the mood takes me – once I've been at it a
+      // while, not straight away – or hangs at my side out of sight; so does one whose thing the work has
+      // elsewhere – the pan my other hand is holding under the tap)
       for (let i = 0; i < 2; i++) {
         if (this.work.hands[i] || (holds[i] && !(slots[i] && this.work.ov.has(slots[i])))) continue;
-        const r = mood.rest[i] && this.work.rest && this.work.rest[i];
+        const r = mood.rest[i] && this.stillT > this.restAfter && this.work.rest && this.work.rest[i];
         holds[i] = r ? rest(r, i) : this.work.body ? { kind: 'away', at: new THREE.Vector3(0.15, -0.5, 0.22) } : null;
       }
     } else if (!view.fpGrab && this.stillT > this.restAfter && (holds[0] == null || holds[1] == null)) {
