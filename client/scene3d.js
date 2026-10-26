@@ -40,6 +40,7 @@ const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktop
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
 const REST_EDGE = 0.05; // (and the wrist about this far in from the worktop's near edge)
 const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
+const REST_AFTER = 50; // (and not straight away: only once I've stood there this long, s – or up to 20 s more)
 const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
@@ -1302,8 +1303,10 @@ export class Scene3D {
     };
     this.stillT = (rec.speed || 0) < 0.05 ? (this.stillT || 0) + dt : 0;
     let leaning = false;
-    // (what my idle hands feel like doing just now – walking, picked afresh when I stop)
-    if (!this.stillT && !(this.work && !this.work.idle)) this.mood = null;
+    // (what my idle hands feel like doing just now – walking, picked afresh when I stop; and how long I
+    // stand at a counter before I lean on it)
+    if (!this.stillT && !(this.work && !this.work.idle)) { this.mood = null; this.restAfter = null; }
+    if (this.restAfter == null) this.restAfter = REST_AFTER + Math.random() * 20;
     const mood = this.idleMood();
     const holds = slots.map((k, i) => {
       if (!k) return null;
@@ -1330,9 +1333,9 @@ export class Scene3D {
         const r = mood.rest[i] && this.work.rest && this.work.rest[i];
         holds[i] = r ? rest(r, i) : this.work.body ? { kind: 'away', at: new THREE.Vector3(0.15, -0.5, 0.22) } : null;
       }
-    } else if (!view.fpGrab && this.stillT > 0.3 && (holds[0] == null || holds[1] == null)) {
-      // standing still at a counter, my free hands rest on it as the mood takes me – both, one, or neither
-      // – and I lean in a little if they do (walking, they drop out of sight)
+    } else if (!view.fpGrab && this.stillT > this.restAfter && (holds[0] == null || holds[1] == null)) {
+      // standing still at a counter a while, my free hands rest on it as the mood takes me – both, one, or
+      // neither – and I lean in a little if they do (walking, they drop out of sight)
       const F = this.fpCam, eye = F && this.eyeAt(me.x, me.y, F.yaw, view.eyeOff || 0, REST_LEAN);
       const key = eye && `${eye.x.toFixed(2)}|${eye.z.toFixed(2)}|${Math.round(F.yaw / 0.05)}|${Math.floor(this.t)}|${mood.id}`; // (looked for again as I turn, and now and then)
       if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.46, board: true, pref: mood.pref }) };
