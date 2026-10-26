@@ -17,7 +17,7 @@ import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
 import { VESSELS, twoHanded, INGREDIENTS } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
-import { FpArms, SHOULDER } from './fparms3d.js';
+import { FpArms, SHOULDER, BRISK } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
@@ -28,8 +28,8 @@ import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
 const LIGHTS = 6;
-const GLIDE_S = 0.6;   // a thing taken / put down travels this long, low, settling gently
-const REACH_S = 0.55;  // and the cook reaches out for it
+const GLIDE_S = 0.6 / BRISK;   // a thing taken / put down travels this long, low, settling gently
+const REACH_S = 0.55 / BRISK;  // and the cook reaches out for it
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
 const UP = new THREE.Vector3(0, 1, 0);
 const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
@@ -37,9 +37,8 @@ const BOX_HALF = [0.06, 0.08, 0.105];
 const TIP_LOW = 0.05; // (a food's container held over the pot to tip it in: this far below where the close-up has it – just over the rim) // (a food container's half width, by its size in the nesting set)
 const CLAW_GAP = 0.05; // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
-const REST_TURN = 0.35; // (resting there: the forearm and fingers forward, turned in about this far)
-const REST_TURNS = [-0.2, 0, 0.2, 0.4, 0.6]; // (or this far, where that's what there's room for)
-const FOREARM = 0.155; // (from the elbow to the wrist: fparms3d's FORE)
+const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
+const REST_EDGE = 0.05; // (and the wrist about this far in from the worktop's near edge)
 const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
 const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
@@ -470,9 +469,9 @@ export class Scene3D {
       // (further in for something at the back – the back burner, the middle of the sink)
       const wo = this.work && !this.work.idle && this.work.O;
       const wantLean = wo ? this.workLeanAt(wo, me.x, me.y, this.work.real) : 0;
-      this.workLean = (this.workLean || 0) + (wantLean - (this.workLean || 0)) * (1 - Math.exp(-dt * 4));
+      this.workLean = (this.workLean || 0) + (wantLean - (this.workLean || 0)) * (1 - Math.exp(-dt * 4 * BRISK));
       // (and over a counter, my hands resting on it)
-      this.restLeanK = (this.restLeanK || 0) + ((this.restLean ? REST_LEAN : 0) - (this.restLeanK || 0)) * (1 - Math.exp(-dt * 3));
+      this.restLeanK = (this.restLeanK || 0) + ((this.restLean ? REST_LEAN : 0) - (this.restLeanK || 0)) * (1 - Math.exp(-dt * 3 * BRISK));
       const lean = Math.max(this.fpArms.lean(), this.workLean, this.restLeanK);
       const eye = this.eyeAt(me.x, me.y, yaw, view.eyeOff || 0, lean);
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
@@ -482,12 +481,12 @@ export class Scene3D {
       const wc = this.work && !this.work.idle && this.work.cam;
       // (from one step's camera to the next it glides too)
       if (wc) {
-        const A = this.workCamAt, g = 1 - Math.exp(-dt * 5);
+        const A = this.workCamAt, g = 1 - Math.exp(-dt * 5 * BRISK);
         if (!A || !this.workCamK) this.workCamAt = { pos: wc.pos.clone(), look: wc.look.clone() };
         else { A.pos.lerp(wc.pos, g); A.look.lerp(wc.look, g); }
         this.workBodyAt = this.work.body || null;
       }
-      this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6));
+      this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6 * BRISK));
       if (!wc && this.workCamK < 0.003) this.workCamK = 0;
       const wk = this.workCamK * this.workCamK * (3 - 2 * this.workCamK);
       this.eye.position.copy(eye);
@@ -594,7 +593,7 @@ export class Scene3D {
       }
       // (lifted while the water runs – also while my hand holds it up, filling a pan)
       const held = this.work && !this.work.idle && this.work.lever && this.work.lever.fx === id;
-      if (P.lever) P.lever.rotation.z += ((st.tap || (held && this.work.lever.on) ? 0.6 : 0) - P.lever.rotation.z) * Math.min(1, (this.dt || 0.016) * 14);
+      if (P.lever) P.lever.rotation.z += ((st.tap || (held && this.work.lever.on) ? 0.6 : 0) - P.lever.rotation.z) * Math.min(1, (this.dt || 0.016) * 14 * BRISK);
       // burners
       if (P.flames) {
         P.flames.forEach((fr, slot) => {
@@ -1161,49 +1160,34 @@ export class Scene3D {
     }
     return out;
   }
-  // Where my idle hands rest: on a worktop in front of me, as you lean on a counter – the forearm
-  // lying on it and the hand flat in line with it (no bend at the wrist), a little out from each
-  // shoulder, clear of what stands there (and of the work, at O – and its board). body: my eyes
-  // {pos, fwd} (my shoulders level below them); reach: how far from the shoulder the elbow (or,
-  // no room for the forearm, the hand) may be. [left, right]: {w, dir – the fingers', elbow?} or null.
-  benchRest(body, { O = null, clutter = [], reach: most = 0.44, board = false } = {}) {
+  // Where my idle hands rest: flat on a worktop near its edge, as I stand – a little out from each
+  // shoulder and forward, the arm coming down to it (not bent over to lay the forearm on it); clear
+  // of what stands there (and of the work, at O – and its board). body: my eyes {pos, fwd} (my
+  // shoulders level below them); reach: how far from the shoulder. [left, right]: {w, dir} or null
+  // (dir: about the fingers' way – the arm sets it exactly, in line with the forearm).
+  benchRest(body, { O = null, clutter = [], reach: most = 0.4, board = false } = {}) {
     const fwd = body.fwd.clone().setY(0).normalize(), right = new THREE.Vector3().crossVectors(fwd, UP);
     const things = this.benchClutter(body.pos, clutter);
     const on = (q, y) => { const b = this.benchAt(q.x, q.z, board); return !!b && Math.abs(b.y - y) < 0.01; };
     const clear = (q, r) => !(O && Math.hypot(q.x - O.x, q.z - O.z) < 0.16) && !things.some((t) => Math.abs(t.p.y - q.y) < 0.2 && Math.hypot(t.p.x - q.x, t.p.z - q.z) < t.r + r);
+    // (how far in from the worktop's near edge – toward me – a point is)
+    const inFrom = (q, y) => { for (let k = 0.02; k < 0.6; k += 0.02) if (!on(q.clone().addScaledVector(fwd, -k), y)) return k; return 0.6; };
     return [-1, 1].map((s) => {
       const sh = body.pos.clone().addScaledVector(right, s * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(fwd, -SHOULDER.z);
       let best = null, cost = Infinity;
-      // the elbow on the worktop, the forearm running from it forward (turned in by a), the hand on from that
-      for (let f = -0.04; f <= most + 0.001; f += 0.03) for (let o = -0.12; o <= 0.401; o += 0.03) {
-        const E = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);
-        const bE = this.benchAt(E.x, E.z, board);
-        if (!bE) continue;
-        E.y = bE.y;
-        if (E.distanceTo(sh) > most || sh.y - E.y < 0.04 || !clear(E, 0.03)) continue;
-        for (const a of REST_TURNS) {
-          const d = fwd.clone().multiplyScalar(Math.cos(a)).addScaledVector(right, -s * Math.sin(a));
-          const W = E.clone().addScaledVector(d, FOREARM), mid = E.clone().lerp(W, 0.5), P = W.clone().addScaledVector(d, 0.03), tip = P.clone().addScaledVector(d, 0.05);
-          if (![mid, W, P, tip].every((q) => on(q, E.y))) continue;
-          if (!clear(mid, 0.03) || !clear(W, 0.03) || !clear(P, 0.04) || !clear(tip, 0.035)) continue;
-          const c = Math.hypot(f - 0.13, o - 0.04) + Math.abs(a - REST_TURN) * 0.15 + (bE.hot ? 0.25 : 0);
-          if (c < cost) { cost = c; best = { w: P, dir: d, elbow: E.clone().addScaledVector(UP, 0.022) }; }
-        }
-      }
-      if (best) return best;
-      // (no room for the forearm: just the hand, flat, in line with the arm reaching down to it)
-      for (let f = -0.04; f <= most + 0.001; f += 0.02) for (let o = -0.12; o <= 0.421; o += 0.02) {
+      for (let f = -0.02; f <= most + 0.001; f += 0.02) for (let o = -0.1; o <= 0.401; o += 0.02) {
         const P = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);
         const b = this.benchAt(P.x, P.z, board);
         if (!b) continue;
         P.y = b.y;
         const reach = P.distanceTo(sh), d = P.clone().sub(sh).setY(0);
-        if (reach > most || sh.y - P.y < 0.06 || d.lengthSq() < 1e-4) continue;
-        d.normalize();
+        if (reach > most || sh.y - P.y < 0.06) continue;
+        if (d.lengthSq() < 1e-4) d.copy(fwd);
+        d.normalize().applyAxisAngle(UP, s * REST_TURN);
         // (the whole hand on it, fingertips to wrist, and clear of everything)
         const tip = P.clone().addScaledVector(d, 0.05), wr = P.clone().addScaledVector(d, -0.045);
         if (!on(tip, b.y) || !on(wr, b.y) || !clear(P, 0.04) || !clear(tip, 0.035)) continue;
-        const c = Math.hypot(f - 0.2, o - 0.05) + Math.max(0, reach - 0.31) * 3 + (b.hot ? 0.25 : 0);
+        const c = Math.abs(inFrom(wr, b.y) - REST_EDGE) * 2 + Math.hypot(f - 0.1, o - 0.12) + Math.max(0, reach - 0.33) * 3 + (b.hot ? 0.25 : 0);
         if (c < cost) { cost = c; best = { w: P, dir: d }; }
       }
       return best;
@@ -1299,7 +1283,7 @@ export class Scene3D {
       if (!i) d.x = -d.x;
       const f = this.eye.getWorldDirection(new THREE.Vector3()).setY(0).normalize(), rt = new THREE.Vector3().crossVectors(f, UP);
       const sh = this.eye.position.clone().addScaledVector(rt, (i ? 1 : -1) * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(f, -SHOULDER.z);
-      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1), elbow: r.elbow ? handAt(r.elbow, i ? 1 : -1) : null };
+      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1) };
     };
     this.stillT = (rec.speed || 0) < 0.05 ? (this.stillT || 0) + dt : 0;
     let leaning = false;
@@ -1332,7 +1316,7 @@ export class Scene3D {
       // standing still at a counter, my free hands rest on it, and I lean in a little (walking, they drop out of sight)
       const F = this.fpCam, eye = F && this.eyeAt(me.x, me.y, F.yaw, view.eyeOff || 0, REST_LEAN);
       const key = eye && `${eye.x.toFixed(2)}|${eye.z.toFixed(2)}|${Math.round(F.yaw / 0.05)}|${Math.floor(this.t)}`; // (looked for again as I turn, and now and then)
-      if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.5, board: true }) };
+      if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.46, board: true }) };
       if (eye) for (let i = 0; i < 2; i++) if (holds[i] == null && this.restNow.spots[i]) { holds[i] = rest(this.restNow.spots[i], i); leaning = true; }
     }
     this.restLean = leaning;
@@ -1563,7 +1547,9 @@ export class Scene3D {
     const held = srcKey ? this.fpSlots.indexOf(srcKey) : -1;
     // (Q – the left hand – doing it, if it's free)
     // (the knife held at rest in my right hand meanwhile: the left does it)
-    const wi = ph.held ? 0 : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
+    // (the food out of its container onto the board: the left – the right's for the knife, the peeler …)
+    const leftTakes = g.kind === 'drag' && g.source && g.source.fromBox && this.fpSlots[0] == null;
+    const wi = ph.held || leftTakes ? 0 : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
@@ -1847,7 +1833,7 @@ export class Scene3D {
         const off = !p.seen ? 0 : p.x < b.x0 - 40 ? p.x - (b.x0 - 40) : p.x > b.x1 + 60 ? p.x - (b.x1 + 60) : 0;
         const want = C.next + off * w.S;
         const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
-        ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14);
+        ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14 * BRISK);
         const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lift * (C.top + 0.012));
         const K = this.knifeAt(E, blade, 0.05 + 0.2 * Math.min(1, lift));
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
@@ -1939,7 +1925,7 @@ export class Scene3D {
       const spots = body ? this.benchRest(body, { O: w.O, clutter }) : [null, null];
       // (in sight: the work, both hands resting there – and where the working ones start, the pan by its handle …)
       const seen = [];
-      for (const r of spots) if (r) seen.push(r.w.clone().addScaledVector(r.dir, 0.07), r.w.clone().addScaledVector(r.dir, -0.1).addScaledVector(UP, 0.03));
+      for (const r of spots) if (r) seen.push(r.w.clone().addScaledVector(r.dir, 0.07), r.w.clone().addScaledVector(r.dir, -0.08).addScaledVector(UP, 0.04));
       for (const h of out.hands) if (h && h.w) seen.push(h.w.clone());
       this.restAt = { g, fx: w.fx, spots, seen };
     }

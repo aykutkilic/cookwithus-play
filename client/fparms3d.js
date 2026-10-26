@@ -23,9 +23,11 @@ const LEAN = 0.16; // how far you lean in toward something out of reach
 export const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05); // (the right one, from my eyes)
 const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // the right elbow points down, out and back
 const WRIST = 0.75; // how far a hand bends from its forearm (rad) before the forearm follows it round
+const WRIST_REST = 1.2; // (resting flat on a worktop, the arm coming down to it: further back)
 // a reach: out to the thing and back – taking, the hand closes on it; putting
 // down, it comes in from a little above, lowers it, rests a moment and lets go
-const OUT_TAKE = 0.42, OUT_PUT = 0.55, SETTLE = 0.14, BACK = 0.4, LIFT = 0.06;
+export const BRISK = 1.5; // how quick my movements are (1: as they were first made – a little slow)
+const OUT_TAKE = 0.42 / BRISK, OUT_PUT = 0.55 / BRISK, SETTLE = 0.14 / BRISK, BACK = 0.4 / BRISK, LIFT = 0.06;
 const outOf = (r) => (r.take ? OUT_TAKE : OUT_PUT);
 const spanOf = (r) => outOf(r) + (r.take ? 0 : SETTLE) + BACK;
 const v = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -62,7 +64,8 @@ const HOLDS = {
   knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
   claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
-  // resting on the worktop: the palm flat on it, the fingers (dir) along the forearm lying there (flat: palm down whatever the view)
+  // resting on the worktop near its edge: the palm flat on it, the fingers straight on from the forearm
+  // coming down to it (flat: palm down whatever the view)
   rest: { at: v(0.14, -0.3, -0.25), grip: UNDER_PALM, a: v(0, 0, -1), b: v(-0.3, -0.2, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.1, flat: true },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
@@ -95,7 +98,7 @@ export class FpArms {
     // [left, right]: where each wrist is, how the hand is turned, how closed
     this.hands = [-1, 1].map((s) => {
       const p = this.pose(s, 'away');
-      return { s, wrist: p.wrist.clone(), q: p.q.clone(), curl: p.curl, hold: 'away', reach: null, limb: null, sh: SHOULDER.clone(), el: new THREE.Vector3(), elK: 0 };
+      return { s, wrist: p.wrist.clone(), q: p.q.clone(), curl: p.curl, hold: 'away', reach: null, limb: null, sh: SHOULDER.clone(), fore: null };
     });
   }
 
@@ -150,9 +153,9 @@ export class FpArms {
       const body = H.toBody && sh.clone().sub(grip).normalize().multiplyScalar(0.6).addScaledVector(POLE, 0.4); // (toward where the elbow hangs)
       base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.flat ? up.negate() : body || H.pref);
     }
-    // (no further than an arm reaches – resting on the worktop, it's been put where it can lie)
+    // (no further than an arm reaches)
     const toG = grip.clone().sub(sh), gl = H.grip.clone().multiplyScalar(HS).length();
-    if (!H.flat && toG.length() > REACH - gl) grip.copy(sh).add(toG.setLength(REACH - gl));
+    if (toG.length() > REACH - gl) grip.copy(sh).add(toG.setLength(REACH - gl));
     const wrist = grip.clone().sub(H.grip.clone().multiplyScalar(HS).applyQuaternion(base));
     return { wrist: mirrorV(wrist, s), q: s < 0 ? mirrorQ(base) : base.clone(), curl: H.curl, grip: H.grip };
   }
@@ -198,20 +201,23 @@ export class FpArms {
 
   // Each frame: holds[i] = {kind: 'handle' | 'palm' | 'side', at?} or null. (A hand
   // resting on a worktop gives sh too: its shoulder where my body is – not turned
-  // down with my eyes as I look at it, which would pull the hand off it; and elbow:
-  // where its elbow lies, the forearm along the worktop.)
+  // down with my eyes as I look at it, which would pull the hand off it.)
   update(dt, holds, { visible = true, walk = 0, t = 0 } = {}) {
     this.group.visible = visible;
-    const k = 1 - Math.exp(-dt * 12);
+    const k = 1 - Math.exp(-dt * 12 * BRISK);
     for (let i = 0; i < 2; i++) {
       const h = this.hands[i];
       const hold = holds[i];
       const kind = hold ? hold.kind : 'away';
       h.sh.lerp(hold && hold.sh || SHOULDER, k);
-      const el = hold && hold.elbow && !h.reach;
-      if (el) h.el.lerp(hold.elbow, h.elK > 0.01 ? k : 1);
-      h.elK += ((el ? 1 : 0) - h.elK) * k;
-      const want = this.pose(h.s, kind, hold && hold.at, hold && hold.dir, h.sh);
+      // (resting: the fingers straight on from the forearm as it comes down to the worktop – seen from
+      // above, no bend at the wrist)
+      let dir = hold && hold.dir;
+      if (kind === 'rest' && h.fore) {
+        const up = this.upLocal(), f = h.fore.clone().addScaledVector(up, -h.fore.dot(up));
+        if (f.lengthSq() > 1e-6) dir = mirrorV(f.normalize(), h.s);
+      }
+      const want = this.pose(h.s, kind, hold && hold.at, dir, h.sh);
       if (hold && hold.curl != null) want.curl = hold.curl;
       h.toolKind = hold && hold.tool || null;
       // a little sway as you walk
@@ -228,7 +234,7 @@ export class FpArms {
           // (putting down: over the spot first, then lowered onto it)
           if (!r.take) h.wrist.addScaledVector(this.upLocal(), LIFT * ease(Math.min(1, r.t / out / 0.3)) * (1 - ease(Math.max(0, (r.t / out - 0.5) / 0.5))));
           h.q.slerpQuaternions(r.from.q, far.q, e);
-          h.curl += (far.curl - h.curl) * Math.min(1, dt * 18);
+          h.curl += (far.curl - h.curl) * Math.min(1, dt * 18 * BRISK);
           r.p = e;
         } else if (r.t < hold) {
           // (set down: a moment's rest before the hand lets go)
@@ -240,7 +246,7 @@ export class FpArms {
           const u = ease((r.t - hold) / BACK);
           h.wrist.lerpVectors(far.wrist, want.wrist, u);
           h.q.slerpQuaternions(far.q, want.q, u);
-          h.curl += ((r.take ? want.curl : 0.3) - h.curl) * Math.min(1, dt * 16);
+          h.curl += ((r.take ? want.curl : 0.3) - h.curl) * Math.min(1, dt * 16 * BRISK);
           r.p = 1 - u;
           if (u >= 1) h.reach = null;
         }
@@ -300,7 +306,7 @@ export class FpArms {
     if (d > reach) {
       sh = sh0.clone().add(w.clone().sub(sh0).normalize().multiplyScalar(Math.min(d - reach, SLIDE)));
       d = w.distanceTo(sh);
-      if (d > reach && h.elK < 0.5) { const dir = w.clone().sub(sh).normalize(); w.copy(sh).addScaledVector(dir, reach); d = reach; } // (never a stretched arm – unless it's lying on the worktop, its elbow there)
+      if (d > reach) { const dir = w.clone().sub(sh).normalize(); w.copy(sh).addScaledVector(dir, reach); d = reach; } // (never a stretched arm)
     }
     d = Math.max(d, Math.abs(UPPER - FORE) + 0.02);
     const u = w.clone().sub(sh).normalize();
@@ -312,13 +318,13 @@ export class FpArms {
     const back = Z.clone().applyQuaternion(h.q);
     let f = e.clone().sub(w).normalize();
     const ang = f.angleTo(back);
-    if (ang > WRIST) {
+    const most = h.hold === 'rest' ? WRIST_REST : WRIST;
+    if (ang > most) {
       const q = new THREE.Quaternion().setFromUnitVectors(back, f);
-      f = back.clone().applyQuaternion(new THREE.Quaternion().slerp(q, WRIST / ang));
+      f = back.clone().applyQuaternion(new THREE.Quaternion().slerp(q, most / ang));
       e = w.clone().add(f.clone().multiplyScalar(FORE));
     }
-    // (resting: the elbow where it lies on the worktop – the upper arm from there up to my shoulder)
-    if (h.elK > 0.001) { e.lerp(mirrorV(h.el, s), h.elK); f = e.clone().sub(w).normalize(); sh = sh.clone().lerp(sh0, h.elK); }
+    h.fore = w.clone().sub(e);
     const up = sh.clone().sub(e).normalize();
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
     tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024);
