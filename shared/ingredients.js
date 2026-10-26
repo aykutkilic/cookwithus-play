@@ -169,6 +169,32 @@ export const VESSELS = {
   skewer:     { name: 'Skewers', emoji: '🍢', bake: true, art: { type: 'skewer', c1: '#c9ccd2', c2: '#8a8f99' } },
 };
 
+// Kitchen tools and the other things lying about that aren't food or a pot: the
+// cutlery and utensils in the drawers and the crock, each board's own knife,
+// peeler and grater, the bottles and jars at a counter's back corner. They're
+// picked up, carried and put down like anything else (in the fist, by the
+// handle). board: the board tool it is.
+export const TOOLS = {
+  fork:       { name: 'Fork', emoji: '🍴' },
+  spoon:      { name: 'Spoon', emoji: '🥄' },
+  teaspoon:   { name: 'Teaspoon', emoji: '🥄' },
+  tableKnife: { name: 'Table knife', emoji: '🍽️' },
+  ladle:      { name: 'Ladle', emoji: '🥄' },
+  whisk:      { name: 'Whisk', emoji: '🥢' },
+  spatula:    { name: 'Spatula', emoji: '🍳' },
+  woodSpoon:  { name: 'Wooden spoon', emoji: '🥄' },
+  tongs:      { name: 'Tongs', emoji: '🥢' },
+  masher:     { name: 'Potato masher', emoji: '🥔' },
+  rollingPin: { name: 'Rolling pin', emoji: '🪵' },
+  scissors:   { name: 'Kitchen scissors', emoji: '✂️' },
+  chefKnife:  { name: 'Knife', emoji: '🔪', board: 'knife' },
+  peeler:     { name: 'Peeler', emoji: '🥕', board: 'peeler' },
+  grater:     { name: 'Grater', emoji: '🧀', board: 'grater' },
+  oilBottle:  { name: 'Bottle of olive oil', emoji: '🫒', upright: true },
+  vinegarBottle: { name: 'Bottle of vinegar', emoji: '🍶', upright: true },
+  sugarJar:   { name: 'Jar of sugar', emoji: '🫙', upright: true },
+};
+
 export const ING_KINDS = Object.keys(INGREDIENTS);
 export const VESSEL_KINDS = Object.keys(VESSELS);
 

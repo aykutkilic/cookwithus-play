@@ -197,7 +197,96 @@ export function buildKitchen(size, cuisine) {
   // spread cooks out around the middle of the room
   const cx = w / 2, cy = h / 2;
   spawns.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
-  return { size, cuisine, w, h, fixtures, solid, spawns, cap: SIZES[size].cap, palette: CUISINES[cuisine] };
+  const K = { size, cuisine, w, h, fixtures, solid, spawns, cap: SIZES[size].cap, palette: CUISINES[cuisine] };
+  K.walls = wallUnits(K);
+  K.bays = baysOf(K);
+  return K;
+}
+
+// ------------------------------------------------------------------ cupboards and drawers
+// Where things are kept besides the fridge and the pantry. A place is
+// '<fixture id>/<bay>' – one with a door is opened and shut by hand (state:
+// C.fx[fixture].bays[bay]), the open ones on a worktop are always to hand:
+//   dr      the drawer under a counter's worktop
+//   c0 c1   the cupboard doors under it (the sink's, the stove's one)
+//   u0 u1   the wall cupboard's two doors over it
+//   board   where the board's own knife, peeler and grater lie
+//   crock   a utensil crock at a counter's back corner
+//   corner  the bottles or the jar standing at a counter's back corner
+// Each holds things on `levels` shelves (0: the top one) of `slots` places.
+export const BAYS = {
+  dr: { name: 'drawer', door: true, levels: 1, slots: 8 },
+  c0: { name: 'cupboard', door: true, levels: 1, slots: 2 },
+  c1: { name: 'cupboard', door: true, levels: 1, slots: 2 },
+  u0: { name: 'wall cupboard', door: true, levels: 2, slots: 2 },
+  u1: { name: 'wall cupboard', door: true, levels: 2, slots: 2 },
+  board: { name: 'board', levels: 1, slots: 3 },
+  crock: { name: 'crock', levels: 1, slots: 4 },
+  corner: { name: 'corner', levels: 1, slots: 2 },
+};
+
+// '<fixture>/<bay>' -> [fixture, bay] (a plain fixture id: [id, null])
+export function splitPlace(id) {
+  const s = String(id || ''), i = s.indexOf('/');
+  return i < 0 ? [s, null] : [s.slice(0, i), s.slice(i + 1)];
+}
+export function bayOf(K, id) { return (K && K.bays && K.bays[id]) || null; }
+
+// What's on the walls over the fixtures along them: fixture id -> 'cupboard' | 'hood'.
+// (Not over the window, the corner, or anything tall – the fridge, the pantry, an oven dome.)
+export function wallUnits(K) {
+  const W = K.w;
+  const wx = Math.max(1, Math.floor(W / 2)), ww = Math.min(2, W - 2) || 1;
+  const blockedN = new Set(), blockedW = new Set([0]);
+  for (let x = wx; x < wx + ww; x++) blockedN.add(x);
+  const TALL = ['fridge', 'shelf', 'pizzaOven', 'stoneOven', 'tandoor', 'aga', 'piano', 'paellaBurner'];
+  for (const f of K.fixtures) {
+    if (!TALL.includes(f.type)) continue;
+    if (f.y === 0 && f.x > 0) for (let x = f.x; x < f.x + f.w; x++) blockedN.add(x);
+    if (f.x === 0 && f.y > 0) for (let y = f.y; y < f.y + f.h; y++) blockedW.add(y);
+  }
+  blockedN.add(0);
+  const out = {};
+  for (const f of K.fixtures) {
+    const onN = f.y === 0 && f.x > 0, onW = f.x === 0 && f.y > 0;
+    if (!onN && !onW) continue;
+    if (!['counter', 'dishwasher', 'sink', 'stove', 'oven'].includes(f.type)) continue;
+    const span = onN ? [f.x, f.x + f.w] : [f.y, f.y + f.h];
+    const B = onN ? blockedN : blockedW;
+    let free = true;
+    for (let k = span[0]; k < span[1]; k++) if (B.has(k)) free = false;
+    if (!free) continue;
+    out[f.id] = f.type === 'stove' ? 'hood' : 'cupboard';
+    for (let k = span[0]; k < span[1]; k++) B.add(k);
+  }
+  return out;
+}
+// a wall cupboard's door i: glass (you see what's in it) or painted
+export function glassDoor(f, i) { return (f.x * 7 + f.y * 13 + i) % 2 === 0; }
+// what stands at a counter's back corner (counters in map order): 0 a utensil crock,
+// 1 oil & vinegar, 2 a storage jar, 3 nothing
+export function counterDecor(K) {
+  const out = {};
+  let k = 0;
+  for (const f of K.fixtures) if (f.type === 'counter') out[f.id] = k++ % 4;
+  return out;
+}
+
+// Every place things are kept in a kitchen: place id -> {fx, bay, ...BAYS[bay]}
+export function baysOf(K) {
+  const out = {};
+  const add = (f, bay, o = {}) => { out[`${f.id}/${bay}`] = { fx: f.id, bay, ...BAYS[bay], ...o }; };
+  const decor = counterDecor(K), walls = K.walls || wallUnits(K);
+  for (const f of K.fixtures) {
+    if (f.type === 'counter') { add(f, 'dr'); add(f, 'c0'); add(f, 'c1'); }
+    if (f.type === 'sink') { add(f, 'c0'); add(f, 'c1'); }
+    if (f.type === 'stove') add(f, 'c0', { slots: 3 }); // (its one wide door)
+    if (['counter', 'dishwasher', 'table'].includes(f.type)) add(f, 'board');
+    if (decor[f.id] === 0) add(f, 'crock');
+    if (decor[f.id] === 1 || decor[f.id] === 2) add(f, 'corner');
+    if (walls[f.id] === 'cupboard') { add(f, 'u0'); add(f, 'u1'); }
+  }
+  return out;
 }
 
 // What a kitchen offers: counts of each capability (burners count per slot).

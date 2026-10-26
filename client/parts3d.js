@@ -223,3 +223,113 @@ export function boxGrater() {
   g.add(loop);
   return g;
 }
+
+// The kitchen's tools as things of their own (shared/ingredients.js TOOLS): each
+// held at its origin – where a fist takes it – its working end down (-y), the
+// handle up (+y), a flat one's faces toward ±z. Upright ones (bottles, a jar, the
+// grater) stand on their foot (`foot` below the origin: utensilFoot).
+const UT_CACHE = new Map();
+const FOOT = { oilBottle: 0.09, vinegarBottle: 0.08, sugarJar: 0.07, grater: 0.115 };
+export function utensilFoot(kind) { return FOOT[kind] || 0; }
+export function utensilMesh(kind) {
+  let g = UT_CACHE.get(kind);
+  if (g) return g.clone();
+  g = new THREE.Group();
+  const steel = mat('#d4d8de', { metal: 0.85, rough: 0.25 }), wood = mat('#c9955a', { rough: 0.6 }), dark = mat('#2e2e34', { rough: 0.5 });
+  const flatBowl = (r, y, m) => { const b = ball(r, m, 0, y, 0, 1, 1.45, 0.32, 12); return b; };
+  const tines = (y0) => { for (let i = 0; i < 4; i++) g.add(box(0.0016, 0.028, 0.0016, steel, -0.0054 + i * 0.0036, y0 - 0.028, 0)); };
+  switch (kind) {
+    case 'fork':
+      g.add(box(0.008, 0.06, 0.0026, steel, 0, -0.032, 0));
+      g.add(box(0.013, 0.012, 0.0024, steel, 0, -0.045, 0));
+      tines(-0.045);
+      break;
+    case 'spoon': case 'teaspoon': {
+      const k = kind === 'teaspoon' ? 0.75 : 1;
+      g.add(box(0.007 * k, 0.062 * k, 0.0026, steel, 0, -0.034 * k, 0));
+      g.add(flatBowl(0.011 * k, -0.06 * k, steel));
+      break;
+    }
+    case 'tableKnife':
+      g.add(box(0.009, 0.05, 0.005, steel, 0, -0.025, 0));
+      g.add(box(0.011, 0.062, 0.0014, steel, 0.001, -0.087, 0));
+      g.add(ball(0.0055, steel, 0.0015, -0.087, 0, 1, 1, 0.13, 8));
+      break;
+    case 'ladle': {
+      g.add(rod(v3(0, 0.035, 0), v3(0, -0.11, 0.004), 0.004, steel));
+      const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.026, 14, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mat('#d4d8de', { metal: 0.85, rough: 0.25, double: true }));
+      bowl.rotation.x = -Math.PI / 2; // (its hollow toward +z: face up when it lies)
+      bowl.position.set(0, -0.13, 0.026);
+      g.add(bowl);
+      break;
+    }
+    case 'whisk':
+      g.add(cyl(0.007, 0.006, 0.07, dark, 0, -0.02, 0, 10));
+      for (let i = 0; i < 4; i++) { const w = ring(0.018, 0.0012, steel, 0, -0.085, 0, 18); w.rotation.set(0, (i * Math.PI) / 4, 0); w.scale.set(1, 2.4, 1); g.add(w); }
+      break;
+    case 'spatula':
+      g.add(cyl(0.006, 0.006, 0.075, dark, 0, -0.03, 0, 8));
+      g.add(box(0.008, 0.03, 0.002, steel, 0, -0.06, 0));
+      g.add(box(0.04, 0.05, 0.002, steel, 0, -0.11, 0));
+      break;
+    case 'woodSpoon':
+      g.add(cyl(0.006, 0.0055, 0.13, wood, 0, -0.085, 0, 8));
+      g.add(flatBowl(0.016, -0.1, wood));
+      break;
+    case 'tongs':
+      for (const s of [-1, 1]) { const b = box(0.011, 0.13, 0.002, steel, 0, -0.11, s * 0.004); b.rotation.x = s * 0.06; g.add(b); }
+      g.add(ring(0.007, 0.0018, steel, 0, 0.02, 0, 10));
+      break;
+    case 'masher': {
+      g.add(cyl(0.009, 0.008, 0.06, wood, 0, -0.02, 0, 10));
+      g.add(rod(v3(0, -0.02, 0), v3(0, -0.1, 0), 0.0025, steel));
+      const p = ring(0.022, 0.003, steel, 0, -0.1, 0, 16);
+      g.add(p);
+      break;
+    }
+    case 'rollingPin': {
+      const r = cyl(0.02, 0.02, 0.16, wood, 0, -0.08, 0, 14);
+      g.add(r);
+      for (const y of [0.08, -0.11]) g.add(cyl(0.009, 0.009, 0.03, wood, 0, y, 0, 10));
+      break;
+    }
+    case 'scissors':
+      for (const s of [-1, 1]) {
+        const b = box(0.006, 0.06, 0.0015, steel, 0, -0.07, s * 0.001);
+        b.rotation.z = s * 0.05;
+        g.add(b);
+        const h = ring(0.009, 0.0025, mat('#d8402a', { rough: 0.4 }), s * 0.008, 0, 0, 12);
+        h.rotation.set(0, 0, 0);
+        g.add(h);
+      }
+      break;
+    case 'chefKnife': {
+      // (the board's knife: its blade along x – turned to hang down from the grip)
+      const k = chefKnife();
+      k.rotation.z = -Math.PI / 2;
+      k.position.y = -0.0145;
+      g.add(k);
+      break;
+    }
+    case 'peeler': g.add(peelerMesh()); break;
+    case 'grater': g.add(boxGrater()); break;
+    case 'oilBottle':
+      g.add(lathe([[0, 0], [0.04, 0.01], [0.04, 0.14], [0.015, 0.2], [0.012, 0.24]], mat('#c9c83a', { rough: 0.15, opacity: 0.8 }), 0, -0.09, 0, 12));
+      g.add(cyl(0.013, 0.013, 0.02, dark, 0, 0.145, 0, 8));
+      break;
+    case 'vinegarBottle':
+      g.add(lathe([[0, 0], [0.03, 0.01], [0.03, 0.12], [0.012, 0.17], [0.01, 0.2]], mat('#c06a3a', { rough: 0.15, opacity: 0.8 }), 0, -0.08, 0, 12));
+      g.add(cyl(0.011, 0.011, 0.018, dark, 0, 0.115, 0, 8));
+      break;
+    case 'sugarJar':
+      g.add(cyl(0.07, 0.07, 0.16, M.glass(), 0, -0.07, 0, 14));
+      g.add(cyl(0.065, 0.065, 0.1, mat('#f6f1e6'), 0, -0.065, 0, 14));
+      g.add(cyl(0.072, 0.072, 0.025, mat('#c9a24a', { rough: 0.5 }), 0, 0.09, 0, 14));
+      break;
+    default:
+      g.add(cyl(0.006, 0.006, 0.12, steel, 0, -0.1, 0, 6));
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  UT_CACHE.set(kind, g);
+  return g.clone();
+}

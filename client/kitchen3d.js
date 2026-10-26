@@ -7,7 +7,7 @@
 //
 // Grid square (gx, gy) is the world square x∈[gx, gx+1], z∈[gy, gy+1]; y is up.
 import * as THREE from 'three';
-import { FIXTURES } from '../shared/kitchens.js';
+import { FIXTURES, BAYS, glassDoor, wallUnits, counterDecor as decorOf } from '../shared/kitchens.js';
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
 import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, chefKnife, peelerMesh, boxGrater } from './parts3d.js';
 import { containerNest } from './food3d.js';
@@ -93,6 +93,7 @@ export function buildKitchen3D(K) {
 
   // ------------------------------------------------------------------ fixtures
   const ctx = { T, stat, dyn, glows };
+  const cdecor = decorOf(K);
   const blockedN = new Set(), blockedW = new Set(); // wall squares with cupboards / tall things
   for (let x = Math.floor(WIN.x0); x < Math.ceil(WIN.x1); x++) blockedN.add(x);
   for (const f of K.fixtures) {
@@ -118,6 +119,7 @@ export function buildKitchen3D(K) {
       case 'piano': piano(g, ctx, d); break;
       default: break;
     }
+    if (cdecor[f.id] != null) counterDecor(g, ctx, d, cdecor[f.id]);
     // a board's own tools – when they aren't in someone's hand: the knife and the peeler lying
     // flat at its front left, the box grater standing at its back left
     if (d.anchors.board) {
@@ -131,6 +133,7 @@ export function buildKitchen3D(K) {
       grater.position.set(b.x - 0.2, b.y + 0.115, b.z - 0.11);
       d.parts.tools = { knife, peeler, grater };
       for (const o of [knife, peeler, grater]) { o.userData.live = true; g.add(o); } // (shown and hidden: not baked in)
+      d.anchors.boardTools = [knife.position.clone(), peeler.position.clone(), grater.position.clone()]; // (where each lies: the board's place – shared/stock.js)
       // and a stack of empty food containers on the worktop beside it (an empty one's taken from it
       // for what's been cut or portioned out)
       const nest = containerNest();
@@ -142,23 +145,14 @@ export function buildKitchen3D(K) {
     const cx = f.x + f.w / 2, cz = f.y + f.h / 2;
     g.position.set(cx, 0, cz);
     if (f.face === 'e') g.rotation.y = Math.PI / 2;
-    g.updateMatrixWorld(true);
-    // static meshes go to the bake, dynamic ones (marked) stay live
-    const live = [];
-    g.traverse((o) => { if (o.userData.live) live.push(o); });
-    for (const o of live) {
-      const wm = o.matrixWorld.clone();
-      o.removeFromParent();
-      wm.decompose(o.position, o.quaternion, o.scale);
-      dyn.add(o);
-    }
+    const live = liveOut(g);
     stat.add(g);
     // anchors to world space
     const toWorld = (v) => v.clone().applyMatrix4(g.matrixWorld);
     const A = {};
     for (const [k, v] of Object.entries(d.anchors)) A[k] = Array.isArray(v) ? v.map(toWorld) : toWorld(v);
     // (src, live: its own meshes, kept for the glow on what's next – the bake only copies them)
-    fx[f.id] = { anchors: A, parts: d.parts, f, src: g, live, front: f.face === 'e' ? v3(1, 0, 0) : v3(0, 0, 1) };
+    fx[f.id] = { anchors: A, parts: d.parts, f, src: g, live, front: f.face === 'e' ? v3(1, 0, 0) : v3(0, 0, 1), bays: baysOut(d.bays, g) };
     // what's on the back walls above it
     const tall = ['fridge', 'shelf', 'pizzaOven', 'stoneOven', 'tandoor', 'aga', 'piano', 'paellaBurner'].includes(f.type);
     if (f.y === 0 && f.x > 0) for (let x = f.x; x < f.x + f.w; x++) { if (tall) blockedN.add(x); }
@@ -168,22 +162,22 @@ export function buildKitchen3D(K) {
   blockedN.add(0); blockedW.add(0);
 
   // ------------------------------------------------------------------ upper cupboards & hoods
+  // (where they go: shared/kitchens.js wallUnits – the cupboards are bays too)
+  const walls = K.walls || wallUnits(K);
   for (const f of K.fixtures) {
-    const onN = f.y === 0 && f.x > 0, onW = f.x === 0 && f.y > 0;
-    if (!onN && !onW) continue;
-    const span = onN ? [f.x, f.x + f.w] : [f.y, f.y + f.h];
-    let free = true;
-    for (let k = span[0]; k < span[1]; k++) if ((onN ? blockedN : blockedW).has(k)) free = false;
-    if (!free) continue;
-    if (!['counter', 'dishwasher', 'sink', 'stove', 'oven'].includes(f.type)) continue;
+    if (!walls[f.id]) continue;
+    const onN = f.y === 0 && f.x > 0;
     const g = new THREE.Group();
-    if (f.type === 'stove') hood(g, ctx);
-    else cupboard(g, ctx, f.x * 7 + f.y * 13);
+    const d = { bays: {} };
+    if (walls[f.id] === 'hood') hood(g, ctx);
+    else cupboard(g, ctx, f, d);
     g.position.set(f.x + f.w / 2, 0, f.y + f.h / 2);
-    if (onW) g.rotation.y = Math.PI / 2;
+    if (!onN) g.rotation.y = Math.PI / 2;
     // sit against the wall: local z = -0.5 is the wall
+    liveOut(g);
     stat.add(g);
-    for (let k = span[0]; k < span[1]; k++) (onN ? blockedN : blockedW).add(k);
+    if (fx[f.id]) Object.assign(fx[f.id].bays, baysOut(d.bays, g));
+    for (let k = onN ? f.x : f.y; k < (onN ? f.x + f.w : f.y + f.h); k++) (onN ? blockedN : blockedW).add(k);
   }
 
   // ------------------------------------------------------------------ lamps & decorations on the free wall squares
@@ -214,21 +208,34 @@ export function buildKitchen3D(K) {
   const hang = new THREE.Group();
   hangingString(hang, ctx, WIN);
   stat.add(hang);
-  // little things on the worktops (not on the boards)
-  let k = 0;
-  for (const f of K.fixtures) {
-    if (f.type !== 'counter' || !fx[f.id]) continue;
-    const g = new THREE.Group();
-    if (counterDecor(g, ctx, k++)) {
-      g.position.set(f.x + f.w / 2, 0, f.y + f.h / 2);
-      if (f.face === 'e') g.rotation.y = Math.PI / 2;
-      stat.add(g);
-    }
-  }
 
   // ------------------------------------------------------------------ bake
   root.add(bake(stat));
   return { root, dyn, fx, glows, window: WIN, theme: T };
+
+  // (a group placed in the room: its moving parts (marked live) out into dyn, in place)
+  function liveOut(g) {
+    g.updateMatrixWorld(true);
+    const out = [];
+    g.traverse((o) => { if (o.userData.live) out.push(o); });
+    for (const o of out) {
+      const wm = o.matrixWorld.clone();
+      o.removeFromParent();
+      wm.decompose(o.position, o.quaternion, o.scale);
+      dyn.add(o);
+    }
+    return out;
+  }
+  // (bays, placed: a door's spots to world space – a drawer's stay its own, they come out with it;
+  // the pose it's at shut)
+  function baysOut(bays, g) {
+    const out = {};
+    for (const [k, b] of Object.entries(bays || {})) {
+      out[k] = { ...b, spots: b.local ? b.spots : b.spots.map((lv) => lv.map((p) => p.clone().applyMatrix4(g.matrixWorld))), base: { pos: b.obj.position.clone(), rotY: b.obj.rotation.y }, out: new THREE.Vector3(0, 0, 1).transformDirection(g.matrixWorld), frame: g.matrixWorld.clone() };
+      b.obj.userData.bay = k;
+    }
+    return out;
+  }
 
   function placeOnWall(g, s) {
     if (s.wall === 'N') g.position.set(s.at, 0, 0);
@@ -243,30 +250,90 @@ export function buildKitchen3D(K) {
 const live = (o) => { o.userData.live = true; return o; };
 function handleMat(T) { return T.handle === 'iron' ? M.iron() : M.brass(); }
 
-function carcass(g, ctx, w, d, { doors = 2, drawer = true, depth = 0.9, top = COUNTER_H - 0.04 } = {}) {
+// The cupboard under a worktop. Hollow where it opens (you see in when it's
+// open): its doors hinged at their outer edges, the drawer over them sliding
+// out. Each that opens is a bay (d.bays, see shared/kitchens.js BAYS): what
+// moves (obj: a door's hinge, the drawer), how (sign: which way the door swings;
+// slide: how far the drawer comes out), its front (for a hand to find, obj
+// space), its handle (obj space) and where things go in it (spots[level][slot]:
+// the cupboard's in fixture space, the drawer's in its own – they come out with it).
+const INNER = '#ecdfc6'; // (the inside of the cupboards: light birch)
+function carcass(g, ctx, w, d, { doors = 2, drawer = true, depth = 0.9, top = COUNTER_H - 0.04, drawerBay = true, slots = 2 } = {}) {
   const { T } = ctx;
   const cab = mat(T.cabinet, { rough: 0.55 });
   const cab2 = mat(T.cabinet2, { rough: 0.6 });
+  const inner = mat(INNER, { rough: 0.75 });
   const h = handleMat(T);
+  d.bays = d.bays || {};
   g.add(box(w - 0.06, 0.05, depth - 0.1, mat('#2a2220', { rough: 0.8 }), 0, 0, -0.05)); // kick
-  g.add(box(w - 0.02, top - 0.05, depth, cab2, 0, 0.05, -0.02));
+  const fz = depth / 2 - 0.02 + 0.012, back = -0.02 - depth / 2;
+  const shelfY = drawer ? COUNTER_H - 0.15 : top; // (the cupboard's ceiling: under the drawer)
+  if (!doors && !drawer) g.add(box(w - 0.02, top - 0.05, depth, cab2, 0, 0.05, -0.02));
+  else {
+    // a hollow box: bottom, back, sides – birch inside – and the floor of the drawer's space
+    g.add(box(w - 0.02, 0.02, depth, cab2, 0, 0.05, -0.02));
+    g.add(box(w - 0.06, 0.004, depth - 0.04, inner, 0, 0.07, -0.04));
+    g.add(box(w - 0.02, top - 0.05, 0.02, cab2, 0, 0.05, back + 0.01));
+    g.add(box(w - 0.06, top - 0.07, 0.004, inner, 0, 0.07, back + 0.022));
+    for (const sx of [-1, 1]) {
+      g.add(box(0.02, top - 0.05, depth, cab2, sx * (w / 2 - 0.02), 0.05, -0.02));
+      g.add(box(0.004, top - 0.07, depth - 0.04, inner, sx * (w / 2 - 0.032), 0.07, -0.04));
+    }
+    if (drawer) g.add(box(w - 0.04, 0.02, depth - 0.02, inner, 0, shelfY - 0.02, -0.03));
+    if (doors === 2) g.add(box(0.02, shelfY - 0.09, depth - 0.06, inner, 0, 0.07, -0.05)); // (between the doors)
+    if (!drawer) g.add(box(w - 0.04, 0.02, depth - 0.02, inner, 0, top - 0.02, -0.03)); // (its ceiling)
+    g.add(box(w - 0.02, 0.025, 0.03, cab2, 0, shelfY - 0.025, fz - 0.03)); // (the rail over the doors)
+  }
   // (cut down under a sink: panels round the sides close it up to the worktop)
   if (top < COUNTER_H - 0.04) {
     const ph = COUNTER_H - 0.04 - top;
     for (const [pw, pd, x, z] of [[w - 0.02, 0.02, 0, depth / 2 - 0.03], [w - 0.02, 0.02, 0, -depth / 2 - 0.01], [0.02, depth, -(w - 0.02) / 2 + 0.01, -0.02], [0.02, depth, (w - 0.02) / 2 - 0.01, -0.02]]) g.add(box(pw, ph, pd, cab2, x, top, z));
   }
-  const fz = depth / 2 - 0.02 + 0.012;
   if (drawer) {
-    g.add(rbox(w - 0.08, 0.075, 0.024, cab, 0, COUNTER_H - 0.13, fz, 0.008));
-    g.add(rod(v3(-0.08, COUNTER_H - 0.093, fz + 0.025), v3(0.08, COUNTER_H - 0.093, fz + 0.025), 0.008, h));
+    // the drawer: its front and handle, a birch tray behind them (out of sight till it's pulled out)
+    const bay = drawerBay;
+    const dr = bay ? live(new THREE.Group()) : g;
+    const y0 = COUNTER_H - 0.13, dd = 0.4;
+    dr.add(rbox(w - 0.08, 0.075, 0.024, cab, 0, y0, fz, 0.008));
+    dr.add(rod(v3(-0.08, COUNTER_H - 0.093, fz + 0.025), v3(0.08, COUNTER_H - 0.093, fz + 0.025), 0.008, h));
+    if (bay) {
+      dr.add(box(w - 0.12, 0.006, dd, inner, 0, y0 + 0.006, fz - 0.012 - dd / 2));
+      for (const sx of [-1, 1]) dr.add(box(0.008, 0.055, dd, inner, sx * (w / 2 - 0.064), y0 + 0.006, fz - 0.012 - dd / 2));
+      dr.add(box(w - 0.12, 0.055, 0.008, inner, 0, y0 + 0.006, fz - 0.012 - dd));
+      const n = BAYS.dr.slots, span = w - 0.2;
+      // (a cutlery insert: low dividers between the places)
+      for (let i = 0; i < n - 1; i++) dr.add(box(0.005, 0.022, dd - 0.05, inner, -span / 2 + ((i + 0.5) * span) / (n - 1), y0 + 0.012, fz - 0.012 - dd / 2));
+      g.add(dr);
+      d.bays.dr = {
+        kind: 'drawer', obj: dr, slide: 0.31, local: true,
+        front: { x: 0, y: y0 + 0.0375, z: fz, w: w - 0.08, h: 0.075, d: 0.04 },
+        inner: { x: 0, y: y0 + 0.035, z: fz - 0.012 - dd / 2, w: w - 0.12, h: 0.06, d: dd },
+        handle: v3(0, COUNTER_H - 0.093, fz + 0.025),
+        spots: [Array.from({ length: n }, (_, i) => v3(-span / 2 + (i * span) / (n - 1), y0 + 0.012, fz - 0.012 - dd / 2 + 0.02))],
+      };
+    }
   }
   const dh = drawer ? COUNTER_H - 0.22 : COUNTER_H - 0.13;
   for (let i = 0; i < doors; i++) {
     const dw = (w - 0.06) / doors - 0.02;
     const x = -w / 2 + 0.04 + dw / 2 + i * (dw + 0.02);
-    g.add(rbox(dw, dh, 0.024, cab, x, 0.065, fz, 0.008));
-    g.add(rbox(dw - 0.08, dh - 0.08, 0.008, cab2, x, 0.105, fz + 0.012, 0.004)); // a raised panel
-    g.add(ball(0.014, h, x + (i % 2 ? -1 : 1) * (dw / 2 - 0.05), 0.065 + dh * 0.7, fz + 0.03));
+    // hinged at its outer edge (one door alone: on the left), the knob by the other
+    const sign = doors === 2 && i === 1 ? 1 : -1, hx = x + sign * dw / 2;
+    const hinge = live(new THREE.Group());
+    hinge.position.set(hx, 0, fz);
+    hinge.add(rbox(dw, dh, 0.024, cab, x - hx, 0.065, 0, 0.008));
+    hinge.add(rbox(dw - 0.08, dh - 0.08, 0.008, cab2, x - hx, 0.105, 0.012, 0.004)); // a raised panel
+    const kx = x - sign * (dw / 2 - 0.05) - hx;
+    hinge.add(ball(0.014, h, kx, 0.065 + dh * 0.7, 0.03));
+    g.add(hinge);
+    const n = doors === 1 ? slots + 1 : slots;
+    d.bays[`c${i}`] = {
+      kind: 'door', obj: hinge, sign,
+      front: { x: x - hx, y: 0.065 + dh / 2, z: 0, w: dw, h: dh, d: 0.04 },
+      inner: { x, y: (0.07 + shelfY) / 2, z: -0.03, w: dw, h: shelfY - 0.07, d: depth - 0.06 }, // (fixture space)
+      handle: v3(kx, 0.065 + dh * 0.7, 0.03),
+      spots: [Array.from({ length: n }, (_, j) => v3(x + (j - (n - 1) / 2) * (dw / n), 0.074, depth / 2 - 0.2))], // (toward the front: seen over the worktop's edge)
+    };
   }
 }
 
@@ -418,7 +485,7 @@ function burnerAt(g, x, z, y, r = 0.1) {
 }
 
 function stove(g, ctx, d, slots) {
-  carcass(g, ctx, 1, d, { doors: 1 });
+  carcass(g, ctx, 1, d, { doors: 1, drawerBay: false }); // (the strip with the knobs: no drawer)
   g.add(box(1, 0.04, 0.96, mat('#26262c', { rough: 0.18, metal: 0.2 }), 0, COUNTER_H - 0.04, 0));
   const pos = slots >= 4 ? [[-0.24, -0.2], [0.24, -0.2], [-0.24, 0.2], [0.24, 0.2]] : [[-0.24, 0], [0.24, 0]];
   d.anchors.burners = [];
@@ -725,36 +792,50 @@ function piano(g, ctx, d) {
 
 // ======================================================================= on the walls
 
-function cupboard(g, ctx, seed) {
+// A wall cupboard: hollow, a shelf halfway up, two doors hinged at their outer
+// edges – glass (what's in it shows) or painted – their knobs by the middle.
+// Bays u0 / u1 (see carcass): spots[0] the upper shelf, spots[1] the lower.
+function cupboard(g, ctx, f, d) {
   const { T } = ctx;
-  const cab = mat(T.cabinet, { rough: 0.55 });
-  const z0 = -0.5;
-  g.add(box(0.98, CAB_Y1 - CAB_Y0, CAB_D, mat(T.cabinet2, { rough: 0.6 }), 0, CAB_Y0, z0 + CAB_D / 2));
-  g.add(box(1.0, 0.03, CAB_D + 0.03, cab, 0, CAB_Y1, z0 + CAB_D / 2 + 0.01));
+  const cab = mat(T.cabinet, { rough: 0.55 }), cab2 = mat(T.cabinet2, { rough: 0.6 }), inner = mat(INNER, { rough: 0.75 });
+  const z0 = -0.5, H = CAB_Y1 - CAB_Y0, mid = z0 + CAB_D / 2;
+  g.add(box(0.98, H, 0.02, cab2, 0, CAB_Y0, z0 + 0.01));
+  g.add(box(0.94, H - 0.04, 0.004, inner, 0, CAB_Y0 + 0.02, z0 + 0.022));
+  for (const sx of [-1, 1]) g.add(box(0.02, H, CAB_D, cab2, sx * 0.48, CAB_Y0, mid));
+  g.add(box(0.98, 0.02, CAB_D, cab2, 0, CAB_Y0, mid));
+  g.add(box(0.94, 0.004, CAB_D - 0.02, inner, 0, CAB_Y0 + 0.02, mid));
+  g.add(box(0.94, 0.012, CAB_D - 0.04, inner, 0, CAB_Y0 + 0.2, mid - 0.01)); // the shelf
+  g.add(box(0.016, H - 0.04, CAB_D - 0.03, inner, 0, CAB_Y0 + 0.02, mid - 0.005)); // (between the doors)
+  g.add(box(1.0, 0.03, CAB_D + 0.03, cab, 0, CAB_Y1, mid + 0.01));
   const fz = z0 + CAB_D + 0.012;
-  const jarCols = ['#c0412d', '#e8601a', '#f2b21a', '#9ab86a', '#3a7ac0', '#8a5a3a', '#f6f1e6'];
+  const hm = handleMat(T), glassM = mat('#dff0f6', { rough: 0.05, metal: 0.1, opacity: 0.28 });
+  d.bays = d.bays || {};
   for (let i = 0; i < 2; i++) {
-    const x = -0.24 + i * 0.48;
-    const glass = (seed + i) % 2 === 0;
-    // the frame
-    g.add(rbox(0.46, CAB_Y1 - CAB_Y0 - 0.03, 0.022, cab, x, CAB_Y0 + 0.015, fz, 0.008));
-    if (glass) {
-      // behind the glass, two neat shelves: jars sorted by colour, stacked plates & cups
-      g.add(box(0.38, CAB_Y1 - CAB_Y0 - 0.1, 0.01, mat('#f4efe4', { rough: 0.8 }), x, CAB_Y0 + 0.05, fz - 0.02));
-      for (let j = 0; j < 3; j++) {
-        g.add(cyl(0.035, 0.035, 0.09, mat(jarCols[(seed + i * 3 + j) % jarCols.length], { rough: 0.6 }), x - 0.11 + j * 0.11, CAB_Y0 + 0.05, fz - 0.06, 10));
-        g.add(cyl(0.037, 0.037, 0.018, mat(T.trim, { rough: 0.5 }), x - 0.11 + j * 0.11, CAB_Y0 + 0.14, fz - 0.06, 10));
-      }
-      g.add(box(0.38, 0.01, 0.12, mat(T.trim, { rough: 0.6 }), x, CAB_Y0 + 0.2, fz - 0.07));
-      for (let p = 0; p < 4; p++) g.add(cyl(0.07, 0.07, 0.008, mat(p % 2 ? '#f8f6f0' : T.tileB, { rough: 0.3 }), x - 0.06, CAB_Y0 + 0.21 + p * 0.012, fz - 0.07, 16));
-      g.add(cyl(0.03, 0.025, 0.06, mat(T.curtain, { rough: 0.4 }), x + 0.1, CAB_Y0 + 0.21, fz - 0.07, 10));
-      const pane = new THREE.Mesh(new THREE.PlaneGeometry(0.36, CAB_Y1 - CAB_Y0 - 0.1), mat('#dff0f6', { rough: 0.05, metal: 0.1, opacity: 0.28 }));
-      pane.position.set(x, (CAB_Y0 + CAB_Y1) / 2, fz + 0.013);
-      g.add(pane);
+    const x = -0.24 + i * 0.48, sign = i ? 1 : -1, hx = x + sign * 0.23;
+    const hinge = live(new THREE.Group());
+    hinge.position.set(hx, 0, fz);
+    const dh = H - 0.03, y0 = CAB_Y0 + 0.015;
+    if (glassDoor(f, i)) {
+      // a frame round a pane of glass
+      for (const [w, hh, bx, by] of [[0.46, 0.05, 0, y0], [0.46, 0.05, 0, y0 + dh - 0.05], [0.05, dh, -0.205, y0], [0.05, dh, 0.205, y0]]) hinge.add(box(w, hh, 0.022, cab, x - hx + bx, by, 0));
+      const pane = new THREE.Mesh(new THREE.PlaneGeometry(0.36, dh - 0.1), glassM);
+      pane.position.set(x - hx, y0 + dh / 2, 0.004);
+      hinge.add(pane);
     } else {
-      g.add(rbox(0.36, CAB_Y1 - CAB_Y0 - 0.12, 0.008, mat(T.cabinet2, { rough: 0.6 }), x, CAB_Y0 + 0.06, fz + 0.012, 0.004));
+      hinge.add(rbox(0.46, dh, 0.022, cab, x - hx, y0, 0, 0.008));
+      hinge.add(rbox(0.36, dh - 0.09, 0.008, cab2, x - hx, y0 + 0.045, 0.012, 0.004));
     }
-    g.add(ball(0.013, handleMat(T), x + (i ? -0.18 : 0.18), CAB_Y0 + 0.07, fz + 0.025));
+    const kx = x - sign * 0.18 - hx;
+    hinge.add(ball(0.013, hm, kx, CAB_Y0 + 0.07, 0.025));
+    g.add(hinge);
+    const level = (y) => [-0.11, 0.11].map((dx) => v3(x + dx, y, mid + 0.02));
+    d.bays[`u${i}`] = {
+      kind: 'door', obj: hinge, sign, glass: glassDoor(f, i),
+      front: { x: x - hx, y: y0 + dh / 2, z: 0, w: 0.46, h: dh, d: 0.04 },
+      inner: { x, y: CAB_Y0 + H / 2, z: mid, w: 0.46, h: H, d: CAB_D }, // (fixture space)
+      handle: v3(kx, CAB_Y0 + 0.07, 0.025),
+      spots: [level(CAB_Y0 + 0.212), level(CAB_Y0 + 0.024)],
+    };
   }
   // a warm light strip underneath
   g.add(box(0.9, 0.012, 0.03, mat('#fff4d0', { emissive: '#ffe2a0', ei: 1.2 }), 0, CAB_Y0 - 0.012, z0 + CAB_D - 0.04));
@@ -919,30 +1000,20 @@ function hangingString(g, ctx, WIN) {
   }
 }
 
-function counterDecor(g, ctx, k) {
+// At a counter's back corner (k: shared/kitchens.js counterDecor): a utensil crock,
+// oil & vinegar, a storage jar … The crock is part of the counter; what stands in it
+// and at the corner are things of their own (tools) – here are their places
+// (anchors.crock, anchors.corner).
+function counterDecor(g, ctx, d, k) {
   const { T } = ctx;
-  // at a back corner of some counters: a utensil crock, oil & vinegar, a jar …
   const y = COUNTER_H;
   const x = k % 2 ? 0.34 : -0.34, z = -0.34;
-  switch (k % 4) {
-    case 0: {
-      g.add(cyl(0.06, 0.055, 0.14, mat(T.tileB, { rough: 0.35 }), x, y, z, 14));
-      for (let i = 0; i < 4; i++) g.add(rod(v3(x + (i - 1.5) * 0.02, y + 0.1, z), v3(x + (i - 1.5) * 0.05, y + 0.28, z + (i % 2 ? 0.03 : -0.03)), 0.008, i % 2 ? mat(C.woodLight) : M.steel()));
-      return true;
-    }
-    case 1: {
-      g.add(lathe([[0, 0], [0.04, 0.01], [0.04, 0.14], [0.015, 0.2], [0.012, 0.24]], mat('#c9c83a', { rough: 0.15, opacity: 0.8 }), x, y, z, 12));
-      g.add(lathe([[0, 0], [0.03, 0.01], [0.03, 0.12], [0.012, 0.17], [0.01, 0.2]], mat('#c06a3a', { rough: 0.15, opacity: 0.8 }), x + (k % 2 ? -0.1 : 0.1), y, z, 12));
-      return true;
-    }
-    case 2: {
-      g.add(cyl(0.07, 0.07, 0.16, M.glass(), x, y, z, 14));
-      g.add(cyl(0.065, 0.065, 0.1, mat('#f6f1e6'), x, y + 0.005, z, 14));
-      g.add(cyl(0.072, 0.072, 0.025, mat(T.trim), x, y + 0.16, z, 14));
-      return true;
-    }
-    default: return false;
+  if (k === 0) {
+    g.add(cyl(0.058, 0.052, 0.1, mat(T.tileB, { rough: 0.35 }), x, y, z, 14));
+    g.add(cyl(0.05, 0.05, 0.004, mat('#3a2a20', { rough: 0.9 }), x, y + 0.085, z, 14)); // (inside it, dark)
+    d.anchors.crock = [0, 1, 2, 3].map((i) => v3(x + (i - 1.5) * 0.016, y + 0.055, z + (i % 2 ? 0.01 : -0.01)));
   }
+  if (k === 1 || k === 2) d.anchors.corner = [v3(x, y, z), v3(x + (k % 2 ? -0.1 : 0.1), y, z)];
 }
 
 // ======================================================================= the window

@@ -11,7 +11,7 @@
 
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
-  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange,
+  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange, openBay,
   setSpeed, skipWait, SPEEDS, skipDw, refresh, sakirTick, sakirStart,
 } from './cook.js';
 import { ingName } from './ingredients.js';
@@ -194,6 +194,14 @@ export class Room {
         if (!err && (msg.done || this.now - this.lastFlush > 120)) this.flush(true);
         break;
       }
+      case 'bay': {
+        // a drawer / cupboard door opened or shut
+        if (!C) return;
+        const err = openBay(C, K, m.id, String(msg.id || ''), !!msg.v);
+        if (err) client.sendText(JSON.stringify({ t: 'handled', what: 'bay', key: msg.id, err }));
+        else this.flush(true);
+        break;
+      }
       case 'speed': {
         const s = Number(msg.x);
         if (C && SPEEDS.includes(s) && s !== C.speed) {
@@ -275,6 +283,7 @@ export class Room {
     for (const [id, st] of Object.entries(C.steps)) this.sent.steps[id] = stepKey(st);
     for (const [id, it] of Object.entries(C.items)) this.sent.items[id] = JSON.stringify(it);
     for (const [id, v] of Object.entries(C.vessels)) this.sent.vessels[id] = vesselKey(v);
+    for (const [id, t] of Object.entries(C.tools || {})) this.sent.tools[id] = JSON.stringify(t);
     for (const key of ['fx', 'scraps', 'bins', 'carry', 'dw']) for (const [id, f] of Object.entries(C[key] || {})) this.sent[key][id] = JSON.stringify(f);
     this.sent.meta = metaKey(C);
   }
@@ -298,6 +307,7 @@ export class Room {
     diff('steps', C.steps, stepKey);
     diff('items', C.items, (v) => JSON.stringify(v));
     diff('vessels', C.vessels, vesselKey);
+    diff('tools', C.tools || {}, (v) => JSON.stringify(v));
     diff('fx', C.fx, (v) => JSON.stringify(v));
     diff('scraps', C.scraps, (v) => JSON.stringify(v));
     diff('bins', C.bins, (v) => JSON.stringify(v));
@@ -373,7 +383,7 @@ function metaOf(C) {
   const sk = C.sakir;
   return { speed: C.speed, started: C.started, finished: C.finished, stars: C.stars, credits: C.credits, bagsOut: C.bagsOut, sakir: sk ? { id: sk.id, fx: sk.fx, n: sk.n, hit: sk.hit, miss: sk.miss || 0 } : null };
 }
-function freshSent() { return { steps: {}, items: {}, vessels: {}, fx: {}, scraps: {}, bins: {}, carry: {}, dw: {}, meta: '' }; }
+function freshSent() { return { steps: {}, items: {}, vessels: {}, tools: {}, fx: {}, scraps: {}, bins: {}, carry: {}, dw: {}, meta: '' }; }
 function metaKey(C) { return JSON.stringify(metaOf(C)); }
 
 export { fixtureById };

@@ -280,6 +280,13 @@ export class FpArms {
   onPalm(i) { return this.handPoint(i, ON_PALM); }
   palm(i) { return this.handPoint(i, PALM); }
   handleDir(i) { return this.handDir(i, IN_FIST); }
+  // a thing held in the fist (a fork, a ladle, a bottle …): its turn in the world – its handle (+y)
+  // up through the fist, its faces (±z) to the palm and the back of the hand
+  toolQuat(i) {
+    const y = this.handDir(i, IN_FIST).normalize(), side = this.handDir(i, v(1, 0, 0));
+    const z = side.sub(y.clone().multiplyScalar(side.dot(y))).normalize();
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(y, z), y, z));
+  }
 
   // a tool in the fist (the cooks' own: a knife, a whisk …), hanging from it
   drawTool(h, visible) {

@@ -20,8 +20,9 @@
 // you put it down as you start). Nothing walks by itself.
 
 import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest } from './actions.js';
-import { INGREDIENTS, VESSELS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
-import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx } from './kitchens.js';
+import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
+import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
+import { stockKitchen, freeSpot, thingsIn } from './stock.js';
 import { RECIPES } from './recipes.js';
 
 export const SPEEDS = [1, 2, 4, 8, 16];
@@ -152,7 +153,9 @@ export function newCook(r, kitchen) {
     dw: {},      // dishwasher fixture -> {run, t}: running, how long
     sakir: null, // Şakir about the kitchen: {id, fx, t, hit, n}
     bagsOut: 0,  // full bags taken out to the back door
+    tools: {},   // the cutlery, utensils, the boards' knives … (see shared/stock.js)
   };
+  stockKitchen(C, kitchen, x); // (and everything else a kitchen has in it)
   refresh(C, x);
   return C;
 }
@@ -358,6 +361,30 @@ export function swingDoor(C, K, m, fx, v, done) {
 }
 export function doorOpen(C, fx) { return !!(C.fx[fx] && C.fx[fx].door); }
 
+// A drawer or a cupboard door, opened or shut by a cook's free hand (place: '<fixture>/<bay>').
+export function openBay(C, K, m, place, v) {
+  const B = bayOf(K, place);
+  if (!B || !B.door) return 'There’s nothing to open there';
+  if (!freeHand(C, m)) return `Both your hands are full – put something down first, then open the ${B.name}`;
+  const s = fxState(C, B.fx);
+  s.bays = { ...(s.bays || {}), [B.bay]: v ? 1 : 0 };
+  return '';
+}
+export function bayOpen(C, place) { const [fx, bay] = splitPlace(place); return !!(bay && C.fx[fx] && C.fx[fx].bays && C.fx[fx].bays[bay]); }
+// can a hand get at what's kept there: the fridge / pantry with its door open, an open drawer or
+// cupboard, a place on a worktop (the board, the crock, the corner)
+export function placeOpen(C, K, place) {
+  const B = bayOf(K, place);
+  return B ? !B.door || bayOpen(C, place) : doorOpen(C, place);
+}
+// (what to open first)
+function openFirst(K, place) {
+  const B = bayOf(K, place);
+  if (B) return `Open the ${B.name} first`;
+  const f = fixtureById(K, place);
+  return `Open the ${f && f.type === 'fridge' ? 'fridge' : 'pantry'} door first`;
+}
+
 // how many hands a thing takes, how many a cook has busy
 export function handsFor(C, key) {
   const t = thingOf(C, key);
@@ -392,17 +419,20 @@ export function arrange(C, K, m, key, fx, r, xpos) {
 // ------------------------------------------------------------------ things and hands
 // A thing is 'i:<item id>' or 'v:<vessel id>'.
 
-export function thingOf(C, key) { const id = key.slice(2); return key[0] === 'v' ? C.vessels[id] : C.items[id]; }
+export function thingOf(C, key) { const id = key.slice(2); return key[0] === 'v' ? C.vessels[id] : key[0] === 'u' ? (C.tools || {})[id] : C.items[id]; }
 export function thingName(C, x, key) {
   const id = key.slice(2);
+  if (key[0] === 'u') { const u = (C.tools || {})[id]; return ((u && TOOLS[u.kind] && TOOLS[u.kind].name) || 'tool').toLowerCase(); }
   const t = key[0] === 'i' && C.items[id];
   if (t && t.rest) return `leftover ${ingName(t.kind, t.qty).toLowerCase()}`;
+  if (t && t.spare) return ingName(t.kind, t.qty).toLowerCase();
   return (x && x.names[id]) || (key[0] === 'v' ? (VESSELS[C.vessels[id]?.kind]?.name || id) : ingName(C.items[id]?.kind || id, 1)).toLowerCase();
 }
 
 export function thingEmoji(C, key) {
   const t = thingOf(C, key);
   if (!t) return '•';
+  if (key[0] === 'u') return (TOOLS[t.kind] && TOOLS[t.kind].emoji) || '🥄';
   return (key[0] === 'v' ? VESSELS[t.kind]?.emoji : INGREDIENTS[t.kind]?.emoji) || (key[0] === 'v' ? '🍲' : '🥕');
 }
 
@@ -410,6 +440,13 @@ export function thingEmoji(C, key) {
 // fridge / on the shelf), {held: cook}, {staple}, {gone}; inV: inside that vessel.
 export function locate(C, K, key) {
   const id = key.slice(2);
+  if (key[0] === 'u') {
+    const t = (C.tools || {})[id];
+    if (!t) return { gone: true };
+    if (t.held != null) return { held: t.held };
+    if (!t.at) return { gone: true };
+    return { fx: t.at, stored: keptAt(K, t.at) };
+  }
   if (key[0] === 'v') {
     const v = C.vessels[id];
     if (!v) return { gone: true };
@@ -423,8 +460,10 @@ export function locate(C, K, key) {
   if (it.in) { const L = locate(C, K, `v:${it.in}`); return { ...L, stored: false, inV: it.in }; }
   if (it.held != null) return { held: it.held };
   if (!it.at) return { gone: true };
-  return { fx: it.at, stored: isStore(fixtureById(K, it.at)) };
+  return { fx: it.at, stored: keptAt(K, it.at) };
 }
+// put away there: in the fridge / the pantry, or a place of its own (a drawer, a cupboard, the crock …)
+function keptAt(K, at) { return !!bayOf(K, at) || isStore(fixtureById(K, at)); }
 
 // The things a step works with that have to be at hand (staples always are).
 export function needsOf(C, s) {
@@ -443,6 +482,7 @@ export function heldBy(C, m) {
   const out = [];
   for (const [id, it] of Object.entries(C.items)) if (it.held === m && !it.in) out.push(`i:${id}`);
   for (const [id, v] of Object.entries(C.vessels)) if (v.held === m) out.push(`v:${id}`);
+  for (const [id, t] of Object.entries(C.tools || {})) if (t.held === m) out.push(`u:${id}`);
   return out;
 }
 
@@ -489,11 +529,12 @@ function halfDone(C, x, key, fx) {
 // fridge / pantry once its door is open.
 export function takeThing(C, x, K, m, key, fx) {
   const t = thingOf(C, key);
-  const f = fixtureById(K, fx);
-  if (!t || !f) return 'Nothing like that here';
+  const [fid, bay] = splitPlace(fx);
+  const f = fixtureById(K, fid);
+  if (!t || !f || (bay && !bayOf(K, fx))) return 'Nothing like that here';
   if (C.finished) return 'The dish is finished';
   const L = locate(C, K, key);
-  if (L.stored && (L.fx !== fx || !doorOpen(C, fx))) return L.fx === fx ? `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first` : 'That’s put away';
+  if (L.stored && (L.fx !== fx || !placeOpen(C, K, fx))) return L.fx === fx ? openFirst(K, fx) : 'That’s put away';
   if (L.inV) return `It’s in the ${thingName(C, x, `v:${L.inV}`)} – take that`;
   if (L.held != null || L.fx !== fx) return 'It isn’t here';
   if (t.inDw && dwRunning(C, fx)) return 'The dishwasher is running – wait till it’s done';
@@ -516,7 +557,7 @@ export function takeThing(C, x, K, m, key, fx) {
   t.held = m;
   t.at = null;
   if (key[0] === 'i') t.stored = 0;
-  t.inDw = 0;
+  if (key[0] !== 'u') t.inDw = 0;
   delete t.spot; // its place on the shelf is free now
   if (key[0] === 'v') { t.onHob = 0; t.heat = 0; }
   return '';
@@ -524,18 +565,39 @@ export function takeThing(C, x, K, m, key, fx) {
 
 // what can be put down on a fixture: ingredients on counters, tables, in the
 // sink, back in the fridge / on the shelf; pots also on a free burner
-function putBlocked(C, x, K, held, f) {
+function putBlocked(C, x, K, held, f, place = f.id) {
+  const B = bayOf(K, place);
+  if (place !== f.id && !B) return 'Nowhere to put it';
+  if (B) return bayBlocked(C, K, held, B, place);
   const surface = f.caps.includes('board') || f.caps.includes('plate') || f.caps.includes('sink');
   const store = isStore(f);
   if (store && !(C.fx[f.id] && C.fx[f.id].door)) return `Open the ${f.type === 'fridge' ? 'fridge' : 'pantry'} door first`;
   for (const k of held) {
-    if (k[0] === 'i' && !surface && !store && !f.caps.includes('hob')) return 'Put it on a counter, a table or in the sink';
+    if (k[0] !== 'v' && !surface && !store && !f.caps.includes('hob')) return 'Put it on a counter, a table or in the sink';
     if (k[0] === 'v') {
       const v = thingOf(C, k);
       if (store && (f.type === 'fridge' || v.contents.length || v.water > 0.05 || (v.items && v.items.length))) return f.type === 'fridge' ? 'Pots go in the fridge with their step' : 'Empty it before you put it away';
       if (!surface && !store && !(f.caps.includes('hob') && freeSlot(C, x, f) >= 0)) return f.caps.includes('hob') ? 'No free burner' : 'Put it on a counter, the stove or the shelf';
     }
   }
+  return '';
+}
+// What goes where: into a drawer, cupboard, the crock, the board's own place …
+const CROCKED = new Set(['ladle', 'whisk', 'spatula', 'woodSpoon', 'tongs', 'masher', 'spoon']);
+function bayBlocked(C, K, held, B, place) {
+  if (B.door && !bayOpen(C, place)) return `Open the ${B.name} first`;
+  const kinds = held.map((k) => thingOf(C, k).kind);
+  if (B.bay === 'board' && !held.every((k, i) => k[0] === 'u' && TOOLS[kinds[i]] && TOOLS[kinds[i]].board)) return 'Only the board’s knife, peeler and grater go there';
+  if (B.bay === 'crock' && !held.every((k, i) => k[0] === 'u' && CROCKED.has(kinds[i]))) return 'Only the cooking spoons, ladles, whisks … go in the crock';
+  if (B.bay === 'dr' && held.some((k) => k[0] === 'v')) return 'That won’t fit in the drawer';
+  for (const k of held) {
+    if (k[0] !== 'v') continue;
+    const v = thingOf(C, k);
+    if (v.heat > 0 || v.hot) return 'Let it cool down first';
+    if (v.contents.length || v.water > 0.05 || (v.items && v.items.length)) return 'Empty it before you put it away';
+    if (v.dirty) return 'Wash it up before you put it away';
+  }
+  if (thingsIn(C, place).length + held.length > B.levels * B.slots) return `The ${B.name} is full`;
   return '';
 }
 function freeSlot(C, x, f) {
@@ -546,26 +608,40 @@ function freeSlot(C, x, f) {
 // Could cook m put what they hold down here? ('' = yes)
 export function canPut(C, x, K, m, fx) {
   const held = heldBy(C, m);
-  const f = fixtureById(K, fx);
+  const f = fixtureById(K, splitPlace(fx)[0]);
   if (!held.length) return 'Your hands are empty';
-  return f ? putBlocked(C, x, K, held, f) : 'Nowhere to put it';
+  return f ? putBlocked(C, x, K, held, f, fx) : 'Nowhere to put it';
 }
 
 // Put down everything in your hands here (or just `only`, one of them; into
 // the fridge / pantry at `spot` {r, x} if you put it somewhere particular).
 export function putDown(C, x, K, m, fx, only = null, spot = null) {
-  const f = fixtureById(K, fx);
+  const [fid] = splitPlace(fx);
+  const f = fixtureById(K, fid);
+  const B = bayOf(K, fx);
   const held = heldBy(C, m).filter((k) => !only || k === only);
   if (!held.length) return only ? 'You aren’t holding that' : 'Your hands are empty';
   if (!f) return 'Nowhere to put it';
-  const why = putBlocked(C, x, K, held, f);
+  const why = putBlocked(C, x, K, held, f, fx);
   if (why) return why;
   const surface = f.caps.includes('board') || f.caps.includes('plate') || f.caps.includes('sink');
   for (const k of held) {
     const t = thingOf(C, k);
     t.held = null;
     delete t.spot;
+    if (B) {
+      // into a drawer, a cupboard …: in the spot it was put (or the nearest free one)
+      t.spot = freeSpot(C, K, fx, B.bay === 'board' ? { r: 0, x: BOARD_X[TOOLS[t.kind].board] } : spot, k);
+      if (k[0] === 'v') { t.at = null; t.home = fx; } else { t.at = fx; if (k[0] === 'i') t.stored = 1; }
+      continue;
+    }
     if (isStore(f) && spot) t.spot = spotOf(spot.r, spot.x);
+    if (k[0] === 'u') {
+      // the board's own knife, peeler or grater: back in its place on the board if that's free
+      const bp = `${fid}/board`, bt = TOOLS[t.kind] && TOOLS[t.kind].board;
+      if (bt && bayOf(K, bp) && !thingsIn(C, bp).some(([, o]) => o.kind === t.kind)) { t.at = bp; t.spot = { r: 0, x: BOARD_X[bt] }; } else t.at = fx;
+      continue;
+    }
     if (k[0] === 'i') { t.at = fx; t.stored = isStore(f) ? 1 : 0; continue; }
     if (isStore(f)) { t.at = null; t.home = fx; continue; }
     const onHob = !surface && f.caps.includes('hob');
@@ -581,6 +657,8 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
   if (x && held.some((k) => k[0] === 'i' && C.items[k.slice(2)] && C.items[k.slice(2)].rest)) refresh(C, x);
   return '';
 }
+
+const BOARD_X = { knife: 0, peeler: 0.5, grater: 1 }; // (where each lies on its board)
 
 // "Bring the eggs here first – they’re in the fridge"
 function bringMsg(C, x, K, miss) {
@@ -1072,7 +1150,7 @@ export function dropMember(C, x, memberId, K, pos) {
     const spot = K.fixtures.filter((f) => (f.caps.includes('board') || f.caps.includes('plate')) && !putBlocked(C, x, K, held, f)).sort((a, b) => d(a) - d(b))[0];
     if (spot) putDown(C, x, K, memberId, spot.id);
   }
-  for (const k of heldBy(C, memberId)) { const t = thingOf(C, k); t.held = null; if (k[0] === 'i') t.at = storeFx(K || { fixtures: [] }, storeOf(t.kind) || 'shelf'); }
+  for (const k of heldBy(C, memberId)) { const t = thingOf(C, k); t.held = null; if (k[0] === 'i') t.at = storeFx(K || { fixtures: [] }, storeOf(t.kind) || 'shelf'); if (k[0] === 'u') { t.at = t.home; t.spot = freeSpot(C, K || {}, t.home, null, k) || t.spot; } }
 }
 
 // ------------------------------------------------------------------ timers

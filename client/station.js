@@ -1407,11 +1407,13 @@ export class Station {
     const fridge = f.type === 'fridge';
     const keys = [];
     const fixed = new Set();
+    // (the close-up shows what the dish has here – not everything else a kitchen keeps: that's first person's)
     for (const [id, v] of Object.entries(C.vessels)) {
+      if (v.spare) continue;
       if (!v.at && v.held == null && v.home === f.id) keys.push(`v:${id}`);
       else if (fridge && v.at && v.at.fx === f.id) { keys.push(`v:${id}`); fixed.add(`v:${id}`); } // chilling: it comes out with its step
     }
-    for (const [id, it] of Object.entries(C.items)) if (it.at === f.id && it.held == null && !it.in && !it.hidden) keys.push(`i:${id}`);
+    for (const [id, it] of Object.entries(C.items)) if (it.at === f.id && it.held == null && !it.in && !it.hidden && !it.spare) keys.push(`i:${id}`);
     const pend = this.store ? this.store.pend : new Map();
     for (const [k, p] of pend) { const i = keys.indexOf(k); if (p.to === 'held' && i >= 0) keys.splice(i, 1); if (p.to === 'stored' && i < 0) keys.push(k); }
     const thing = (k) => (k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)]);

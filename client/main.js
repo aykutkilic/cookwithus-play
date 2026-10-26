@@ -12,7 +12,7 @@ import { lookOf, drawPortrait, drawCook } from './figure.js';
 import { drawDish } from './art.js';
 import { initPwa } from './pwa.js';
 import { newMirror, applyMsg } from '../shared/mirror.js';
-import { SIZES, SIZE_ORDER, CUISINES, CUISINE_ORDER, FIXTURES, buildKitchen, kitchenCaps, fixtureById, bakeKind, isStore } from '../shared/kitchens.js';
+import { SIZES, SIZE_ORDER, CUISINES, CUISINE_ORDER, FIXTURES, buildKitchen, kitchenCaps, fixtureById, bakeKind, isStore, splitPlace } from '../shared/kitchens.js';
 import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
@@ -37,6 +37,7 @@ const SPEED = 2.5;   // tiles per second
 const TURN = 2.6;    // first person: radians per second turning with the keys / stick
 const TURN_UP = 9, TURN_DOWN = 12; // (how quickly a turn gets going, and settles)
 const CROUCH = -0.3, TIPTOE = 0.1;  // first person: eye lower crouching (about 60 cm), higher on your toes (20 cm)
+const BEND = -0.22; // (and bending down to look into a low cupboard)
 const ACCEL = 12, BRAKE = 15; // how quickly the cook gets up to speed / stops
 const RADIUS = 0.26; // how wide a cook is
 
@@ -429,10 +430,10 @@ function pointTo(sid) {
 // what the plan says, for people
 function planText(p) {
   const C = S.M.cook, x = S.x;
-  const f = p.fx && fixtureById(S.K, p.fx);
+  const f = p.fx && fixtureById(S.K, splitPlace(p.fx)[0]), B = p.fx && S.K.bays && S.K.bays[p.fx];
   const where = f ? FIXTURES[f.type].name.toLowerCase() : 'counter';
   switch (p.do) {
-    case 'take': return p.store ? `Get the ${thingName(C, x, p.key)} ${f && f.type === 'fridge' ? 'from the fridge' : 'off the pantry shelf'}` : `Pick up the ${thingName(C, x, p.key)} from the ${where}`;
+    case 'take': return p.store ? `Get the ${thingName(C, x, p.key)} ${B ? `out of the ${B.name}` : f && f.type === 'fridge' ? 'from the fridge' : 'off the pantry shelf'}` : `Pick up the ${thingName(C, x, p.key)} from the ${where}`;
     case 'put': return `Put down what you’re holding${f ? ` on the ${where}` : ''}`;
     case 'go': return `Everything’s ready at the ${where}`;
     case 'bin': return 'Take your scraps to a bin first';
@@ -444,8 +445,8 @@ function planNote(p) {
   if (!p || p.do === 'go') return '';
   const C = S.M.cook, x = S.x;
   if (p.do === 'take') {
-    const f = fixtureById(S.K, p.fx);
-    return `${thingEmoji(C, p.key)} ${thingName(C, x, p.key)}: ${p.store ? (f && f.type === 'fridge' ? 'in the fridge' : 'on the shelf') : `on the ${f ? FIXTURES[f.type].name.toLowerCase() : 'counter'}`}`;
+    const f = fixtureById(S.K, splitPlace(p.fx)[0]), B = S.K.bays && S.K.bays[p.fx];
+    return `${thingEmoji(C, p.key)} ${thingName(C, x, p.key)}: ${p.store ? (B ? `in the ${B.name}` : f && f.type === 'fridge' ? 'in the fridge' : 'on the shelf') : `on the ${f ? FIXTURES[f.type].name.toLowerCase() : 'counter'}`}`;
   }
   if (p.do === 'put') return '🤲 hands full – put down first';
   return p.why || '';
@@ -552,7 +553,10 @@ function moveMe(dt) {
   } else S.workGo = null;
   // first person: how high I stand – crouching (Ctrl / C), up on my toes (Space) – eases there
   const stance = controls.stance();
-  const wantOff = stance < 0 ? CROUCH : stance > 0 ? TIPTOE : 0;
+  // (looking down into a low cupboard I've opened, standing still: I bend down to see in)
+  const lowBays = S.target && S.M.cook && S.M.cook.fx[S.target.id] && S.M.cook.fx[S.target.id].bays;
+  const bend = S.fp && !S.working && S.pitch < -0.5 && lowBays && (lowBays.c0 || lowBays.c1) && !(v.x || v.y) ? BEND : 0;
+  const wantOff = stance < 0 ? CROUCH : stance > 0 ? TIPTOE : bend;
   S.eyeOff = (S.eyeOff || 0) + (wantOff - (S.eyeOff || 0)) * (1 - Math.exp(-dt * 9));
   me.turn = (me.turn || 0) + (turn - (me.turn || 0)) * (1 - Math.exp(-dt * (turn ? TURN_UP : TURN_DOWN)));
   if (!S.fp || (!turn && Math.abs(me.turn) < 0.01)) me.turn = 0;
@@ -603,6 +607,9 @@ function useNow(hand = -1) {
   sfx.unlock();
   if (!$('menu').hidden) { const bs = [...$('menu').querySelectorAll('button:not([disabled])')]; const b = bs[S.menuSel] || bs[0]; if (b) b.click(); return; }
   if (S.working || !$('modal').hidden) return;
+  // (first person: what I'm pointing at – a drawer, a cupboard, a thing in one, a tool lying about)
+  const pt = fpPointed();
+  if (pt) { fpPointAct(pt, hand); return; }
   const f = S.target;
   const pick = f && bestJob(f);
   if (pick) { runJob(pick, f, hand); return; }
@@ -718,6 +725,7 @@ function wantHand(keys, hand) {
 function fpGrab(e, hand = -1) {
   const pick = scene.fpPick(e.clientX, e.clientY, S.me, myHeld());
   if (!pick) return;
+  if (pick.kind === 'bay' || pick.kind === 'bayIn') { touches.delete(e.pointerId); fpPointAct(pick, hand); return; }
   if (pick.kind === 'door' && freeHandSlot() < 0) { toast('Both your hands are full – put something down first, then come back for the door'); return; }
   S.fpDrag = { ...pick, pid: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, sent: 0, hand: pick.kind === 'door' ? freeHandSlot(hand) : hand };
   touches.delete(e.pointerId); // (not looking round)
@@ -766,7 +774,52 @@ function fpLookTarget() {
   cross.style.left = `${c.x}px`; cross.style.top = `${c.y}px`;
   const pick = scene.fpPick(c.x, c.y, S.me, []);
   cross.classList.toggle('on', !!pick && pick.kind !== 'shelf');
-  return pick && pick.fx ? fixtureById(S.K, pick.fx) : null;
+  return pick && pick.fx ? fixtureById(S.K, splitPlace(pick.fx)[0]) : null;
+}
+// First person: what's pointed at among the cupboards, drawers and the things kept in them or lying
+// about (scene3d.bayPick) – with what E would do there – or null.
+function fpPointed() {
+  if (!S.fp || S.working || !S.M.cook) return null;
+  const c = scene.viewCenter();
+  const pick = scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }); // (past what's in my hands)
+  if (!pick) return null;
+  if (pick.kind === 'bay' || pick.kind === 'bayIn') return pick;
+  // (no hand free, at something in a drawer or a cupboard: what I hold goes in there instead)
+  if (pick.kind === 'thing' && pick.fx.includes('/') && handsUsed(S.M.cook, S.myId) >= HANDS) return { kind: 'bayIn', fx: pick.fx, spot: null, w: pick.w };
+  // (a thing in a drawer, a cupboard, the crock … or a tool lying on a worktop – not the fridge's: that's fpStoreLook)
+  if (pick.kind === 'thing' && (pick.fx.includes('/') || pick.key[0] === 'u' || !isStore(fixtureById(S.K, pick.fx)))) return pick;
+  return null;
+}
+function placeName(id) { const B = S.K.bays && S.K.bays[id]; return B ? B.name : 'cupboard'; }
+function fpPointLabel(pt) {
+  const C = S.M.cook;
+  if (pt.kind === 'bay') return `${pt.open ? 'Shut' : 'Open'} the ${placeName(pt.fx)}`;
+  if (pt.kind === 'bayIn') { const k = fpPutWhat(-1); return k ? `${thingEmoji(C, k)} Put the ${thingName(C, S.x, k)} in the ${placeName(pt.fx)}` : ''; }
+  return `${thingEmoji(C, pt.key)} Take the ${thingName(C, S.x, pt.key)}`;
+}
+// what goes in when I put something away (the hand asked for – 1 right, 0 left – if it holds something)
+function fpPutWhat(hand) {
+  const sl = scene.fpSlots, held = myHeld();
+  return (hand >= 0 && (sl[hand] || sl[1 - hand])) || sl[1] || sl[0] || held[0] || null;
+}
+// do it: open / shut it (a free hand on its handle), put what I hold in it, take the thing
+function fpPointAct(pt, hand = -1) {
+  if (pt.kind === 'bay') {
+    const i = freeHandSlot(hand);
+    if (i < 0) { toast(`Both your hands are full – put something down first, then open the ${placeName(pt.fx)}`); return; }
+    if (pt.w) scene.fpArms.reach(i, { key: null, take: false, hold: 'grab', world: pt.w });
+    send({ t: 'bay', id: pt.fx, v: pt.open ? 0 : 1 });
+    sfx.play(pt.open ? 'clunk' : 'door', 0.5);
+    return;
+  }
+  if (pt.kind === 'bayIn') {
+    const k = fpPutWhat(hand);
+    if (!k) return;
+    send({ t: 'put', what: k, fx: pt.fx, ...(pt.spot ? { r: pt.spot.r, x: pt.spot.x } : {}) });
+    sfx.play('clunk', 0.4);
+    return;
+  }
+  if (pt.kind === 'thing') { wantHand(pt.key, hand); send({ t: 'take', what: pt.key, fx: pt.fx }); sfx.play('grab', 0.5); }
 }
 // E at a store in first person: what's in the middle of the view (done
 // with hand: 1 the right – E, 0 the left – Q)
@@ -1096,6 +1149,8 @@ function handDown(i) {
   // the fridge / the pantry: a hand takes hold of the door's handle, a thing on a shelf
   const c = scene.viewCenter();
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
+  const pt = fpPointed();
+  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn')) { hover = i; fpPointAct(pt, i); return; }
   if (pick && (pick.kind === 'door' || pick.kind === 'thing') && !S.fpDrag) {
     fpGrab({ clientX: c.x, clientY: c.y, pointerId: HAND_ID[i] }, i);
     if (S.fpDrag) { Object.assign(h, { down: true, ox: 0, oy: 0, act: 'grab' }); moving = i; hover = i; return; }
@@ -1227,6 +1282,7 @@ function jobsAtNow(f) {
     const things = [];
     for (const [id, it] of Object.entries(C.items)) if (!it.in && !it.staple && !it.hidden && it.held == null && it.at === f.id) things.push(`i:${id}`);
     for (const [id, v] of Object.entries(C.vessels)) if (v.held == null && v.at && v.at.fx === f.id) things.push(`v:${id}`);
+    for (const [id, t] of Object.entries(C.tools || {})) if (t.held == null && t.at === f.id) things.push(`u:${id}`); // (a fork, a ladle … put down here)
     things.sort((a, b) => wanted.has(b) - wanted.has(a));
     for (const k of things) {
       const why = handsFree(C, x, me, k);
@@ -1458,7 +1514,12 @@ function guideNow() {
       for (const s of next) if ((p = go(s.id))) break;
     }
     // (the fridge / pantry glows till its door is open – then just the thing in it)
-    if (p) { if (!(p.do === 'take' && p.store && C.fx[p.fx] && C.fx[p.fx].door)) out.add(p.fx); if (p.do === 'take' && p.key) out.add(p.key); }
+    if (p) {
+      // (a drawer or a cupboard: its counter glows till it's open)
+      const [pf, pb] = splitPlace(p.fx), open = pb ? C.fx[pf] && C.fx[pf].bays && C.fx[pf].bays[pb] : C.fx[p.fx] && C.fx[p.fx].door;
+      if (!(p.do === 'take' && p.store && open)) out.add(pf);
+      if (p.do === 'take' && p.key) out.add(p.key);
+    }
     // nothing of the recipe to do: what needs cleaning (the dirty things and the sink, dirty boards, scraps)
     if (!p && !S.sel) {
       const todo = cleanup(C, x);
@@ -2010,7 +2071,18 @@ function drawTags(view) {
   const pr = $('prompt');
   const f = S.target;
   const all = f && !S.working && $('menu').hidden && $('modal').hidden ? jobsAt(f) : [];
-  if (all.some((j) => !j.off)) {
+  // (first person: what I'm pointing at, among the cupboards and drawers and what's in them)
+  const pt = $('menu').hidden && $('modal').hidden ? fpPointed() : null;
+  const ptLabel = pt && fpPointLabel(pt);
+  if (ptLabel) {
+    const p = scene.screenOf(pt.w || scene.rayPoint(scene.viewCenter().x, scene.viewCenter().y, 0.6));
+    pr.hidden = false;
+    pr.style.transform = `translate(${p.x}px, ${p.y - 40}px)`;
+    const html = `${touchUI ? '' : '<kbd>E</kbd> '}${esc(ptLabel)}`;
+    if (pr.dataset.h !== html) { pr.innerHTML = html; pr.dataset.h = html; }
+    pr.classList.toggle('dim', false);
+    controls.setUseLabel(ptLabel.split(' ')[0] === 'Open' || ptLabel.split(' ')[0] === 'Shut' ? ptLabel.split(' ')[0] : '✋ Do it', true);
+  } else if (all.some((j) => !j.off)) {
     const jobs = all.filter((j) => !j.off);
     const look = S.fp && isStore(f) ? fpStoreLook(f) : null;
     const pick = bestJob(f, all);
