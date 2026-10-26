@@ -5,7 +5,8 @@
 // have fingers that close round what they hold: a pan by its handle, a pot by
 // its two side handles (both hands), a plate or food on the open palm. They
 // reach out to take a thing from where it lies and to put it down where it
-// goes; with nothing to hold they drop out of view.
+// goes; with nothing to hold they rest flat on the worktop in front of me, as
+// you lean on a counter (walking, they drop out of view).
 //
 // Camera space (three.js): x right, y up, looking down -z. A hand is modelled
 // in metres – a right hand: wrist at the origin, fingers along -z, thumb +y,
@@ -19,7 +20,7 @@ const HS = 0.5;
 const UPPER = 0.17, FORE = 0.155, SLIDE = 0.3; // arm bones; how far the (unseen) shoulder may come forward
 const REACH = (UPPER + FORE) * 0.985 + SLIDE;  // further than that, the hand stops (and the thing comes to it)
 const LEAN = 0.16; // how far you lean in toward something out of reach
-const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05);
+export const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05); // (the right one, from my eyes)
 const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // the right elbow points down, out and back
 const WRIST = 1.1; // how far a hand bends from its forearm (rad) before the forearm follows it round
 // a reach: out to the thing and back – taking, the hand closes on it; putting
@@ -34,6 +35,7 @@ const Z = v(0, 0, 1); // (hand space) toward the elbow
 const FIST = v(-0.03, 0, -0.1);          // the axis a closed fist holds
 const PALM = v(-0.026, 0, -0.058);       // the middle of the palm's face
 const ON_PALM = v(-0.034, 0, -0.06);     // where something sits on it
+const UNDER_PALM = v(-0.03, 0.004, -0.06); // (lying flat: where the palm meets the worktop)
 const IN_FIST = v(0, 0.87, -0.5);        // a handle through the fist (a hammer grip: tilted toward the fingers)
 const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
@@ -58,6 +60,8 @@ const HOLDS = {
   knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
   claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
+  // resting on the worktop: the palm flat on it, the fingers (dir) forward and a little in (flat: palm down whatever the view)
+  rest: { at: v(0.14, -0.3, -0.25), grip: UNDER_PALM, a: v(0, 0, -1), b: v(-0.3, -0.2, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.1, flat: true },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
 
@@ -89,7 +93,7 @@ export class FpArms {
     // [left, right]: where each wrist is, how the hand is turned, how closed
     this.hands = [-1, 1].map((s) => {
       const p = this.pose(s, 'away');
-      return { s, wrist: p.wrist.clone(), q: p.q.clone(), curl: p.curl, hold: 'away', reach: null, limb: null };
+      return { s, wrist: p.wrist.clone(), q: p.q.clone(), curl: p.curl, hold: 'away', reach: null, limb: null, sh: SHOULDER.clone() };
     });
   }
 
@@ -100,11 +104,13 @@ export class FpArms {
     this.lookKey = key;
     for (const h of this.hands) if (h.limb) this.group.remove(h.limb.root);
     const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 }), cuff = mat('#f6f2ea', { rough: 0.8 });
+    const sleeve = fading(shirt);
     const tube = new THREE.CylinderGeometry(0.85, 1, 1, 18, 1, true);
     const ball = new THREE.SphereGeometry(1, 24, 16);
     for (const h of this.hands) {
       const root = new THREE.Group();
-      const upper = new THREE.Mesh(tube, shirt), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
+      const upper = new THREE.Mesh(tube, sleeve), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
+      upper.userData.noAO = true; // (see-through toward the shoulder: kept out of the ambient occlusion)
       const band = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 12), cuff);
       const hand = new THREE.Group();
       hand.scale.set(h.s * HS, HS, HS);
@@ -129,8 +135,8 @@ export class FpArms {
 
   // A hold's pose for the hand on side s: {wrist, q, curl} (camera space);
   // dir (the right hand's camera space) turns the hold's own direction that way
-  // (a fist along the handle it holds).
-  pose(s, kind, at = null, dir = null) {
+  // (a fist along the handle it holds); sh: where its shoulder is (the right's).
+  pose(s, kind, at = null, dir = null, sh = SHOULDER) {
     const H = HOLDS[kind] || HOLDS.away;
     let base = this.poseCache.get(kind);
     if (!base) { base = aim(H.a, H.b, H.c, H.pref); this.poseCache.set(kind, base); }
@@ -139,11 +145,11 @@ export class FpArms {
     if (dir) {
       const up = this.upLocal();
       if (s < 0) up.x = -up.x; // (in the right hand's space)
-      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.pref);
+      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.flat ? up.negate() : H.pref);
     }
     // (no further than an arm reaches)
-    const toG = grip.clone().sub(SHOULDER), gl = H.grip.clone().multiplyScalar(HS).length();
-    if (toG.length() > REACH - gl) grip.copy(SHOULDER).add(toG.setLength(REACH - gl));
+    const toG = grip.clone().sub(sh), gl = H.grip.clone().multiplyScalar(HS).length();
+    if (toG.length() > REACH - gl) grip.copy(sh).add(toG.setLength(REACH - gl));
     const wrist = grip.clone().sub(H.grip.clone().multiplyScalar(HS).applyQuaternion(base));
     return { wrist: mirrorV(wrist, s), q: s < 0 ? mirrorQ(base) : base.clone(), curl: H.curl, grip: H.grip };
   }
@@ -187,7 +193,9 @@ export class FpArms {
     return { wrist: mirrorV(wrist, h.s), q: h.s < 0 ? mirrorQ(q) : q, curl: r.take ? 0.08 : HOLDS[r.hold].curl };
   }
 
-  // Each frame: holds[i] = {kind: 'handle' | 'palm' | 'side', at?} or null.
+  // Each frame: holds[i] = {kind: 'handle' | 'palm' | 'side', at?} or null. (A hand
+  // resting on a worktop gives sh too: its shoulder where my body is – not turned
+  // down with my eyes as I look at it, which would pull the hand off it.)
   update(dt, holds, { visible = true, walk = 0, t = 0 } = {}) {
     this.group.visible = visible;
     const k = 1 - Math.exp(-dt * 12);
@@ -195,11 +203,12 @@ export class FpArms {
       const h = this.hands[i];
       const hold = holds[i];
       const kind = hold ? hold.kind : 'away';
-      const want = this.pose(h.s, kind, hold && hold.at, hold && hold.dir);
+      h.sh.lerp(hold && hold.sh || SHOULDER, k);
+      const want = this.pose(h.s, kind, hold && hold.at, hold && hold.dir, h.sh);
       if (hold && hold.curl != null) want.curl = hold.curl;
       h.toolKind = hold && hold.tool || null;
       // a little sway as you walk
-      if (walk > 0 && kind !== 'away') want.wrist.add(v(Math.sin(t * 9 + i) * 0.004, Math.abs(Math.sin(t * 9)) * 0.006, 0).multiplyScalar(Math.min(1, walk)));
+      if (walk > 0 && kind !== 'away' && kind !== 'rest') want.wrist.add(v(Math.sin(t * 9 + i) * 0.004, Math.abs(Math.sin(t * 9)) * 0.006, 0).multiplyScalar(Math.min(1, walk)));
       const r = h.reach;
       if (r) {
         r.t += dt;
@@ -276,7 +285,7 @@ export class FpArms {
   draw(h) {
     const L = h.limb;
     const s = h.s;
-    const sh0 = mirrorV(SHOULDER, s);
+    const sh0 = mirrorV(h.sh, s);
     const w = h.wrist;
     // the shoulder comes forward (out of view) for a long reach
     let sh = sh0, d = w.distanceTo(sh0);
@@ -329,6 +338,26 @@ export class FpArms {
     bone(L.thumb[0], THUMB.base, t1.clone().sub(THUMB.base).normalize(), 0.04);
     bone(L.thumb[1], t1, t2.clone().sub(t1).normalize(), 0.036);
   }
+}
+
+// The upper sleeve: solid at the elbow, fading out toward the shoulder – the
+// camera at work, standing back from me, sees my arms from behind, and they
+// mustn't end there in a hard cut-off tube. (By the distance from its elbow
+// end, its local top: the sleeve's scaled to its length along y.)
+const FADE_FROM = 0.02, FADE_TO = 0.16;
+function fading(m) {
+  const f = m.clone();
+  f.transparent = true;
+  f.depthWrite = false;
+  f.alphaTest = 0.01;
+  f.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vFromElbow;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFromElbow = (0.5 - position.y) * length(modelMatrix[1].xyz);');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vFromElbow;')
+      .replace('#include <alphatest_fragment>', `diffuseColor.a *= 1.0 - smoothstep(${FADE_FROM.toFixed(3)}, ${FADE_TO.toFixed(3)}, vFromElbow);\n#include <alphatest_fragment>`);
+  };
+  f.customProgramCacheKey = () => 'sleeveFade';
+  return f;
 }
 
 // a sleeve (the open cylinder, narrower at its top) from a to b, this thick

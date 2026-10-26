@@ -17,7 +17,7 @@ import { buildKitchen, FIXTURES, walkable } from '../shared/kitchens.js';
 import { VESSELS, twoHanded, INGREDIENTS } from '../shared/ingredients.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
-import { FpArms } from './fparms3d.js';
+import { FpArms, SHOULDER } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
@@ -36,6 +36,9 @@ const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
 const BOX_HALF = [0.06, 0.08, 0.105];
 const TIP_LOW = 0.05; // (a food's container held over the pot to tip it in: this far below where the close-up has it – just over the rim) // (a food container's half width, by its size in the nesting set)
 const CLAW_GAP = 0.05; // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
+const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
+const REST_TURN = 0.35; // (resting there: the fingers forward, turned in this far)
+const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
 const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
@@ -88,11 +91,11 @@ export class Scene3D {
         ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 8 });
         ao.blendIntensity = 0.8;
         // the food standees (sprites) are flat cut-outs: keep them out of the occlusion
-        // (it would see each as a solid card and darken a box round it)
+        // (it would see each as a solid card and darken a box round it) – nor my sleeves, where they fade out
         const hide = ao._overrideVisibility.bind(ao);
         ao._overrideVisibility = function () {
           hide();
-          this.scene.traverse((o) => { if (o.isSprite && o.visible) { this._visibilityCache.push(o); o.visible = false; } });
+          this.scene.traverse((o) => { if ((o.isSprite || o.userData.noAO) && o.visible) { this._visibilityCache.push(o); o.visible = false; } });
         };
         composer.addPass(ao);
         composer.addPass(new OutputPass());
@@ -462,14 +465,22 @@ export class Scene3D {
       const wo = this.work && !this.work.idle && this.work.O;
       const wantLean = wo ? this.workLeanAt(wo, me.x, me.y, this.work.real) : 0;
       this.workLean = (this.workLean || 0) + (wantLean - (this.workLean || 0)) * (1 - Math.exp(-dt * 4));
-      const lean = Math.max(this.fpArms.lean(), this.workLean);
+      // (and over a counter, my hands resting on it)
+      this.restLeanK = (this.restLeanK || 0) + ((this.restLean ? REST_LEAN : 0) - (this.restLeanK || 0)) * (1 - Math.exp(-dt * 3));
+      const lean = Math.max(this.fpArms.lean(), this.workLean, this.restLeanK);
       const eye = this.eyeAt(me.x, me.y, yaw, view.eyeOff || 0, lean);
       const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       // at work the view leaves my eyes for a camera of its own, almost straight down on
       // the work (and in front of the knob, the tap's lever) – my arms stay at my
       // shoulders: I see them reach in. It glides there and back.
       const wc = this.work && !this.work.idle && this.work.cam;
-      if (wc) { this.workCamAt = wc; this.workBodyAt = this.work.body || null; }
+      // (from one step's camera to the next it glides too)
+      if (wc) {
+        const A = this.workCamAt, g = 1 - Math.exp(-dt * 5);
+        if (!A || !this.workCamK) this.workCamAt = { pos: wc.pos.clone(), look: wc.look.clone() };
+        else { A.pos.lerp(wc.pos, g); A.look.lerp(wc.look, g); }
+        this.workBodyAt = this.work.body || null;
+      }
       this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6));
       if (!wc && this.workCamK < 0.003) this.workCamK = 0;
       const wk = this.workCamK * this.workCamK * (3 - 2 * this.workCamK);
@@ -1114,6 +1125,84 @@ export class Scene3D {
     const f = K.fixtures.find((q) => tx >= q.x && tx < q.x + q.w && ty >= q.y && ty < q.y + q.h);
     return f && !['fridge', 'shelf', 'pizzaOven', 'stoneOven', 'tandoor', 'plant'].includes(f.type) ? f : null;
   }
+  // Where a hand could lie flat at x, z: the worktop's height there – on a counter, a sink's rim,
+  // a table (the stove's top: hot) – or null (the basin, a burner, the chopping board, no bench).
+  benchAt(x, z, board = false) {
+    const f = this.lowFixtureAt(x, z);
+    if (!f || !BENCHES.includes(f.type)) return null;
+    const F = this.k3.fx[f.id], A = F.anchors;
+    const dx = x - (f.x + f.w / 2), dz = z - (f.y + f.h / 2);
+    const lx = f.face === 'e' ? -dz : dx, lz = f.face === 'e' ? dx : dz; // (in its own frame: front +z)
+    if (f.type === 'sink' && Math.abs(lx) < 0.33 && Math.abs(lz) < 0.29) return null;
+    if (A.burners && A.burners.some((b) => Math.hypot(b.x - x, b.z - z) < 0.19)) return null;
+    if (!board && f.type !== 'table' && A.board && Math.abs(lx) < 0.29 && lz > -0.01 && lz < 0.41) return null;
+    return { y: A.top ? A.top.y : COUNTER_H, hot: f.type === 'stove' };
+  }
+  // what stands on the worktops near p, for a resting hand to keep clear of: [{p, r}]
+  benchClutter(p, extra = []) {
+    const out = [...extra], near = (q) => Math.hypot(q.x - p.x, q.z - p.z) < 1.4;
+    for (const rec of this.vessels.values()) if (rec.group.visible && near(rec.group.position)) out.push({ p: rec.group.position, r: rec.r + 0.01 });
+    for (const f of this.foods.values()) if (f.g.visible && near(f.g.position)) out.push({ p: f.g.position, r: 0.08 });
+    for (const sp of this.sprites.values()) if (sp.visible && near(sp.position)) out.push({ p: sp.position, r: 0.06 });
+    for (const F of Object.values(this.k3.fx)) {
+      const P = F.parts, A = F.anchors;
+      for (const o of [P.soap, P.sponge, ...(P.tools ? Object.values(P.tools) : [])]) if (o && o.visible && near(o.position)) out.push({ p: o.position, r: 0.07 });
+      if (A.nest && near(A.nest)) out.push({ p: A.nest, r: 0.12 });
+    }
+    return out;
+  }
+  // Where my idle hands rest: flat on a worktop in front of me, as you lean on a counter – a
+  // little out from each shoulder, within an arm's reach, clear of what stands there (and of
+  // the work, at O – and its board). body: my eyes {pos, fwd} (my shoulders level below them);
+  // reach: how far from the shoulder (standing back from a counter: further, stretched out over it).
+  // [left, right]: {w, dir – the fingers'} or null.
+  benchRest(body, { O = null, clutter = [], reach: most = 0.44, board = false } = {}) {
+    const fwd = body.fwd.clone().setY(0).normalize(), right = new THREE.Vector3().crossVectors(fwd, UP);
+    const things = this.benchClutter(body.pos, clutter);
+    return [-1, 1].map((s) => {
+      const sh = body.pos.clone().addScaledVector(right, s * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(fwd, -SHOULDER.z);
+      const dir = fwd.clone().multiplyScalar(Math.cos(REST_TURN)).addScaledVector(right, -s * Math.sin(REST_TURN));
+      let best = null, cost = Infinity;
+      for (let f = -0.04; f <= most + 0.001; f += 0.02) for (let o = -0.12; o <= 0.421; o += 0.02) {
+        const P = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);
+        const b = this.benchAt(P.x, P.z, board);
+        if (!b) continue;
+        P.y = b.y;
+        const reach = P.distanceTo(sh);
+        if (reach > most || sh.y - P.y < 0.06) continue;
+        // (the whole hand on it, fingertips to wrist, and clear of everything)
+        const tip = P.clone().addScaledVector(dir, 0.05), wr = P.clone().addScaledVector(dir, -0.045);
+        const bt = this.benchAt(tip.x, tip.z, board), bw = this.benchAt(wr.x, wr.z, board);
+        if (!bt || !bw || Math.abs(bt.y - b.y) > 0.01 || Math.abs(bw.y - b.y) > 0.01) continue;
+        if (O && Math.hypot(P.x - O.x, P.z - O.z) < 0.17) continue;
+        if (things.some((t) => Math.abs(t.p.y - P.y) < 0.2 && Math.min(Math.hypot(t.p.x - P.x, t.p.z - P.z), Math.hypot(t.p.x - tip.x, t.p.z - tip.z)) < t.r + 0.04)) continue;
+        const c = Math.hypot(f - 0.2, o - 0.05) + Math.max(0, reach - 0.31) * 3 + (b.hot ? 0.25 : 0);
+        if (c < cost) { cost = c; best = { w: P, dir }; }
+      }
+      return best;
+    });
+  }
+  // The camera at work, moved sideways to have pts in the middle (as far as side), then drawn back
+  // along its view far enough to see them all (as far as max).
+  fitCam(cam, pts, max = 0.6, side = 0.16) {
+    const dir = cam.look.clone().sub(cam.pos).normalize();
+    const right = new THREE.Vector3().crossVectors(dir, UP).normalize(), up = new THREE.Vector3().crossVectors(right, dir);
+    // (the view's centred in what the panels leave free – only that much of it is seen)
+    const ins = this.insets || { left: 0, bottom: 0, top: 0 }, cw = this.canvas.clientWidth || 1, ch = this.canvas.clientHeight || 1;
+    const tv0 = Math.tan(THREE.MathUtils.degToRad(WORK_FOV / 2)) * 0.88;
+    const th = tv0 * Math.max(0.4, cw / ch) * Math.max(0.3, (cw - ins.left) / cw), tv = tv0 * Math.max(0.3, (ch - ins.top - ins.bottom) / ch);
+    const xs = pts.map((p) => { const r = p.clone().sub(cam.pos); return r.dot(right) / Math.max(0.05, r.dot(dir)); });
+    const dl = cam.look.clone().sub(cam.pos).length();
+    const dx = Math.max(-side, Math.min(side, ((Math.max(...xs) + Math.min(...xs)) / 2) * dl));
+    cam.pos.addScaledVector(right, dx); cam.look.addScaledVector(right, dx);
+    let t = 0;
+    for (const p of pts) {
+      const r = p.clone().sub(cam.pos), d = r.dot(dir);
+      t = Math.max(t, Math.abs(r.dot(right)) / th - d, Math.abs(r.dot(up)) / tv - d);
+    }
+    cam.pos.addScaledVector(dir, -Math.min(t, max));
+    return cam;
+  }
   // A carried thing never sinks into a counter: over one, it's at least at the worktop.
   aboveCounter(p, r = 0.08) {
     for (const [dx, dz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) {
@@ -1146,7 +1235,7 @@ export class Scene3D {
       this.fpWant.delete(k);
       if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = want != null && slots[want] == null ? want : slots[1] == null ? 1 : 0; slots[i] = k; came.push([i, k]); }
     }
-    if (!on) { this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
+    if (!on) { this.restLean = false; this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
     this.fpArms.setLook(lookOf(me.avatar));
     const right = new THREE.Vector3(-Math.cos(rec.yaw), 0, Math.sin(rec.yaw));
     // where a hand takes hold of a thing lying at base (yaw: how it lies)
@@ -1176,6 +1265,17 @@ export class Scene3D {
     }
     // (a point in the world, for the hand on side s: in the right hand's camera space)
     const handAt = (w, s) => { const p = this.eye.worldToLocal(w.clone()); if (s < 0) p.x = -p.x; return p; };
+    // (resting on a worktop: the palm flat at r.w, the fingers along r.dir – the arm from my shoulder
+    // where my body is, level, however I look)
+    const rest = (r, i) => {
+      const d = r.dir.clone().transformDirection(this.eye.matrixWorldInverse);
+      if (!i) d.x = -d.x;
+      const f = this.eye.getWorldDirection(new THREE.Vector3()).setY(0).normalize(), rt = new THREE.Vector3().crossVectors(f, UP);
+      const sh = this.eye.position.clone().addScaledVector(rt, (i ? 1 : -1) * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(f, -SHOULDER.z);
+      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1) };
+    };
+    this.stillT = (rec.speed || 0) < 0.05 ? (this.stillT || 0) + dt : 0;
+    let leaning = false;
     const holds = slots.map((k, i) => {
       if (!k) return null;
       const h = this.fpHold.get(k) || 'palm';
@@ -1194,10 +1294,21 @@ export class Scene3D {
         if (h.dir) { dir = h.dir.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) dir.x = -dir.x; }
         holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
       });
-      // (a hand with nothing to do hangs at my side, out of sight – I'm right up against it; so does one
-      // whose thing the work has elsewhere – the pan my other hand is holding under the tap)
-      if (this.work.body) for (let i = 0; i < 2; i++) if (!this.work.hands[i] && (!holds[i] || (slots[i] && this.work.ov.has(slots[i])))) holds[i] = { kind: 'away', at: new THREE.Vector3(0.15, -0.5, 0.22) };
+      // (a hand with nothing to do rests on the worktop beside it – or, nowhere to, hangs at my side out of
+      // sight; so does one whose thing the work has elsewhere – the pan my other hand is holding under the tap)
+      for (let i = 0; i < 2; i++) {
+        if (this.work.hands[i] || (holds[i] && !(slots[i] && this.work.ov.has(slots[i])))) continue;
+        const r = this.work.rest && this.work.rest[i];
+        holds[i] = r ? rest(r, i) : this.work.body ? { kind: 'away', at: new THREE.Vector3(0.15, -0.5, 0.22) } : null;
+      }
+    } else if (!view.fpGrab && this.stillT > 0.3 && (holds[0] == null || holds[1] == null)) {
+      // standing still at a counter, my free hands rest on it, and I lean in a little (walking, they drop out of sight)
+      const F = this.fpCam, eye = F && this.eyeAt(me.x, me.y, F.yaw, view.eyeOff || 0, REST_LEAN);
+      const key = eye && `${eye.x.toFixed(2)}|${eye.z.toFixed(2)}|${Math.round(F.yaw / 0.05)}|${Math.floor(this.t)}`; // (looked for again as I turn, and now and then)
+      if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.5, board: true }) };
+      if (eye) for (let i = 0; i < 2; i++) if (holds[i] == null && this.restNow.spots[i]) { holds[i] = rest(this.restNow.spots[i], i); leaning = true; }
     }
+    this.restLean = leaning;
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {
       const want = view.fpGrab.hand;
@@ -1792,6 +1903,21 @@ export class Scene3D {
     }
     // a second finger on a touch screen is my other hand
     if (st.ptr2 && !out.hands[oi]) hand(oi, at(st.ptr2), 'hand', { curl: 0.7 });
+    // a hand with nothing to do rests on the worktop beside the work (where it's clear – worked out
+    // once a step), and the camera stands back far enough to see both my hands
+    if (!this.restAt || this.restAt.g !== g || this.restAt.fx !== w.fx) {
+      const me = view.cooks.find((c) => c.me), F = this.fpCam;
+      const body = out.body || (me && F ? { pos: this.eyeAt(me.x, me.y, F.yaw, view.eyeOff || 0, 0), fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) } : null);
+      const clutter = [...out.ov.values(), ...out.boxes.map(([, b]) => b)].filter((o) => o.pos && !o.hide).map((o) => ({ p: o.pos, r: 0.1 }));
+      const spots = body ? this.benchRest(body, { O: w.O, clutter }) : [null, null];
+      // (in sight: the work, both hands resting there – and where the working ones start, the pan by its handle …)
+      const seen = [];
+      for (const r of spots) if (r) seen.push(r.w.clone().addScaledVector(r.dir, 0.07), r.w.clone().addScaledVector(r.dir, -0.08).addScaledVector(UP, 0.04));
+      for (const h of out.hands) if (h && h.w) seen.push(h.w.clone());
+      this.restAt = { g, fx: w.fx, spots, seen };
+    }
+    out.rest = this.restAt.spots;
+    this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen]);
     this.work = out;
   }
 
