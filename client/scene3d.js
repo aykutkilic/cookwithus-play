@@ -37,13 +37,19 @@ const BOX_HALF = [0.06, 0.08, 0.105];
 const TIP_LOW = 0.05; // (a food's container held over the pot to tip it in: this far below where the close-up has it – just over the rim) // (a food container's half width, by its size in the nesting set)
 const CLAW_GAP = 0.05; // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
-const REST_TURN = 0.35; // (resting there: the fingers forward, turned in this far)
+const REST_TURN = 0.35; // (resting there: the forearm and fingers forward, turned in about this far)
+const REST_TURNS = [-0.2, 0, 0.2, 0.4, 0.6]; // (or this far, where that's what there's room for)
+const FOREARM = 0.155; // (from the elbow to the wrist: fparms3d's FORE)
 const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
 const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
-const GRIP3D = { saucepan: new THREE.Vector3(0.254, 0.093, 0.032), pan: new THREE.Vector3(0.294, 0.037, 0.032), cezve: new THREE.Vector3(0.194, 0.084, 0.032) };
+// – about two thirds of the way along it from the pan (the golden ratio, a little more): not at its end
+// (the long handle runs from the rim, r out, to 0.18 further – see buildVessel)
+const GRIP_T = 0.64;
+const handleGrip = (r, h) => new THREE.Vector3(r + 0.18 * GRIP_T, h * (0.85 + 0.1 * GRIP_T), 0.04 * GRIP_T);
+const GRIP3D = { saucepan: handleGrip(0.11, 0.1), pan: handleGrip(0.15, 0.04), cezve: handleGrip(0.05, 0.09) };
 const mobile = matchMedia('(pointer: coarse)').matches;
 // ?lite: no shadows or ambient occlusion and a low frame rate (slow machines, headless tests)
 export const LITE = new URLSearchParams(location.search).has('lite');
@@ -1135,8 +1141,12 @@ export class Scene3D {
     const lx = f.face === 'e' ? -dz : dx, lz = f.face === 'e' ? dx : dz; // (in its own frame: front +z)
     if (f.type === 'sink' && Math.abs(lx) < 0.33 && Math.abs(lz) < 0.29) return null;
     if (A.burners && A.burners.some((b) => Math.hypot(b.x - x, b.z - z) < 0.19)) return null;
-    if (!board && f.type !== 'table' && A.board && Math.abs(lx) < 0.29 && lz > -0.01 && lz < 0.41) return null;
-    return { y: A.top ? A.top.y : COUNTER_H, hot: f.type === 'stove' };
+    const near = f.type !== 'table' && A.board && Math.abs(lx) < 0.31 && lz > -0.03 && lz < 0.43;
+    if (near && !board) return null;
+    // (on the board itself: its top – or right at its edge, neither)
+    const on = near && Math.abs(lx) < 0.25 && lz > 0.03 && lz < 0.37;
+    if (near && !on) return null;
+    return { y: on ? A.board.y : A.top ? A.top.y : COUNTER_H, hot: f.type === 'stove' };
   }
   // what stands on the worktops near p, for a resting hand to keep clear of: [{p, r}]
   benchClutter(p, extra = []) {
@@ -1151,33 +1161,50 @@ export class Scene3D {
     }
     return out;
   }
-  // Where my idle hands rest: flat on a worktop in front of me, as you lean on a counter – a
-  // little out from each shoulder, within an arm's reach, clear of what stands there (and of
-  // the work, at O – and its board). body: my eyes {pos, fwd} (my shoulders level below them);
-  // reach: how far from the shoulder (standing back from a counter: further, stretched out over it).
-  // [left, right]: {w, dir – the fingers'} or null.
+  // Where my idle hands rest: on a worktop in front of me, as you lean on a counter – the forearm
+  // lying on it and the hand flat in line with it (no bend at the wrist), a little out from each
+  // shoulder, clear of what stands there (and of the work, at O – and its board). body: my eyes
+  // {pos, fwd} (my shoulders level below them); reach: how far from the shoulder the elbow (or,
+  // no room for the forearm, the hand) may be. [left, right]: {w, dir – the fingers', elbow?} or null.
   benchRest(body, { O = null, clutter = [], reach: most = 0.44, board = false } = {}) {
     const fwd = body.fwd.clone().setY(0).normalize(), right = new THREE.Vector3().crossVectors(fwd, UP);
     const things = this.benchClutter(body.pos, clutter);
+    const on = (q, y) => { const b = this.benchAt(q.x, q.z, board); return !!b && Math.abs(b.y - y) < 0.01; };
+    const clear = (q, r) => !(O && Math.hypot(q.x - O.x, q.z - O.z) < 0.16) && !things.some((t) => Math.abs(t.p.y - q.y) < 0.2 && Math.hypot(t.p.x - q.x, t.p.z - q.z) < t.r + r);
     return [-1, 1].map((s) => {
       const sh = body.pos.clone().addScaledVector(right, s * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(fwd, -SHOULDER.z);
-      const dir = fwd.clone().multiplyScalar(Math.cos(REST_TURN)).addScaledVector(right, -s * Math.sin(REST_TURN));
       let best = null, cost = Infinity;
+      // the elbow on the worktop, the forearm running from it forward (turned in by a), the hand on from that
+      for (let f = -0.04; f <= most + 0.001; f += 0.03) for (let o = -0.12; o <= 0.401; o += 0.03) {
+        const E = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);
+        const bE = this.benchAt(E.x, E.z, board);
+        if (!bE) continue;
+        E.y = bE.y;
+        if (E.distanceTo(sh) > most || sh.y - E.y < 0.04 || !clear(E, 0.03)) continue;
+        for (const a of REST_TURNS) {
+          const d = fwd.clone().multiplyScalar(Math.cos(a)).addScaledVector(right, -s * Math.sin(a));
+          const W = E.clone().addScaledVector(d, FOREARM), mid = E.clone().lerp(W, 0.5), P = W.clone().addScaledVector(d, 0.03), tip = P.clone().addScaledVector(d, 0.05);
+          if (![mid, W, P, tip].every((q) => on(q, E.y))) continue;
+          if (!clear(mid, 0.03) || !clear(W, 0.03) || !clear(P, 0.04) || !clear(tip, 0.035)) continue;
+          const c = Math.hypot(f - 0.13, o - 0.04) + Math.abs(a - REST_TURN) * 0.15 + (bE.hot ? 0.25 : 0);
+          if (c < cost) { cost = c; best = { w: P, dir: d, elbow: E.clone().addScaledVector(UP, 0.022) }; }
+        }
+      }
+      if (best) return best;
+      // (no room for the forearm: just the hand, flat, in line with the arm reaching down to it)
       for (let f = -0.04; f <= most + 0.001; f += 0.02) for (let o = -0.12; o <= 0.421; o += 0.02) {
         const P = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);
         const b = this.benchAt(P.x, P.z, board);
         if (!b) continue;
         P.y = b.y;
-        const reach = P.distanceTo(sh);
-        if (reach > most || sh.y - P.y < 0.06) continue;
+        const reach = P.distanceTo(sh), d = P.clone().sub(sh).setY(0);
+        if (reach > most || sh.y - P.y < 0.06 || d.lengthSq() < 1e-4) continue;
+        d.normalize();
         // (the whole hand on it, fingertips to wrist, and clear of everything)
-        const tip = P.clone().addScaledVector(dir, 0.05), wr = P.clone().addScaledVector(dir, -0.045);
-        const bt = this.benchAt(tip.x, tip.z, board), bw = this.benchAt(wr.x, wr.z, board);
-        if (!bt || !bw || Math.abs(bt.y - b.y) > 0.01 || Math.abs(bw.y - b.y) > 0.01) continue;
-        if (O && Math.hypot(P.x - O.x, P.z - O.z) < 0.17) continue;
-        if (things.some((t) => Math.abs(t.p.y - P.y) < 0.2 && Math.min(Math.hypot(t.p.x - P.x, t.p.z - P.z), Math.hypot(t.p.x - tip.x, t.p.z - tip.z)) < t.r + 0.04)) continue;
+        const tip = P.clone().addScaledVector(d, 0.05), wr = P.clone().addScaledVector(d, -0.045);
+        if (!on(tip, b.y) || !on(wr, b.y) || !clear(P, 0.04) || !clear(tip, 0.035)) continue;
         const c = Math.hypot(f - 0.2, o - 0.05) + Math.max(0, reach - 0.31) * 3 + (b.hot ? 0.25 : 0);
-        if (c < cost) { cost = c; best = { w: P, dir }; }
+        if (c < cost) { cost = c; best = { w: P, dir: d }; }
       }
       return best;
     });
@@ -1272,7 +1299,7 @@ export class Scene3D {
       if (!i) d.x = -d.x;
       const f = this.eye.getWorldDirection(new THREE.Vector3()).setY(0).normalize(), rt = new THREE.Vector3().crossVectors(f, UP);
       const sh = this.eye.position.clone().addScaledVector(rt, (i ? 1 : -1) * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(f, -SHOULDER.z);
-      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1) };
+      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1), elbow: r.elbow ? handAt(r.elbow, i ? 1 : -1) : null };
     };
     this.stillT = (rec.speed || 0) < 0.05 ? (this.stillT || 0) + dt : 0;
     let leaning = false;
@@ -1912,7 +1939,7 @@ export class Scene3D {
       const spots = body ? this.benchRest(body, { O: w.O, clutter }) : [null, null];
       // (in sight: the work, both hands resting there – and where the working ones start, the pan by its handle …)
       const seen = [];
-      for (const r of spots) if (r) seen.push(r.w.clone().addScaledVector(r.dir, 0.07), r.w.clone().addScaledVector(r.dir, -0.08).addScaledVector(UP, 0.04));
+      for (const r of spots) if (r) seen.push(r.w.clone().addScaledVector(r.dir, 0.07), r.w.clone().addScaledVector(r.dir, -0.1).addScaledVector(UP, 0.03));
       for (const h of out.hands) if (h && h.w) seen.push(h.w.clone());
       this.restAt = { g, fx: w.fx, spots, seen };
     }
@@ -2468,7 +2495,7 @@ function buildVessel(kind) {
     g.add(cyl(r * 0.95, r * 0.95, 0.006, metal(c), 0, 0, 0, 24));
     g.add(ring(r, 0.008, metal(c), 0, h, 0, 24));
     if (handles === 2) for (const sx of [-1, 1]) { const hd = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.007, 6, 10, Math.PI), metal(c)); hd.position.set(sx * (r + 0.01), h * 0.8, 0); hd.rotation.set(0, sx > 0 ? -Math.PI / 2 : Math.PI / 2, 0); g.add(hd); }
-    if (long) g.add(rod(v3(r, h * 0.85, 0), v3(r + 0.18, h * 0.95, 0.04), 0.012, mat('#2a2a30', { rough: 0.5 })));
+    if (long) g.add(rod(v3(r, h * 0.85, 0), v3(r + 0.18, h * 0.95, 0.04), 0.012, mat('#2a2a30', { rough: 0.5 }))); // (held at GRIP3D, along it)
   };
   switch (kind) {
     case 'pot': potLike(0.13, 0.15, VCOL.pot); break;

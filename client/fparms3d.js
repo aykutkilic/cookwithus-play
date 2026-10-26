@@ -22,7 +22,7 @@ const REACH = (UPPER + FORE) * 0.985 + SLIDE;  // further than that, the hand st
 const LEAN = 0.16; // how far you lean in toward something out of reach
 export const SHOULDER = new THREE.Vector3(0.12, -0.24, 0.05); // (the right one, from my eyes)
 const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // the right elbow points down, out and back
-const WRIST = 1.1; // how far a hand bends from its forearm (rad) before the forearm follows it round
+const WRIST = 0.75; // how far a hand bends from its forearm (rad) before the forearm follows it round
 // a reach: out to the thing and back – taking, the hand closes on it; putting
 // down, it comes in from a little above, lowers it, rests a moment and lets go
 const OUT_TAKE = 0.42, OUT_PUT = 0.55, SETTLE = 0.14, BACK = 0.4, LIFT = 0.06;
@@ -46,13 +46,15 @@ const THUMB = { base: v(-0.006, 0.036, -0.012), open: [v(-0.02, 0.058, -0.05), v
 // How a right hand holds things, in camera space: the grip point there, hand
 // direction a turned to b, and twisted so the forearm (or the palm) goes the
 // way of pref; how far the fingers close. The left hand is the mirror image.
+// (toBody: turned round what it holds – dir – so the forearm runs back toward the shoulder, the wrist
+// hardly bent)
 const HOLDS = {
-  handle: { at: v(0.12, -0.16, -0.25), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1 },
+  handle: { at: v(0.12, -0.16, -0.25), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1, toBody: true },
   palm: { at: v(0.1, -0.13, -0.26), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
   // a food container on the palm, carried out in front at the waist
   tub: { at: v(0.06, -0.25, -0.4), grip: PALM, a: v(-1, 0, 0), b: v(-0.1, 1, 0.05), c: Z, pref: v(0.2, -0.5, 1), curl: 0.35 },
   side: { at: v(0.16, -0.17, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-1, 0.35, 0), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.55 },
-  grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85 }, // a door's handle
+  grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85, toBody: true }, // a door's handle
   // at work (first person): a tool upright in the fist, or the open hand palm down
   tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
   // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
@@ -60,7 +62,7 @@ const HOLDS = {
   knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
   claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
-  // resting on the worktop: the palm flat on it, the fingers (dir) forward and a little in (flat: palm down whatever the view)
+  // resting on the worktop: the palm flat on it, the fingers (dir) along the forearm lying there (flat: palm down whatever the view)
   rest: { at: v(0.14, -0.3, -0.25), grip: UNDER_PALM, a: v(0, 0, -1), b: v(-0.3, -0.2, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.1, flat: true },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
@@ -93,7 +95,7 @@ export class FpArms {
     // [left, right]: where each wrist is, how the hand is turned, how closed
     this.hands = [-1, 1].map((s) => {
       const p = this.pose(s, 'away');
-      return { s, wrist: p.wrist.clone(), q: p.q.clone(), curl: p.curl, hold: 'away', reach: null, limb: null, sh: SHOULDER.clone() };
+      return { s, wrist: p.wrist.clone(), q: p.q.clone(), curl: p.curl, hold: 'away', reach: null, limb: null, sh: SHOULDER.clone(), el: new THREE.Vector3(), elK: 0 };
     });
   }
 
@@ -145,11 +147,12 @@ export class FpArms {
     if (dir) {
       const up = this.upLocal();
       if (s < 0) up.x = -up.x; // (in the right hand's space)
-      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.flat ? up.negate() : H.pref);
+      const body = H.toBody && sh.clone().sub(grip).normalize().multiplyScalar(0.6).addScaledVector(POLE, 0.4); // (toward where the elbow hangs)
+      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.flat ? up.negate() : body || H.pref);
     }
-    // (no further than an arm reaches)
+    // (no further than an arm reaches – resting on the worktop, it's been put where it can lie)
     const toG = grip.clone().sub(sh), gl = H.grip.clone().multiplyScalar(HS).length();
-    if (toG.length() > REACH - gl) grip.copy(sh).add(toG.setLength(REACH - gl));
+    if (!H.flat && toG.length() > REACH - gl) grip.copy(sh).add(toG.setLength(REACH - gl));
     const wrist = grip.clone().sub(H.grip.clone().multiplyScalar(HS).applyQuaternion(base));
     return { wrist: mirrorV(wrist, s), q: s < 0 ? mirrorQ(base) : base.clone(), curl: H.curl, grip: H.grip };
   }
@@ -195,7 +198,8 @@ export class FpArms {
 
   // Each frame: holds[i] = {kind: 'handle' | 'palm' | 'side', at?} or null. (A hand
   // resting on a worktop gives sh too: its shoulder where my body is – not turned
-  // down with my eyes as I look at it, which would pull the hand off it.)
+  // down with my eyes as I look at it, which would pull the hand off it; and elbow:
+  // where its elbow lies, the forearm along the worktop.)
   update(dt, holds, { visible = true, walk = 0, t = 0 } = {}) {
     this.group.visible = visible;
     const k = 1 - Math.exp(-dt * 12);
@@ -204,6 +208,9 @@ export class FpArms {
       const hold = holds[i];
       const kind = hold ? hold.kind : 'away';
       h.sh.lerp(hold && hold.sh || SHOULDER, k);
+      const el = hold && hold.elbow && !h.reach;
+      if (el) h.el.lerp(hold.elbow, h.elK > 0.01 ? k : 1);
+      h.elK += ((el ? 1 : 0) - h.elK) * k;
       const want = this.pose(h.s, kind, hold && hold.at, hold && hold.dir, h.sh);
       if (hold && hold.curl != null) want.curl = hold.curl;
       h.toolKind = hold && hold.tool || null;
@@ -293,7 +300,7 @@ export class FpArms {
     if (d > reach) {
       sh = sh0.clone().add(w.clone().sub(sh0).normalize().multiplyScalar(Math.min(d - reach, SLIDE)));
       d = w.distanceTo(sh);
-      if (d > reach) { const dir = w.clone().sub(sh).normalize(); w.copy(sh).addScaledVector(dir, reach); d = reach; } // (never a stretched arm)
+      if (d > reach && h.elK < 0.5) { const dir = w.clone().sub(sh).normalize(); w.copy(sh).addScaledVector(dir, reach); d = reach; } // (never a stretched arm – unless it's lying on the worktop, its elbow there)
     }
     d = Math.max(d, Math.abs(UPPER - FORE) + 0.02);
     const u = w.clone().sub(sh).normalize();
@@ -310,6 +317,8 @@ export class FpArms {
       f = back.clone().applyQuaternion(new THREE.Quaternion().slerp(q, WRIST / ang));
       e = w.clone().add(f.clone().multiplyScalar(FORE));
     }
+    // (resting: the elbow where it lies on the worktop – the upper arm from there up to my shoulder)
+    if (h.elK > 0.001) { e.lerp(mirrorV(h.el, s), h.elK); f = e.clone().sub(w).normalize(); sh = sh.clone().lerp(sh0, h.elK); }
     const up = sh.clone().sub(e).normalize();
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
     tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024);
