@@ -1160,12 +1160,25 @@ export class Scene3D {
     }
     return out;
   }
+  // What my idle hands feel like doing for a while (a few seconds, then picked again at random): rest on
+  // the worktop – both, just the left, just the right – or neither, hanging at my sides as I stand;
+  // how relaxed the fingers are, and (standing at a counter) a little where.
+  idleMood() {
+    const M = this.mood;
+    if (M && this.t < M.until) return M;
+    const r = Math.random();
+    const rest = r < 0.4 ? [true, true] : r < 0.6 ? [true, false] : r < 0.8 ? [false, true] : [false, false];
+    const pick = (a, b) => a + Math.random() * (b - a);
+    this.mood = { id: (M ? M.id : 0) + 1, until: this.t + pick(3, 9), rest, curl: [pick(0.05, 0.35), pick(0.05, 0.35)], pref: [0, 1].map(() => ({ f: pick(0.05, 0.16), o: pick(0.06, 0.2) })) };
+    return this.mood;
+  }
   // Where my idle hands rest: flat on a worktop near its edge, as I stand – a little out from each
   // shoulder and forward, the arm coming down to it (not bent over to lay the forearm on it); clear
   // of what stands there (and of the work, at O – and its board). body: my eyes {pos, fwd} (my
   // shoulders level below them); reach: how far from the shoulder. [left, right]: {w, dir} or null
   // (dir: about the fingers' way – the arm sets it exactly, in line with the forearm).
-  benchRest(body, { O = null, clutter = [], reach: most = 0.4, board = false } = {}) {
+  // pref: [left, right] {f, o} – how far forward and out from the shoulder it'd best be.
+  benchRest(body, { O = null, clutter = [], reach: most = 0.4, board = false, pref = null } = {}) {
     const fwd = body.fwd.clone().setY(0).normalize(), right = new THREE.Vector3().crossVectors(fwd, UP);
     const things = this.benchClutter(body.pos, clutter);
     const on = (q, y) => { const b = this.benchAt(q.x, q.z, board); return !!b && Math.abs(b.y - y) < 0.01; };
@@ -1174,6 +1187,7 @@ export class Scene3D {
     const inFrom = (q, y) => { for (let k = 0.02; k < 0.6; k += 0.02) if (!on(q.clone().addScaledVector(fwd, -k), y)) return k; return 0.6; };
     return [-1, 1].map((s) => {
       const sh = body.pos.clone().addScaledVector(right, s * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(fwd, -SHOULDER.z);
+      const want = (pref && pref[s < 0 ? 0 : 1]) || { f: 0.1, o: 0.12 };
       let best = null, cost = Infinity;
       for (let f = -0.02; f <= most + 0.001; f += 0.02) for (let o = -0.1; o <= 0.401; o += 0.02) {
         const P = sh.clone().addScaledVector(fwd, f).addScaledVector(right, s * o);
@@ -1187,7 +1201,7 @@ export class Scene3D {
         // (the whole hand on it, fingertips to wrist, and clear of everything)
         const tip = P.clone().addScaledVector(d, 0.05), wr = P.clone().addScaledVector(d, -0.045);
         if (!on(tip, b.y) || !on(wr, b.y) || !clear(P, 0.04) || !clear(tip, 0.035)) continue;
-        const c = Math.abs(inFrom(wr, b.y) - REST_EDGE) * 2 + Math.hypot(f - 0.1, o - 0.12) + Math.max(0, reach - 0.33) * 3 + (b.hot ? 0.25 : 0);
+        const c = Math.abs(inFrom(wr, b.y) - REST_EDGE) * 2 + Math.hypot(f - want.f, o - want.o) + Math.max(0, reach - 0.33) * 3 + (b.hot ? 0.25 : 0);
         if (c < cost) { cost = c; best = { w: P, dir: d }; }
       }
       return best;
@@ -1279,14 +1293,18 @@ export class Scene3D {
     // (resting on a worktop: the palm flat at r.w, the fingers along r.dir – the arm from my shoulder
     // where my body is, level, however I look)
     const rest = (r, i) => {
+      const relax = mood.curl[i];
       const d = r.dir.clone().transformDirection(this.eye.matrixWorldInverse);
       if (!i) d.x = -d.x;
       const f = this.eye.getWorldDirection(new THREE.Vector3()).setY(0).normalize(), rt = new THREE.Vector3().crossVectors(f, UP);
       const sh = this.eye.position.clone().addScaledVector(rt, (i ? 1 : -1) * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(f, -SHOULDER.z);
-      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1) };
+      return { kind: 'rest', at: handAt(r.w, i ? 1 : -1), dir: d, sh: handAt(sh, i ? 1 : -1), curl: relax };
     };
     this.stillT = (rec.speed || 0) < 0.05 ? (this.stillT || 0) + dt : 0;
     let leaning = false;
+    // (what my idle hands feel like doing just now – walking, picked afresh when I stop)
+    if (!this.stillT && !(this.work && !this.work.idle)) this.mood = null;
+    const mood = this.idleMood();
     const holds = slots.map((k, i) => {
       if (!k) return null;
       const h = this.fpHold.get(k) || 'palm';
@@ -1305,19 +1323,20 @@ export class Scene3D {
         if (h.dir) { dir = h.dir.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) dir.x = -dir.x; }
         holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
       });
-      // (a hand with nothing to do rests on the worktop beside it – or, nowhere to, hangs at my side out of
-      // sight; so does one whose thing the work has elsewhere – the pan my other hand is holding under the tap)
+      // (a hand with nothing to do rests on the worktop beside it, as the mood takes me – or hangs at my side
+      // out of sight; so does one whose thing the work has elsewhere – the pan my other hand is holding under the tap)
       for (let i = 0; i < 2; i++) {
         if (this.work.hands[i] || (holds[i] && !(slots[i] && this.work.ov.has(slots[i])))) continue;
-        const r = this.work.rest && this.work.rest[i];
+        const r = mood.rest[i] && this.work.rest && this.work.rest[i];
         holds[i] = r ? rest(r, i) : this.work.body ? { kind: 'away', at: new THREE.Vector3(0.15, -0.5, 0.22) } : null;
       }
     } else if (!view.fpGrab && this.stillT > 0.3 && (holds[0] == null || holds[1] == null)) {
-      // standing still at a counter, my free hands rest on it, and I lean in a little (walking, they drop out of sight)
+      // standing still at a counter, my free hands rest on it as the mood takes me – both, one, or neither
+      // – and I lean in a little if they do (walking, they drop out of sight)
       const F = this.fpCam, eye = F && this.eyeAt(me.x, me.y, F.yaw, view.eyeOff || 0, REST_LEAN);
-      const key = eye && `${eye.x.toFixed(2)}|${eye.z.toFixed(2)}|${Math.round(F.yaw / 0.05)}|${Math.floor(this.t)}`; // (looked for again as I turn, and now and then)
-      if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.46, board: true }) };
-      if (eye) for (let i = 0; i < 2; i++) if (holds[i] == null && this.restNow.spots[i]) { holds[i] = rest(this.restNow.spots[i], i); leaning = true; }
+      const key = eye && `${eye.x.toFixed(2)}|${eye.z.toFixed(2)}|${Math.round(F.yaw / 0.05)}|${Math.floor(this.t)}|${mood.id}`; // (looked for again as I turn, and now and then)
+      if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.46, board: true, pref: mood.pref }) };
+      if (eye) for (let i = 0; i < 2; i++) if (holds[i] == null && mood.rest[i] && this.restNow.spots[i]) { holds[i] = rest(this.restNow.spots[i], i); leaning = true; }
     }
     this.restLean = leaning;
     // a free hand on a door's handle
