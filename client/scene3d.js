@@ -1160,7 +1160,7 @@ export class Scene3D {
     }
     return out;
   }
-  // What my idle hands feel like doing for a while (a few seconds, then picked again at random): rest on
+  // What my idle hands feel like doing for a while (half a minute to two, then picked again at random): rest on
   // the worktop – both, just the left, just the right – or neither, hanging at my sides as I stand;
   // how relaxed the fingers are, and (standing at a counter) a little where.
   idleMood() {
@@ -1169,7 +1169,7 @@ export class Scene3D {
     const r = Math.random();
     const rest = r < 0.4 ? [true, true] : r < 0.6 ? [true, false] : r < 0.8 ? [false, true] : [false, false];
     const pick = (a, b) => a + Math.random() * (b - a);
-    this.mood = { id: (M ? M.id : 0) + 1, until: this.t + pick(3, 9), rest, curl: [pick(0.05, 0.35), pick(0.05, 0.35)], pref: [0, 1].map(() => ({ f: pick(0.05, 0.16), o: pick(0.06, 0.2) })) };
+    this.mood = { id: (M ? M.id : 0) + 1, until: this.t + pick(30, 120), rest, curl: [pick(0.05, 0.35), pick(0.05, 0.35)], pref: [0, 1].map(() => ({ f: pick(0.05, 0.16), o: pick(0.06, 0.2) })) };
     return this.mood;
   }
   // Where my idle hands rest: flat on a worktop near its edge, as I stand – a little out from each
