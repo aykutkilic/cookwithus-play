@@ -136,6 +136,14 @@ export const IN_FIST = v(0, 0.87, -0.5); // a handle through the fist (a hammer 
 // (a chef's grip: the handle diagonal across the palm, from its heel to the index's knuckle – the blade going on
 // forward from the forearm's line, not across it)
 const KNIFE_IN = v(-0.1, 0.3, -0.95).normalize();
+// The chef's knife in a pinch grip (hand space): the thumb's pad and the index's side pinch the blade just in front of
+// the bolster, the other three fingers wrap the handle, which runs back diagonally under the palm to its heel – the
+// blade going on from the forearm's line. at: the bolster (the knife's origin, chefKnifeMesh's); axis: toward the tip;
+// up: the spine's way (its flat against the palm's side).
+export const KNIFE = { at: v(-0.012, 0.018, -0.11), axis: v(0, 0.45, -0.89).normalize(), up: v(0, 0.89, 0.45).normalize() };
+// (where the hand holds the knife, as the scene has it – knifeAt's fist: 1.3 cm behind the bolster, 0.6 cm under the
+// spine, the kitchen's units – in hand space)
+const KNIFE_GRIP = KNIFE.at.clone().addScaledVector(KNIFE.axis, -0.013 / 0.5).addScaledVector(KNIFE.up, -0.006 / 0.5);
 const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
 const FINGERS = [[0.029, 0.044, 0.026, 0.02], [0.01, 0.048, 0.028, 0.022], [-0.009, 0.045, 0.026, 0.02], [-0.028, 0.036, 0.02, 0.016]];
@@ -158,7 +166,8 @@ export const HOLDS = {
   tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
   // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
   // the handle, the back of the hand to the outside and a little up, the palm in – back: c → that)
-  knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: KNIFE_IN, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
+  // (frame: given the knife's spine as well – up – the hand turned onto it exactly, as KNIFE holds it)
+  knife: { at: v(0.1, -0.1, -0.4), grip: KNIFE_GRIP, a: KNIFE_IN, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true, frame: KNIFE },
   // (the same, turned palm down – the knife on its side, its edge away: crushing)
   knifeFlat: { at: v(0.1, -0.1, -0.4), grip: FIST, a: KNIFE_IN, b: v(-1, -0.1, -0.4), c: v(1, 0, 0), pref: v(0, 1, 0), curl: 1, top: true },
   // (a pinch: between the thumb's and the index's tips – a basil leaf, a pinch of salt, a garlic clove)
@@ -276,11 +285,20 @@ export class FpArms {
   // A hold's pose for the hand on side s: {wrist, q, curl} (camera space);
   // dir (the right hand's camera space) turns the hold's own direction that way
   // (a fist along the handle it holds); sh: where its shoulder is (the right's).
-  pose(s, kind, at = null, dir = null, sh = SHOULDER) {
+  pose(s, kind, at = null, dir = null, sh = SHOULDER, up = null) {
     const H = HOLDS[kind] || HOLDS.away;
     let base = this.poseCache.get(kind);
     if (!base) { base = aim(H.a, H.b, H.c, H.pref); this.poseCache.set(kind, base); }
     const grip = at ? at.clone() : H.at.clone(); // (in the right hand's space)
+    // (the thing held given whole – its length and its up – and the hold knowing how it's held: turned exactly onto it)
+    if (H.frame && dir && up) {
+      const fa = H.frame.axis.clone().normalize(), fu = H.frame.up.clone().addScaledVector(fa, -H.frame.up.dot(fa)).normalize();
+      const wa = dir.clone().normalize(), wu = up.clone().addScaledVector(wa, -up.dot(wa)).normalize();
+      const Mh = new THREE.Matrix4().makeBasis(fa, fu, new THREE.Vector3().crossVectors(fa, fu)), Mw = new THREE.Matrix4().makeBasis(wa, wu, new THREE.Vector3().crossVectors(wa, wu));
+      const q = new THREE.Quaternion().setFromRotationMatrix(Mw.multiply(Mh.transpose()));
+      const wrist = grip.clone().sub(H.grip.clone().multiplyScalar(HS).applyQuaternion(q));
+      return { wrist: mirrorV(wrist, s), q: s < 0 ? mirrorQ(q) : q, curl: H.curl, grip: H.grip };
+    }
     // (a knife: the back of the hand to the outside of the blade, a little up)
     if (dir) {
       const up = this.upLocal();
@@ -370,7 +388,7 @@ export class FpArms {
         const up = this.upLocal(), f = h.fore.clone().addScaledVector(up, -h.fore.dot(up));
         if (f.lengthSq() > 1e-6) dir = mirrorV(f.normalize(), h.s);
       }
-      const want = kind === 'away' && !(hold && hold.at) && this.frame ? this.hanging(h.s) : this.pose(h.s, kind, hold && hold.at, dir, h.sh);
+      const want = kind === 'away' && !(hold && hold.at) && this.frame ? this.hanging(h.s) : this.pose(h.s, kind, hold && hold.at, dir, h.sh, hold && hold.up);
       if (hold && hold.curl != null) want.curl = hold.curl;
       h.toolKind = hold && hold.tool || null;
       // a little sway as you walk

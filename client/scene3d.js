@@ -18,7 +18,7 @@ import { VESSELS, twoHanded, INGREDIENTS, TOOLS } from '../shared/ingredients.js
 import { slotOf } from '../shared/stock.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
-import { FpArms, SHOULDER, BRISK, APART } from './fparms3d.js';
+import { FpArms, SHOULDER, BRISK, APART, KNIFE } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
@@ -665,7 +665,8 @@ export class Scene3D {
     // and not while they're in someone's hand at work there
     const onBoard = new Set();
     for (const t of Object.values(this.toolsNow)) if (t.held == null && t.at && t.at.endsWith('/board') && TOOLS[t.kind] && TOOLS[t.kind].board) onBoard.add(`${t.at.slice(0, -6)}|${TOOLS[t.kind].board}`);
-    for (const [id, F] of Object.entries(this.k3.fx)) if (F.parts.tools) for (const [t, o] of Object.entries(F.parts.tools)) o.visible = onBoard.has(`${id}|${t}`) && !(view.inHand && view.inHand.get(id) && view.inHand.get(id).has(t));
+    const takingNow = this.work && this.work.boardToolInHand;
+    for (const [id, F] of Object.entries(this.k3.fx)) if (F.parts.tools) for (const [t, o] of Object.entries(F.parts.tools)) o.visible = onBoard.has(`${id}|${t}`) && !(view.inHand && view.inHand.get(id) && view.inHand.get(id).has(t)) && takingNow !== `${id}|${t}`;
     this.updateCooks(view, dt); // first: things in their hands follow them
     this.updateArms(view, dt);
     this.updateStash(view);
@@ -1765,7 +1766,9 @@ export class Scene3D {
         // (a direction for the hand, in the right hand's camera space)
         let dir = null;
         if (h.dir) { dir = h.dir.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) dir.x = -dir.x; }
-        holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir };
+        let up = null;
+        if (h.up) { up = h.up.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) up.x = -up.x; }
+        holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir, up };
       });
       // (a hand with nothing to do rests on the worktop beside it, as the mood takes me – once I've been at it a
       // while, not straight away – or hangs at my side out of sight; so does one whose thing the work has
@@ -2189,7 +2192,7 @@ export class Scene3D {
       if (tool === 'knife') {
         const K = this.knifeAt(pos, into.clone().addScaledVector(w.R, -0.5).normalize(), 0.12);
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
-        return hand(wi, K.fist, 'knife', { dir: K.xA });
+        return hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
       }
       // (leaning back toward me as a spoon's held to stir or spread – not upright, seen end on from above –
       // the fist round the handle, along it)
@@ -2298,7 +2301,7 @@ export class Scene3D {
             if (d.dot(w.N) > 0) d.negate(); // (pointing away from me)
             const K = this.knifeAt(P.clone().addScaledVector(push, -0.05).setY(w.O.y + 0.001), d, 0.04);
             out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
-            hand(wi, K.fist, 'knife', { dir: K.xA });
+            hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
           } else hand(wi, P.clone().addScaledVector(push, -0.045).addScaledVector(UP, 0.02), 'hand', { curl: 0.3, dir: into.clone().addScaledVector(push, 0.3).normalize() }); // (palm down, the fingers forward: pushed with the hand's edge)
           ring(g.target);
           break;
@@ -2494,7 +2497,25 @@ export class Scene3D {
         } else if (ph.hot === 'pick' || ph.hot === 'rest') {
           // the board's own knife, peeler, grater: the hand on it (or bringing it back) once the pointer's over it
           const T = this.toolSpot(w, ph.takes), near = T && h && Math.hypot(pt.x - h.x, pt.y - h.y) < h.r;
-          toolHand(near ? T.clone().addScaledVector(UP, ph.takes === 'grater' ? 0 : 0.012) : at(pt));
+          const own = near && this.k3.fx[w.fx] && this.k3.fx[w.fx].parts.tools && this.k3.fx[w.fx].parts.tools[ph.takes];
+          const lying = ph.takes === 'knife' && own;
+          if (own && ph.takes === 'peeler') {
+            // (the peeler taken as it lies: the hand onto its handle, palm down, its blade on ahead – not stood up in my
+            // fist yet; it's the board's one, drawn where it lies, till I've got it)
+            own.updateMatrixWorld(true);
+            const along = new THREE.Vector3(0, 1, 0).transformDirection(own.matrixWorld), side = new THREE.Vector3(1, 0, 0).transformDirection(own.matrixWorld);
+            hand(wi, own.localToWorld(new THREE.Vector3(0, 0.022, 0)), 'knife', { dir: along.negate(), up: side, curl: 0.85 });
+          } else if (own && ph.takes === 'grater') {
+            // (the grater, standing: taken by the handle over its top)
+            own.updateMatrixWorld(true);
+            hand(wi, own.getWorldPosition(new THREE.Vector3()).addScaledVector(UP, 0.006), 'grab', { curl: 0.8 });
+          } else if (lying) {
+            // (the knife taken as it lies on the board: the hand onto its handle, palm down on its flat, along it)
+            const K = this.knifeLying(lying);
+            out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, up: K.yA, hand: wi, off: K.K0.clone().sub(K.fist) };
+            out.boardToolInHand = `${w.fx}|knife`; // (it's the one in my hand now: not drawn lying there as well)
+            hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
+          } else toolHand(near ? T.clone().addScaledVector(UP, ph.takes === 'grater' ? 0 : 0.012) : at(pt));
           if (T) out.rings.push({ w: T, r: 0.035 });
         } else {
           toolHand(at(pt));
@@ -2570,7 +2591,7 @@ export class Scene3D {
         const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lift * (C.top + 0.012));
         const K = this.knifeAt(E, blade, 0.05 + 0.2 * Math.min(1, lift));
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
-        hand(wi, K.fist, 'knife', { dir: K.xA });
+        hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
         // (on a touch screen it's held where the second finger is – not at all without one;
         // never nearer the blade than CLAW_GAP, even at the very end of it)
@@ -2669,6 +2690,13 @@ export class Scene3D {
           if (!leaves && off > 0) out.sprites.push({ tex: null, kind: { type: 'scraps', c1: skin, n: off }, st: {}, pos: C.clone().addScaledVector(w.R, rad + 0.075).addScaledVector(w.N, 0.035), size: 0.08 });
           break;
         }
+        // Turning what's been cut (the strips a quarter round): my hand flat on it, turning with it – not off round
+        // the pointer's circle
+        if (g.kind === 'circle' && ph.turn) {
+          const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`), C = ov ? ov.pos.clone() : w.O.clone(), a = g.lastAng || 0;
+          hand(wi, C.addScaledVector(w.R, Math.cos(a) * 0.012).addScaledVector(w.N, Math.sin(a) * 0.012).addScaledVector(UP, 0.028), 'hand', { curl: 0.2, dir: w.N.clone().negate().applyAxisAngle(UP, -(g.rot || 0)).addScaledVector(UP, -0.4).normalize() });
+          break;
+        }
         // Cleaning freehand: the sponge on the board / the pot's floor right under the pointer – pressed down on it while
         // held – the other hand steadying the pot by its side, or flat on the board's corner
         if (g.kind === 'paint' && ph.clean && def) {
@@ -2715,9 +2743,10 @@ export class Scene3D {
     }
     // the knife held at rest (between knife work: turning the strips …) – its tip on the board, at the right
     if (ph.held === 'knife' && !out.tool && !out.hands[oi]) {
-      const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, 0.02).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.25).normalize(), 0.3);
-      out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: oi, off: K.K0.clone().sub(K.fist) };
-      hand(oi, K.fist, 'knife', { dir: K.xA });
+      // (out on the board's right, its tip resting on it – the forearm laid along it, not drawn back to my side)
+      const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.1).addScaledVector(w.N, -0.1).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.4).normalize(), 0.3);
+      out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, up: K.yA, hand: oi, off: K.K0.clone().sub(K.fist) };
+      hand(oi, K.fist, 'knife', { dir: K.xA, up: K.yA });
     }
     // a second finger on a touch screen is my other hand
     if (st.ptr2 && !out.hands[oi]) hand(oi, at(st.ptr2), 'hand', { curl: 0.7 });
@@ -2810,7 +2839,14 @@ export class Scene3D {
     const xA = d.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(UP, -Math.sin(tilt)).normalize();
     const zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
     const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, KNIFE_EDGE);
-    return { xA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
+    return { xA, yA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
+  }
+  // the knife lying somewhere (the board's own): taken as it lies – its fist point, its length, its spine's way
+  knifeLying(o) {
+    o.updateMatrixWorld(true);
+    const xA = new THREE.Vector3(1, 0, 0).transformDirection(o.matrixWorld), yA = new THREE.Vector3(0, 1, 0).transformDirection(o.matrixWorld);
+    const K0 = o.getWorldPosition(new THREE.Vector3());
+    return { xA, yA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
   }
 
   // a little round spoonful (scooping)
@@ -2879,7 +2915,13 @@ export class Scene3D {
       if (T.at) { fx.tool.position.copy(T.at.pos); fx.tool.quaternion.setFromAxisAngle(UP, T.at.yaw); } else {
       fx.tool.position.copy(this.fpArms.group.visible ? this.fpArms.fist(T.hand) : T.grip);
       if (T.off) fx.tool.position.add(T.off);
-      if (T.kind === 'knife') {
+      if (T.kind === 'knife' && this.fpArms.group.visible && this.fpArms.hands[T.hand] && this.fpArms.hands[T.hand].hold === 'knife') {
+        // (in the hand, as the hand holds it – the knife grip's: KNIFE – wherever the hand's got to)
+        const xA = this.fpArms.handDir(T.hand, KNIFE.axis).normalize(), u0 = this.fpArms.handDir(T.hand, KNIFE.up);
+        const yA = u0.addScaledVector(xA, -u0.dot(xA)).normalize(), zA = new THREE.Vector3().crossVectors(xA, yA);
+        fx.tool.position.copy(this.fpArms.handPoint(T.hand, KNIFE.at));
+        fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
+      } else if (T.kind === 'knife') {
         // blade along x, its edge down (or, given the spine's way – up – on its side)
         const xA = T.dir.clone().normalize();
         const zA = T.up ? new THREE.Vector3().crossVectors(xA, T.up).normalize() : new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);

@@ -127,9 +127,10 @@ export function buildKitchen3D(K) {
       const b = d.anchors.board, up = v3(0, 1, 0);
       const flat = (o, dir, along) => { const a = dir.clone().normalize(); o.quaternion.setFromRotationMatrix(along === 'x' ? new THREE.Matrix4().makeBasis(a, new THREE.Vector3().crossVectors(up, a), up) : new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(a, up), a, up)); };
       const knife = chefKnifeMesh(), peeler = peelerMesh(), grater = graterMesh();
-      knife.position.set(b.x - 0.12, b.y + 0.007, b.z + 0.125);
-      flat(knife, v3(-0.35, 0, -1), 'x');
-      peeler.position.set(b.x - 0.035, b.y + 0.0065, b.z + 0.145);
+      // (the knife along the board's front, its edge away from me, the handle toward my right hand – as a cook leaves it)
+      knife.position.set(b.x - 0.01, b.y + 0.007, b.z + 0.14);
+      flat(knife, v3(-1, 0, -0.18), 'x');
+      peeler.position.set(b.x - 0.16, b.y + 0.0065, b.z + 0.07);
       flat(peeler, v3(0.25, 0, 1), 'y'); // (its handle toward me)
       grater.position.set(b.x - 0.2, b.y + 0.115, b.z - 0.11);
       d.parts.tools = { knife, peeler, grater };
