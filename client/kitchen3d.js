@@ -138,15 +138,34 @@ export function buildKitchen3D(K) {
       // and a stack of empty food containers on the worktop beside it (an empty one's taken from it
       // for what's been cut or portioned out)
       const nest = containerNest();
+      nest.userData.live = true; // (it moves aside when the board's stood up)
       nest.position.set(b.x + 0.39, b.y - (d.anchors.top ? b.y - d.anchors.top.y : 0.025), b.z - 0.06);
       g.add(nest);
+      d.parts.nest = nest;
       d.anchors.nest = nest.position.clone();
+      // (with the board stood up: the stack in the back corner the crock / bottles don't take, the knife and the
+      // peeler lying along the back beside it, the grater standing by it – the middle clear)
+      const side = cdecor[f.id] != null && cdecor[f.id] % 2 === 0 ? 1 : -1;
+      const ups = { nest: v3(side * 0.34, nest.position.y, -0.32), knife: v3(-side * 0.02, knife.position.y, -0.32), peeler: v3(-side * 0.16, peeler.position.y, -0.3), grater: v3(side * 0.12, grater.position.y, -0.34) };
+      for (const [k, o] of [['nest', nest], ['knife', knife], ['peeler', peeler], ['grater', grater]]) {
+        o.userData.flat = { pos: o.position.clone(), q: o.quaternion.clone() };
+        o.userData.up = { pos: ups[k], q: k === 'knife' || k === 'peeler' ? new THREE.Quaternion().setFromAxisAngle(up, Math.PI / 2).multiply(o.quaternion) : o.quaternion.clone() };
+      }
+      d.anchors.nestUp = ups.nest;
     }
     // place: local front is +z; face 'e' fronts turn to +x
     const cx = f.x + f.w / 2, cz = f.y + f.h / 2;
     g.position.set(cx, 0, cz);
     if (f.face === 'e') g.rotation.y = Math.PI / 2;
     const live = liveOut(g);
+    // (what moves between two poses – a board stood up, what goes aside with it – in the world's terms too)
+    const gq = g.getWorldQuaternion(new THREE.Quaternion());
+    for (const o of live) for (const k of ['flat', 'up']) {
+      const p = o.userData[k];
+      if (!p) continue;
+      p.pos = p.pos.clone().applyMatrix4(g.matrixWorld);
+      p.q = gq.clone().multiply(p.q || new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), p.rx || 0));
+    }
     stat.add(g);
     // anchors to world space
     const toWorld = (v) => v.clone().applyMatrix4(g.matrixWorld);
@@ -368,12 +387,21 @@ function counter(g, ctx, w, d, withBoard, doors = true) {
   else carcass(g, ctx, w, d, { doors: 0, drawer: false });
   worktop(g, ctx, w);
   if (withBoard) {
-    // (towards the front: in first person it's within a hand's reach)
-    g.add(rbox(0.52, 0.024, 0.36, mat('#c9955a', { rough: 0.65 }), 0, COUNTER_H, 0.2, 0.01));
+    // (towards the front: in first person it's within a hand's reach – or, for something big on the counter,
+    // stood up at the back against the wall: shared/cook.js boardDown)
+    const board = live(new THREE.Group());
+    board.position.set(0, COUNTER_H, 0.2);
+    board.add(rbox(0.52, 0.024, 0.36, mat('#c9955a', { rough: 0.65 }), 0, 0, 0, 0.01));
+    board.userData.flat = { pos: board.position.clone(), rx: 0 };
+    board.userData.up = { pos: v3(0, COUNTER_H + 0.18, -0.43), rx: -1.42 };
+    board.userData.handle = v3(0, 0.024, 0.17); // (its near edge, where it's taken hold of)
+    g.add(board);
+    d.parts.board = board;
     d.anchors.board = v3(0, COUNTER_H + 0.025, 0.2);
-    // after knife work: juice stains and crumbs on it (and suds while it's scrubbed)
-    const stains = live(new THREE.Group());
-    stains.position.set(0, COUNTER_H + 0.0255, 0.2);
+    d.anchors.bigSpot = v3(0, COUNTER_H, 0.05); // (something big, in the middle, with the board up)
+    // after knife work: juice stains and crumbs on it (and suds while it's scrubbed) – part of it, they go with it
+    const stains = new THREE.Group();
+    stains.position.set(0, 0.0255, 0);
     const dirt = [mat('#8a5a32', { rough: 0.9, opacity: 0.6 }), mat('#b8402a', { rough: 0.7, opacity: 0.55 })];
     for (let i = 0; i < 9; i++) {
       const r = 0.012 + ((i * 37) % 10) * 0.0025, m = new THREE.Mesh(new THREE.CircleGeometry(r, 10), dirt[i % 3 ? 0 : 1]);
@@ -386,7 +414,7 @@ function counter(g, ctx, w, d, withBoard, doors = true) {
     const suds = mat('#ffffff', { rough: 0.3, opacity: 0.85 });
     for (let i = 0; i < 7; i++) { const b = ball(0.012 + (i % 3) * 0.006, suds, ((i * 41) % 9 - 4) * 0.045, 0.004, ((i * 17) % 7 - 3) * 0.035, 1, 0.45, 1, 8); b.userData.suds = true; stains.add(b); }
     stains.visible = false;
-    g.add(stains);
+    board.add(stains);
     d.parts.stains = stains;
   }
   d.anchors.top = v3(0, COUNTER_H, 0.1);

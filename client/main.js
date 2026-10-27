@@ -436,6 +436,8 @@ function planText(p) {
     case 'take': return p.store ? `Get the ${thingName(C, x, p.key)} ${B ? `out of the ${B.name}` : f && f.type === 'fridge' ? 'from the fridge' : 'off the pantry shelf'}` : `Pick up the ${thingName(C, x, p.key)} from the ${where}`;
     case 'put': return `Put down what you’re holding${f ? ` on the ${where}` : ''}`;
     case 'go': return `Everything’s ready at the ${where}`;
+    case 'room': return `Make room on the ${where}: stand its board up at the back`;
+    case 'lay': return `Lay the board down on the ${where}`;
     case 'bin': return 'Take your scraps to a bin first';
     default: return p.why || '';
   }
@@ -647,6 +649,7 @@ function bestJob(f, all = jobsAt(f)) {
     const p = planStep(C, x, S.K, S.sel, S.myId);
     if (p && p.fx === f.id) {
       const j = p.do === 'go' ? jobs.find((q) => q.sid === S.sel)
+        : p.do === 'room' || p.do === 'lay' ? jobs.find((q) => q.sid === choreId(p.do, f.id))
         : p.do === 'put' ? jobs.find((q) => q.act === 'put')
           : p.do === 'take' ? jobs.find((q) => q.what === p.key || (p.store && q.store)) : null;
       if (j) return j;
@@ -1359,6 +1362,11 @@ function jobsAtNow(f) {
       const firstReady = out.findIndex((j) => !j.off);
       // a step that uses what I hold comes first; otherwise putting it down does
       if (firstReady >= 0 && out[firstReady].uses) out.splice(firstReady + 1, 0, put); else out.unshift(put);
+    }
+    // the board: stood up at the back for something big – or laid back down
+    if (S.K.bays && S.K.bays[`${f.id}/board`]) {
+      const up = C.fx[f.id] && C.fx[f.id].boardUp, full = held.length > 0;
+      out.push({ sid: choreId(up ? 'lay' : 'room', f.id), label: `${up ? '🔪 Lay the board down' : '↕️ Stand the board up – room for something big'}${full ? ' (hands full)' : ''}`, chore: true, off: full });
     }
     // a burner left on with nothing on it
     const lit = C.fx[f.id] && C.fx[f.id].lit;

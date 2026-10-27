@@ -176,7 +176,7 @@ export class Station {
         g.geo = this.doorGeo(ph.hot);
         const st = this.c.C.steps[this.sid];
         const fxs = this.c.C.fx[this.c.f.id] || {};
-        g.v = st && st.ph === this.ph && st.v != null ? st.v : fxs.door ? 1 : 0;
+        g.v = st && st.ph === this.ph && st.v != null ? st.v : (ph.hot === 'board' ? fxs.boardUp : fxs.door) ? 1 : 0;
         // already the way it should be (someone left it open): nothing to swing
         if (ph.to ? g.v >= 0.8 : g.v <= 0.2) setTimeout(() => { if (this.g === g && !this.done) this.value(ph.to, true); }, 200);
         break;
@@ -849,6 +849,7 @@ export class Station {
   doorGeo(hot) {
     if (!hot) hot = this.c.f.type === 'fridge' ? 'fridge' : this.c.f.type === 'shelf' ? 'pantry' : 'oven';
     if (hot === 'oven') return { kind: 'drop', hy: 570, x0: 250, x1: 750, h: 360 };
+    if (hot === 'board') return { kind: 'drop', hy: 600, x0: 290, x1: 710, h: 260 }; // (a counter's board, stood up at the back)
     if (hot === 'pantry') return { kind: 'swing', hx: 240, y0: 40, y1: 600, w: 520, glass: true, max: 1.5 };
     return { kind: 'swing', hx: 300, y0: 40, y1: 610, w: 420, max: 1.75 };
   }

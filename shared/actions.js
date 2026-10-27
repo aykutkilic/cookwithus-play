@@ -515,6 +515,18 @@ export const ACTIONS = {
   },
 
   // ------------------------------------------------------------- heat
+  // ------------------------------------------------------------- a counter: room for something big
+  // (a paella pan, a baking tray or dish on a counter: its board – the knife, the peeler, the grater with it –
+  // stood up at the back against the wall first; laid back down for board work. shared/cook.js boardDown)
+  room: {
+    cap: 'board', verb: 'Make room', tool: 'hand', icon: '↕️',
+    phases: () => [{ g: 'door', hot: 'board', to: 1, hint: 'Stand the board up at the back – room for the big one', eff: (S, st, v, fx) => { fx.boardUp = 1; } }],
+  },
+  lay: {
+    cap: 'board', verb: 'Lay the board down', tool: 'hand', icon: '🔪',
+    phases: () => [{ g: 'door', hot: 'board', to: 0, hint: 'Lay the board back down in front of you', eff: (S, st, v, fx) => { fx.boardUp = 0; } }],
+  },
+
   heat: {
     cap: 'hob', moves: true, verb: 'Heat', tool: 'hand', icon: '🔥',
     phases: (s) => [

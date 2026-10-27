@@ -396,16 +396,39 @@ export class Scene3D {
   // a store's handle (where a hand takes it), in the world
   handleWorld(fx) {
     const F = this.k3.fx[fx];
+    if (F && F.parts.board && F.parts.board.userData.flat && !F.parts.drop && !F.parts.leaf) { F.parts.board.updateWorldMatrix(true, false); return F.parts.board.localToWorld(F.parts.board.userData.handle.clone()); }
     if (F && F.parts.drop) { F.parts.drop.updateWorldMatrix(true, false); return F.parts.drop.localToWorld(OVEN_HANDLE.clone()); }
     if (!F || !F.parts.leaf) return null;
     F.parts.leaf.updateWorldMatrix(true, false);
     const [a, b] = F.parts.handle;
     return F.parts.leaf.localToWorld(a.clone().lerp(b, 0.5));
   }
+  // a counter's board, stood up this far (0 lying … 1 up against the wall) – and what moves aside with it
+  poseBoard(P, o) {
+    const B = P.board, u = B.userData, e = o * o * (3 - 2 * o);
+    B.position.lerpVectors(u.flat.pos, u.up.pos, e);
+    // (lifted at its near edge first, then over: the back edge stays near the worktop)
+    B.quaternion.slerpQuaternions(u.flat.q, u.up.q, Math.min(1, e * 1.15));
+    u.posed = o;
+    for (const q of [P.nest, ...(P.tools ? Object.values(P.tools) : [])]) {
+      if (!q || !q.userData.flat) continue;
+      const k = Math.min(1, e * 1.6); // (they're moved first)
+      q.position.lerpVectors(q.userData.flat.pos, q.userData.up.pos, k);
+      q.quaternion.slerpQuaternions(q.userData.flat.q, q.userData.up.q, k);
+    }
+    B.updateMatrixWorld(true);
+  }
   // where a door's handle would be, open this far (0 … 1) – as it swings in updateFixtures
   doorHandleAt(fx, v) {
     const F = this.k3.fx[fx], P = F && F.parts;
     if (!P) return null;
+    if (P.board && P.board.userData.flat && !P.drop && !P.leaf) {
+      const was = P.board.userData.posed ?? 0;
+      this.poseBoard(P, v);
+      const out = P.board.localToWorld(P.board.userData.handle.clone());
+      this.poseBoard(P, was);
+      return out;
+    }
     const turn = P.drop && P.drop.userData.baseX != null ? ['x', P.drop, P.drop.userData.baseX + v * 1.45] : P.leaf && P.door && P.door.userData.base != null ? ['y', P.door, P.door.userData.base - v * 1.75] : null;
     if (!turn) return null;
     const [ax, obj, r] = turn, was = obj.rotation[ax];
@@ -802,6 +825,15 @@ export class Scene3D {
         else B.obj.rotation.y = B.base.rotY + B.sign * u.o * 1.75;
         B.obj.updateMatrixWorld(true);
       }
+      if (P.board && P.board.userData.flat) {
+        // a counter's board stood up at the back (for something big) or laid down – by my hands at work, else as
+        // the kitchen has it; its knife, peeler, grater and the stack of containers move aside with it
+        const u = P.board.userData;
+        if (u.o == null) u.o = 0;
+        const liveB = view.doors && view.doors.has(id);
+        const want = liveB ? view.doors.get(id) : fxs[id] && fxs[id].boardUp ? 1 : 0;
+        if (Math.abs(want - u.o) > 0.001) { u.o += (want - u.o) * (liveB ? 0.35 : 0.18); this.poseBoard(P, u.o); } else if (u.posed !== want) { u.o = want; this.poseBoard(P, want); }
+      }
       if (P.drop) {
         // the oven door folds down towards you
         const u = P.drop.userData;
@@ -1003,7 +1035,7 @@ export class Scene3D {
     const F = this.k3.fx[fid], spec = this.K.bays && this.K.bays[place];
     if (!F || !spec) return null;
     if (bay === 'board' || bay === 'crock' || bay === 'corner' || bay === 'gloves') {
-      const A = bay === 'board' ? F.anchors.boardTools : F.anchors[bay];
+      const A = bay === 'board' ? (F.parts.tools ? ['knife', 'peeler', 'grater'].map((t) => F.parts.tools[t].getWorldPosition(new THREE.Vector3())) : F.anchors.boardTools) : F.anchors[bay];
       if (!A) return null;
       return { spec, out: F.front, lie: bay === 'board' ? 'board' : bay === 'crock' ? 'crock' : 'up', hidden: false, open: 1, at: (r, i) => A[Math.min(i, A.length - 1)].clone() };
     }
@@ -1119,6 +1151,8 @@ export class Scene3D {
         else if (A.inside) stand = A.inside; // on the oven's rack (it shows through the door's glass)
         else if (A.basin && F.f.type === 'sink') stand = (A.spout || A.basin).clone().setY(A.basin.y + 0.02); // (right under the spout)
         else if (F.f.type === 'fridge') stand = A.shelf; // chilling (behind the door)
+        // (something big on a counter with its board stood up: in the middle, where the board lay)
+        else if (A.bigSpot && VESSELS[v.kind] && VESSELS[v.kind].big && F.parts.board && F.parts.board.userData.posed > 0.5) stand = A.bigSpot;
         // (what a step here is working in – the tea glasses being stirred, the cups the foam goes into – stands on
         // the board, under my hands)
         else if (A.board && view.activeVessels && view.activeVessels.get(v.at.fx) === id) stand = A.board;
@@ -1880,6 +1914,8 @@ export class Scene3D {
       const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, 0.03);
       return this.fitCam({ look, pos: look.clone().addScaledVector(w.N, 0.3).addScaledVector(UP, 0.55) }, pts, 0.5, 0.25);
     }
+    // (standing a board up at the back, laying it down: from further back, seeing the whole counter)
+    if (g && g.kind === 'door' && g.ph.hot === 'board') { const look = w.O.clone().addScaledVector(w.N, -0.2).addScaledVector(UP, 0.08); return { look, pos: look.clone().addScaledVector(w.N, 0.85).addScaledVector(UP, 0.55) }; }
     const real = this.workReal(w, st);
     // (the oven gloves, lying on its worktop: looking at them, from where I stand)
     if (real && g.kind === 'tap' && g.ph.hot === 'gloves') return { look: real.w.clone(), pos: real.w.clone().addScaledVector(w.N, 0.5).addScaledVector(UP, 0.5) };
@@ -2509,7 +2545,7 @@ export class Scene3D {
   boxSpot(w) { return w.O.clone().addScaledVector(w.R, 0.19).addScaledVector(w.N, 0.1); }
   // (the stack of empty food containers on the worktop beside the board)
   nestSpot(w) {
-    const F = this.k3.fx[w.fx], n = F && F.anchors.nest;
+    const F = this.k3.fx[w.fx], n = F && (F.parts.nest ? F.parts.nest.getWorldPosition(new THREE.Vector3()) : F.anchors.nest);
     return n ? n.clone() : w.O.clone().addScaledVector(w.R, 0.39).addScaledVector(w.N, -0.06).setY(w.O.y - 0.025);
   }
   // (portioning a bunch: its container in the middle of the board, the new one on its right – clear of
