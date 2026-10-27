@@ -1794,7 +1794,7 @@ export class Scene3D {
       if (i >= 0) holds[i] = { kind: 'grab', at: handAt(view.fpGrab.w, i ? 1 : -1) };
     }
     this.armHolds = holds; // (for test/arms.html: what my hands were asked to do)
-    this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t, hideAway: (this.workCamK || 0) > 0.02 });
+    this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t, hideAway: (this.workCamK || 0) > 0.02, view: this.camera });
     this.workMoved = new Set(this.work && !this.work.idle ? this.work.ov.keys() : []);
   }
 

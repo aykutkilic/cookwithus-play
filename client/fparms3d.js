@@ -223,16 +223,16 @@ export class FpArms {
     for (const h of this.hands) if (h.limb) this.group.remove(h.limb.root);
     const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 }), cuff = mat('#f6f2ea', { rough: 0.8 });
     const cuffIn = cuff.clone(); cuffIn.side = THREE.DoubleSide; // (open: its inside seen round the wrist)
-    const sleeve = fading(shirt);
     // (the rigged hand's skin: a soft warm sheen at its edges, as skin has)
     const skinRig = new THREE.MeshPhysicalMaterial({ color: look.skin, roughness: 0.55, sheen: 0.6, sheenColor: new THREE.Color('#ff9a8a'), sheenRoughness: 0.5 });
     const tube = new THREE.CylinderGeometry(0.85, 1, 1, 18, 1, true);
     const ball = new THREE.SphereGeometry(1, 24, 16);
     for (const h of this.hands) {
       const root = new THREE.Group();
-      const upper = new THREE.Mesh(tube, sleeve), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
-      upper.userData.noAO = true; // (see-through toward the shoulder: kept out of the ambient occlusion)
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 18, 1, true), cuffIn);
+      const upper = new THREE.Mesh(tube, shirt), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
+      upper.userData.noAO = true; // (running on up past the camera's edge: kept out of the ambient occlusion)
+      // (the cuff closing in a little round the wrist – not a wide ring with its dark inside showing)
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.86, 1, 1, 18, 1, true), cuffIn);
       const hand = new THREE.Group();
       hand.scale.set(h.s * HS, HS, HS);
       const palm = new THREE.Mesh(ball, skin);
@@ -369,8 +369,12 @@ export class FpArms {
   // resting on a worktop gives sh too: its shoulder where my body is – not turned
   // down with my eyes as I look at it, which would pull the hand off it.)
   // (hideAway: a camera that isn't my eyes – at work – would see a hand hanging at my side: once it's got there, it's not drawn)
-  update(dt, holds, { visible = true, walk = 0, t = 0, hideAway = false } = {}) {
+  // (view: the camera that's looking – not my eyes, at work – that my sleeves run on out of the sight of)
+  update(dt, holds, { visible = true, walk = 0, t = 0, hideAway = false, view = null } = {}) {
     this.group.visible = visible;
+    this.group.updateWorldMatrix(true, false);
+    this.toView = view ? new THREE.Matrix4().multiplyMatrices(view.matrixWorldInverse, this.group.matrixWorld) : null;
+    this.viewCam = view;
     // (the world's up, my back and my right in my eyes' space – which way an elbow hangs)
     const up = this.upLocal(), back = v(0, 0, 1).addScaledVector(up, -up.z);
     this.frame = { up, back: back.lengthSq() > 1e-6 ? back.normalize() : v(0, 0, 1), out: v(1, 0, 0).addScaledVector(up, -up.x).normalize() };
@@ -606,14 +610,15 @@ export class FpArms {
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
     // (a shirt sleeve over the forearm, its cuff loose round the wrist, open: the rigged hand – life size – comes out
     // of it at the wrist, whichever way it's bent)
+    const top = this.sleeveTop(e, sh) || e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0)));
     if (L.rig) {
-      tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.0235);
+      tube(L.upper, top, e, 0.0235);
       tube(L.fore, e, w.clone().addScaledVector(f, 0.016), 0.021);
       L.elbow.position.copy(e);
       L.elbow.scale.setScalar(0.0226); // (round over both sleeves' ends)
       tube(L.band, w.clone().addScaledVector(f, 0.02), w.clone().addScaledVector(f, -0.003), 0.0188);
     } else {
-      tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024);
+      tube(L.upper, top, e, 0.024);
       tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021);
       L.elbow.position.copy(e);
       L.elbow.scale.setScalar(0.0232);
@@ -651,25 +656,30 @@ export class FpArms {
   }
 }
 
-// The upper sleeve: solid at the elbow, fading out toward the shoulder – the
-// camera at work, standing back from me, sees my arms from behind, and they
-// mustn't end there in a hard cut-off tube. (By the distance from its elbow
-// end, its local top: the sleeve's scaled to its length along y.)
-const FADE_FROM = 0.02, FADE_TO = 0.16;
-function fading(m) {
-  const f = m.clone();
-  f.transparent = true;
-  f.depthWrite = false;
-  f.alphaTest = 0.01;
-  f.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vFromElbow;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFromElbow = (0.5 - position.y) * length(modelMatrix[1].xyz);');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vFromElbow;')
-      .replace('#include <alphatest_fragment>', `diffuseColor.a *= 1.0 - smoothstep(${FADE_FROM.toFixed(3)}, ${FADE_TO.toFixed(3)}, vFromElbow);\n#include <alphatest_fragment>`);
+// The upper sleeve's far end. A camera at work stands back from me and sees
+// where my shoulders are: an arm mustn't stop there, a cut-off tube in the
+// middle of the picture. It comes on in from out of sight, as my arms come into
+// my eyes' sight: from the elbow to my shoulder taken on back, behind me, as
+// far as it takes to be out of the picture – from over me that's in at its
+// bottom edge, from behind me past the camera on that arm's side. (null: up
+// through my shoulder as it is – out of sight already, or no camera to go by)
+FpArms.prototype.sleeveTop = function (e, sh) {
+  const M = this.toView, cam = this.viewCam, F = this.frame;
+  if (!M || !cam || !F) return null;
+  const P = v(0, 0, 0);
+  const out = (p) => {
+    P.copy(p).applyMatrix4(M);
+    if (P.z > -cam.near * 2) return true;
+    P.applyMatrix4(cam.projectionMatrix);
+    return Math.abs(P.x) > 1.1 || Math.abs(P.y) > 1.1;
   };
-  f.customProgramCacheKey = () => 'sleeveFade';
-  return f;
-}
+  if (out(e.clone().lerp(sh, 1.25))) return null;
+  for (let k = 0.05; k <= 1.5; k += 0.05) {
+    const p = sh.clone().addScaledVector(F.back, k);
+    if (out(p)) return p.addScaledVector(F.back, 0.05);
+  }
+  return sh.clone().addScaledVector(F.back, 1.5);
+};
 
 // a sleeve (the open cylinder, narrower at its top) from a to b, this thick
 function tube(m, a, b, r) {
