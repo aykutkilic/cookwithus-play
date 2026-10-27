@@ -206,7 +206,8 @@ export class FpArms {
   // Each frame: holds[i] = {kind: 'handle' | 'palm' | 'side', at?} or null. (A hand
   // resting on a worktop gives sh too: its shoulder where my body is – not turned
   // down with my eyes as I look at it, which would pull the hand off it.)
-  update(dt, holds, { visible = true, walk = 0, t = 0 } = {}) {
+  // (hideAway: a camera that isn't my eyes – at work – would see a hand hanging at my side: once it's got there, it's not drawn)
+  update(dt, holds, { visible = true, walk = 0, t = 0, hideAway = false } = {}) {
     this.group.visible = visible;
     const k = 1 - Math.exp(-dt * 12 * BRISK);
     for (let i = 0; i < 2; i++) {
@@ -260,6 +261,7 @@ export class FpArms {
         h.curl += (want.curl - h.curl) * k;
       }
       h.hold = kind;
+      if (h.limb) h.limb.root.visible = !(hideAway && kind === 'away' && !h.reach && h.wrist.distanceTo(want.wrist) < 0.12);
       if (h.limb) this.drawTool(h, visible);
       if (visible && h.limb) this.draw(h);
     }

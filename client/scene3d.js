@@ -24,7 +24,7 @@ import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, has
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt } from './props3d.js';
-import { BOARD_TOOLS, boardUnits } from '../shared/actions.js';
+import { ACTIONS, BOARD_TOOLS, boardUnits } from '../shared/actions.js';
 import { SAKIR, phaseTarget } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
@@ -33,11 +33,22 @@ const LIGHTS = 6;
 const KNIFE_EDGE = knifeEdgeAt(0.08); // (how far below the knife's line its edge is where it cuts – props3d.js)
 const GLIDE_S = 0.6 / BRISK;   // a thing taken / put down travels this long, low, settling gently
 const REACH_S = 0.55 / BRISK;  // and the cook reaches out for it
+const OVEN_HANDLE = new THREE.Vector3(0, 0.28, 0.035); // (the oven door's handle, in its hinge's space – kitchen3d.js)
 const EYE_H = 0.84;    // first person: eye height (a counter is 0.46 – about 90 cm – so about 165 cm)
 const UP = new THREE.Vector3(0, 1, 0);
 const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
 const BOX_HALF = [0.06, 0.08, 0.105];
 const TIP_LOW = 0.05; // (a food's container held over the pot to tip it in: this far below where the close-up has it – just over the rim) // (a food container's half width, by its size in the nesting set)
+// working in an oven, a fridge …: where the camera looks (look, lookUp: out from the spot inside it, up), where it
+// looks from (out, up from there – low enough to see in under the oven's top) and where I am (body: out from the
+// spot, eye: up from it – crouched for a low oven – near enough for my arms to reach in)
+const INTO = {
+  oven: { look: 0.32, lookUp: 0.02, out: 0.85, up: 0.42, body: 0.5, eye: 0.42 },
+  // (the fridge: from its handle's side, back out of its door's swing)
+  chill: { look: 0.22, lookUp: 0.08, out: 1.05, side: 0.34, up: 0.42, body: 0.5, eye: 0.42 },
+  dome: { look: 0.05, lookUp: 0.04, out: 0.7, up: 0.35, body: 0.5, eye: 0.2 },
+  tandoor: { look: 0.05, lookUp: 0.04, out: 0.6, up: 0.45, body: 0.45, eye: 0.3 },
+};
 const CLAW_GAP = 0.05; // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
@@ -170,6 +181,7 @@ export class Scene3D {
     this.K = buildKitchen(size, cuisine);
     this.k3 = buildKitchen3D(this.K);
     this.glides.clear();
+    this.parkedAt = null;
     this.scene.add(this.k3.root);
     const T = this.k3.theme;
     this.hemi.color.set(T.light.sky); this.hemi.groundColor.set(T.light.ground); this.hemi.intensity = T.light.hemi;
@@ -323,10 +335,36 @@ export class Scene3D {
   // a store's handle (where a hand takes it), in the world
   handleWorld(fx) {
     const F = this.k3.fx[fx];
+    if (F && F.parts.drop) { F.parts.drop.updateWorldMatrix(true, false); return F.parts.drop.localToWorld(OVEN_HANDLE.clone()); }
     if (!F || !F.parts.leaf) return null;
     F.parts.leaf.updateWorldMatrix(true, false);
     const [a, b] = F.parts.handle;
     return F.parts.leaf.localToWorld(a.clone().lerp(b, 0.5));
+  }
+  // where a door's handle would be, open this far (0 … 1) – as it swings in updateFixtures
+  doorHandleAt(fx, v) {
+    const F = this.k3.fx[fx], P = F && F.parts;
+    if (!P) return null;
+    const turn = P.drop && P.drop.userData.baseX != null ? ['x', P.drop, P.drop.userData.baseX + v * 1.45] : P.leaf && P.door && P.door.userData.base != null ? ['y', P.door, P.door.userData.base - v * 1.75] : null;
+    if (!turn) return null;
+    const [ax, obj, r] = turn, was = obj.rotation[ax];
+    obj.rotation[ax] = r;
+    obj.updateMatrixWorld(true);
+    const out = this.handleWorld(fx);
+    obj.rotation[ax] = was;
+    obj.updateMatrixWorld(true);
+    return out;
+  }
+  // how far open the door is with my hand on its handle at this point of the screen (the nearest along its swing)
+  doorVAt(fx, cx, cy) {
+    let best = null;
+    for (let i = 0; i <= 40; i++) {
+      const v = i / 40, hw = this.doorHandleAt(fx, v);
+      if (!hw) return null;
+      const s = this.screenOf(hw), d = Math.hypot(s.x - cx, s.y - cy);
+      if (!best || d < best.d) best = { v, d };
+    }
+    return best;
   }
   // How far open the door would be with the hand holding its handle at this
   // point of the screen: round its hinge, as far as the handle swings.
@@ -596,7 +634,11 @@ export class Scene3D {
         const A = this.workCamAt, g = 1 - Math.exp(-dt * 5 * BRISK);
         if (!A || !this.workCamK) this.workCamAt = { pos: wc.pos.clone(), look: wc.look.clone() };
         else { A.pos.lerp(wc.pos, g); A.look.lerp(wc.look, g); }
-        this.workBodyAt = this.work.body || null;
+        // (and my body with it – from the knob to the oven's inside to the door's handle – not in a jump)
+        const Bw = this.work.body;
+        if (!Bw) this.workBodyAt = null;
+        else if (!this.workBodyAt || this.workCamK < 0.05) this.workBodyAt = { pos: Bw.pos.clone(), fwd: Bw.fwd.clone() };
+        else { this.workBodyAt.pos.lerp(Bw.pos, g); this.workBodyAt.fwd.lerp(Bw.fwd, g).normalize(); }
       }
       this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6 * BRISK));
       if (!wc && this.workCamK < 0.003) this.workCamK = 0;
@@ -672,9 +714,11 @@ export class Scene3D {
       // a board after knife work: its stains (going as it's scrubbed) and the suds
       if (P.stains) {
         const wl = this.work && this.work.washing && this.work.washing.fx === id && !this.work.washing.vid ? this.work.washing : null;
-        P.stains.visible = !!(fxs[id] && fxs[id].dirty) || !!wl;
+        // (and while a step's worked on it, coming as it goes)
+        const going = this.work && !this.work.idle && this.work.fx === id ? this.work.boardDirt || 0 : 0;
+        P.stains.visible = !!(fxs[id] && fxs[id].dirty) || !!wl || going > 0.05;
         if (P.stains.visible) {
-          const dirt = wl ? wl.dirt : 1, suds = wl ? wl.suds : 0;
+          const dirt = wl ? wl.dirt : fxs[id] && fxs[id].dirty ? 1 : going, suds = wl ? wl.suds : 0;
           P.stains.children.forEach((m, i) => { m.visible = m.userData.dirt ? i / 9 < dirt - 0.02 : suds > (i % 7) / 9; });
         }
       }
@@ -733,10 +777,11 @@ export class Scene3D {
           if (P.knobs && P.knobs[slot] && this.work && this.work.knob && this.work.knob.fx === id && this.work.knob.slot === slot) P.knobs[slot].rotation.z = -this.work.knob.level * 0.9;
         });
       }
-      // ovens glow when something bakes inside
+      // ovens glow when something bakes inside (and the temperature knob is turned to it)
       if (P.glow) {
-        const on = D && Object.values(D.vessels).some((v) => v.at && v.at.fx === id && v.heat > 0 && !v.onHob);
-        P.glow.material.emissiveIntensity = on ? 1.4 + Math.sin(this.t * 3) * 0.15 : 0;
+        const inV = D && Object.values(D.vessels).find((v) => v.at && v.at.fx === id && v.heat > 0 && !v.onHob);
+        P.glow.material.emissiveIntensity = inV ? 1.4 + Math.sin(this.t * 3) * 0.15 : 0;
+        if (P.knobs && P.knobs[0]) P.knobs[0].rotation.z = this.work && this.work.knob && this.work.knob.fx === id ? -this.work.knob.level * 0.9 : -(inV ? inV.heat : 0) * 0.9;
       }
       if (P.fire) P.fire.children.forEach((c, i) => { c.scale.y = 0.75 + Math.sin(this.t * (9 + i) + i * 2) * 0.3; });
       if (P.fire && P.fire.isMesh) P.fire.material.emissiveIntensity = 2.6 + Math.sin(this.t * 5) * 0.4;
@@ -789,6 +834,8 @@ export class Scene3D {
       // (four places along the front of a shelf – and when those are taken, four more behind them)
       const SLOTS = [0.125, 0.375, 0.625, 0.875], BACK = 0.19;
       const taken = Ls.map(() => new Set());
+      // (the fridge: the middle of its second shelf – front and back – is kept for a pot put in to chill)
+      if (fridge && taken[1]) for (const i of [1, 2, 5, 6]) taken[1].add(i);
       const put = (k, lv, u, back = false) => {
         const pos = Ls[lv].clone().lerp(Rs[lv], u).addScaledVector(F.front, back ? -BACK : 0);
         out.set(k, { pos, yaw: k[0] === 'v' && GRIP3D[kindOf(k)] ? Math.atan2(F.front.z, -F.front.x) : null, stored: true, out: F.front, sig: `s:${fx}:${lv}:${u.toFixed(2)}${back ? 'b' : ''}` });
@@ -1007,7 +1054,7 @@ export class Scene3D {
         if (!F) stand = null;
         else if (A.burners && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner') && A.burners[v.at.slot]) stand = A.burners[v.at.slot];
         else if (A.mouth) stand = A.mouth;
-        else if (A.inside) stand = null; // shut in the oven
+        else if (A.inside) stand = A.inside; // on the oven's rack (it shows through the door's glass)
         else if (A.basin && F.f.type === 'sink') stand = (A.spout || A.basin).clone().setY(A.basin.y + 0.02); // (right under the spout)
         else if (F.f.type === 'fridge') stand = A.shelf; // chilling (behind the door)
         // (what a step here is working in – the tea glasses being stirred, the cups the foam goes into – stands on
@@ -1023,6 +1070,9 @@ export class Scene3D {
         if (v.inDw && A.rack) stand = A.rack;
         // (my hand setting it down: it goes right to where it will stand, and lets go there)
         if (kept && stand && this.fpGripAt) for (const { r, i } of this.fpPuts(`v:${id}`)) { const gp = this.fpGripAt(`v:${id}`, i, stand, 0); if (gp) { r.world = gp.world; if (gp.aimAt) r.aimAt = gp.aimAt; } }
+        const pk = this.parkedAt && this.parkedAt.get(`v:${id}`);
+        if (pk && (kept || !F || v.at.fx !== pk.fx || v.at.slot !== pk.slot)) this.parkedAt.delete(`v:${id}`);
+        else if (pk && !ov) stand = pk.pos;
         p = kept ? kept.pos : stand;
         if (!p || (!kept && v.inDw)) continue;
         seen.add(id);
@@ -1034,7 +1084,7 @@ export class Scene3D {
           this.dynamic.add(rec.group);
         }
         rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
-        rec.group.rotation.set(0, kept && kept.yaw != null ? kept.yaw : F && F.f.type === 'sink' && !kept ? this.sinkYaw(F) : 0, 0);
+        rec.group.rotation.set(0, kept && kept.yaw != null ? kept.yaw : pk && !ov && this.parkedAt.has(`v:${id}`) ? pk.yaw : F && F.f.type === 'sink' && !kept ? this.sinkYaw(F) : 0, 0);
         rec.group.scale.setScalar(ov || (kept && kept.fp) ? 1 : kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         // (at work, first person: tipped to pour, tossed …)
         if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
@@ -1229,6 +1279,12 @@ export class Scene3D {
         const L = r && lie();
         if (L) r.world = L.pos.clone().addScaledVector(UP, 0.01);
         put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17, kept.yaw || 0, { of: it });
+        continue;
+      }
+      const pk = this.parkedAt && this.parkedAt.get(`i:${id}`);
+      if (pk && it.at !== pk.fx) this.parkedAt.delete(`i:${id}`);
+      else if (pk) {
+        put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, `p:${pk.fx}`, pk.pos), 0.24, pk.yaw, null, pk.scale);
         continue;
       }
       const L = lie();
@@ -1598,7 +1654,7 @@ export class Scene3D {
       const i = want >= 0 && holds[want] == null ? want : holds[1] == null ? 1 : holds[0] == null ? 0 : -1;
       if (i >= 0) holds[i] = { kind: 'grab', at: handAt(view.fpGrab.w, i ? 1 : -1) };
     }
-    this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t });
+    this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t, hideAway: (this.workCamK || 0) > 0.02 });
     this.workMoved = new Set(this.work && !this.work.idle ? this.work.ov.keys() : []);
   }
 
@@ -1752,11 +1808,41 @@ export class Scene3D {
     }
     const real = this.workReal(w, st);
     if (real) {
-      const look = real.w.clone().lerp(w.O, 0.4);
-      return { look, pos: look.clone().addScaledVector(w.N, 0.42).addScaledVector(UP, 0.62) };
+      // (a knob low on the front: from further out and lower – the knob, the hand coming to it and the pan above)
+      const low = real.w.y < COUNTER_H - 0.02;
+      const look = real.w.clone().lerp(w.O, low ? 0.3 : 0.4);
+      return { look, pos: look.clone().addScaledVector(w.N, low ? 0.78 : 0.42).addScaledVector(UP, low ? 0.4 : 0.62) };
+    }
+    // an oven, a fridge …: looking in at it from in front, a little above – the door, the inside, my hands going in
+    const into = INTO[w.kind];
+    if (into) {
+      const look = w.O.clone().addScaledVector(w.N, into.look).addScaledVector(UP, into.lookUp);
+      // (taking a door's handle: looking down toward it too – an oven's door, dropped open, lies low in front)
+      const hw = g && g.kind === 'door' && this.handleWorld(w.fx);
+      if (hw) look.lerp(hw, hw.y < w.O.y ? 0.7 : 0.45);
+      return { look, pos: look.clone().addScaledVector(w.N, into.out).addScaledVector(w.R, into.side || 0).addScaledVector(UP, into.up) };
     }
     const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, 0.03);
     return { look, pos: look.clone().addScaledVector(w.N, 0.21).addScaledVector(UP, 0.5) };
+  }
+  // When a step ends, what's on its counter / stove stays just where it's drawn – the glass I stirred on the
+  // board, the dough I rolled, the bowl that stood aside – till someone takes it (not back to where the
+  // kitchen would set it, by itself). Not what was in the air or tipped: that glides back down.
+  parkAfterWork(prev, view) {
+    const D = view.D;
+    if (!D) return;
+    this.parkedAt = this.parkedAt || new Map();
+    for (const [id, v] of Object.entries(D.vessels)) {
+      if (!v.at || v.at.fx !== prev.fx || v.held != null) continue;
+      const rec = this.vessels.get(id), ov = prev.ov.get(`v:${id}`);
+      if (!rec || !rec.group.visible || (ov && (ov.tilt || ov.hide))) continue;
+      this.parkedAt.set(`v:${id}`, { fx: prev.fx, slot: v.at.slot, pos: rec.group.position.clone(), yaw: rec.group.rotation.y });
+    }
+    for (const [id, it] of Object.entries(D.items)) {
+      const ov = prev.ov.get(`i:${id}`);
+      if (!ov || ov.hide || ov.box || it.in || it.hidden || it.held != null || it.at !== prev.fx || boxable(it.kind)) continue;
+      this.parkedAt.set(`i:${id}`, { fx: prev.fx, pos: ov.pos.clone(), yaw: ov.yaw ?? prev.yaw ?? 0, scale: ov.scale });
+    }
   }
   // the screen shift (px) from the real thing to where the close-up has it
   workOffset(w, st) {
@@ -1778,8 +1864,12 @@ export class Scene3D {
   // What my hands do at work this frame, and where the things they move are
   // (from the close-up's state): this.work = {hands, ov, sprites, rings, stream, knob}.
   workScene(view) {
+    const prev = this.work;
     this.work = null;
     const W = view.work;
+    // (a step just finished, or I stepped away: what it left where it was stays there – nothing moves by itself)
+    const going = W && W.st && W.st.on && this.firstPerson && W.frame && W.st.g && !W.st.done;
+    if (prev && !prev.idle && prev.fx && !going) this.parkAfterWork(prev, view);
     if (!W || !W.st || !W.st.on || !this.firstPerson || !W.frame) return;
     const st = W.st, g = st.g, w = W.frame;
     // (gathered into its container – the step's done: it stays where I dropped it in)
@@ -1788,9 +1878,18 @@ export class Scene3D {
     if (!g || st.done) { this.work = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, idle: true }; return; }
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
-    const out = { hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st), boxes: [] };
+    const def = st.c && st.c.def, n = st.c ? st.c.phases.length : 1;
+    const boardDirt = def && ACTIONS[def.do] && ACTIONS[def.do].cap === 'board' ? Math.min(1, (st.ph + Math.min(1, st.k / Math.max(1, phaseTarget(ph)))) / Math.max(1, n)) : 0;
+    const out = { fx: w.fx, boardDirt, hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st), boxes: [] };
     // (where my body is, working: right up against it, leaning over – the knob, the tap's lever: as I stand)
-    if (!out.real) out.body = { pos: w.O.clone().addScaledVector(w.N, 0.25).addScaledVector(UP, 0.46), fwd: w.N.clone().negate() };
+    const realW = out.real && this.workReal(w, st).w, inside = INTO[w.kind];
+    const doorW = g.kind === 'door' && this.handleWorld(w.fx);
+    if (realW || doorW) {
+      // (the knob, the tap's lever, a door's handle: I step up to it, bending for one low down – within my arm's reach)
+      const at = realW || doorW;
+      out.body = { pos: at.clone().addScaledVector(w.N, 0.45).setY(Math.min(EYE_H, at.y + 0.45)), fwd: w.N.clone().negate() };
+    } else if (inside) out.body = { pos: w.O.clone().addScaledVector(w.N, inside.body).addScaledVector(w.R, (inside.side || 0) * 0.5).addScaledVector(UP, inside.eye), fwd: w.N.clone().negate() };
+    else out.body = { pos: w.O.clone().addScaledVector(w.N, 0.25).addScaledVector(UP, 0.46), fwd: w.N.clone().negate() };
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -1988,10 +2087,13 @@ export class Scene3D {
           // the washing water tipped out of the container, into the basin – tipped on its edge, the
           // other side lifted (not so far the food falls out)
           const base = basin || w.O.clone();
-          const tilt = g.pouring ? 0.6 : 0.08, hw = 0.09;
+          const it = D && D.items[g.subject.id];
+          const tilt = g.pouring ? 0.6 : 0.08, hw = it ? (BOX_HALF[boxSpec(it.kind, it).size] || 0.07) : 0.07, ht = 0.05;
           const pos = base.clone().addScaledVector(w.R, hw * (Math.cos(tilt) - 1)).addScaledVector(UP, hw * Math.sin(tilt));
           out.ov.set(`i:${g.subject.id}`, { pos, size: 0.2, box: { water: this.washWater, tilt, axis: w.N } });
-          hand(wi, base.clone().addScaledVector(w.R, hw * Math.cos(tilt) * 2 - hw).addScaledVector(UP, 0.05 + hw * 2 * Math.sin(tilt)), 'grab', { curl: 0.9 });
+          // (my fist round its rim on the side that lifts, going up with it)
+          const rim = pos.clone().addScaledVector(w.R, hw * Math.cos(tilt) - ht * Math.sin(tilt)).addScaledVector(UP, hw * Math.sin(tilt) + ht * Math.cos(tilt));
+          hand(wi, rim.addScaledVector(w.R, 0.012), 'grab', { curl: 0.9, dir: w.N.clone().negate() });
           if (g.pouring && this.washWater > 0.03) out.stream = { from: base.clone().addScaledVector(w.R, -hw).addScaledVector(UP, 0.03), to: base.clone().addScaledVector(w.R, -hw - 0.05).addScaledVector(UP, -0.005), color: '#cfe8f8' };
         } else if (g.kind === 'pour' && ph.tip) {
           // A food's container, held over the pot's rim where it was brought – tipped further the
@@ -2078,8 +2180,10 @@ export class Scene3D {
         break;
       }
       case 'door': {
-        hand(wi, at(st.doorGrab(g.geo, g.v)), 'grab', { curl: g.drag ? 0.9 : 0.4 });
-        if (!g.drag) ring({ ...st.doorGrab(g.geo, g.v), r: 45 });
+        // (the real door's handle, where it is now – the close-up's door is only how far open it is)
+        const hw = this.handleWorld(w.fx) || at(st.doorGrab(g.geo, g.v));
+        hand(wi, hw, 'grab', { curl: g.drag ? 0.9 : 0.4 });
+        if (!g.drag) out.rings.push({ w: hw.clone(), r: 0.045 });
         break;
       }
       case 'scoop': {

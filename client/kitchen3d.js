@@ -514,23 +514,51 @@ function stove(g, ctx, d, slots) {
 
 function oven(g, ctx, d) {
   const { T } = ctx;
-  g.add(box(0.98, COUNTER_H - 0.04, 0.9, mat('#3a3a42', { metal: 0.5, rough: 0.35 }), 0, 0, -0.02));
-  // the door drops down on its bottom hinge (window, glow and handle go with it)
+  // a hollow box: when the door's down you see in – the enamelled inside, its light, the wire rack
+  const shell = mat('#3a3a42', { metal: 0.5, rough: 0.35 }), enamel = mat('#1e1c24', { rough: 0.55, emissive: '#2a1c14', ei: 0.4 });
+  const H = COUNTER_H - 0.04, CY = 0.06, CH = 0.28, CW = 0.8, CD = 0.8; // (the inside: its bottom, height, width, depth)
+  g.add(box(0.98, H, 0.06, shell, 0, 0, -0.44));
+  for (const sx of [-1, 1]) g.add(box((0.98 - CW) / 2, H, 0.9, shell, sx * (CW / 2 + (0.98 - CW) / 4), 0, -0.02));
+  g.add(box(CW, CY, 0.9, shell, 0, 0, -0.02));
+  g.add(box(CW, H - CY - CH, 0.9, shell, 0, CY + CH, -0.02));
+  g.add(box(CW - 0.01, CH, 0.01, enamel, 0, CY, 0.43 - CD)); // (its back)
+  for (const sx of [-1, 1]) g.add(box(0.008, CH, CD, enamel, sx * (CW / 2 - 0.005), CY, 0.43 - CD / 2));
+  g.add(box(CW - 0.01, 0.006, CD, enamel, 0, CY, 0.43 - CD / 2));
+  g.add(box(CW - 0.01, 0.006, CD, enamel, 0, CY + CH - 0.006, 0.43 - CD / 2));
+  g.add(box(0.05, 0.015, 0.012, mat('#fff4d0', { emissive: '#ffe8b0', ei: 1.4 }), -0.3, CY + CH - 0.022, 0.43 - CD + 0.012)); // (the light, at the back)
+  // the wire rack, where things go in (the 'inside' anchor stands on it)
+  const wire = M.steel();
+  const ry = 0.16, rz0 = 0.43 - CD + 0.03, rz1 = 0.41;
+  for (const sx of [-1, 1]) g.add(rod(v3(sx * 0.37, ry, rz0), v3(sx * 0.37, ry, rz1), 0.004, wire));
+  for (const z of [rz0, rz1]) g.add(rod(v3(-0.37, ry, z), v3(0.37, ry, z), 0.004, wire));
+  for (let i = 1; i < 14; i++) { const x = -0.37 + i * (0.74 / 14); g.add(rod(v3(x, ry, rz0), v3(x, ry, rz1), 0.0025, wire)); }
+  // the door drops down on its bottom hinge (window, glow and handle go with it); the window is dark glass –
+  // what's baking shows through it, lit orange while the oven's on
   const hinge = live(new THREE.Group());
   hinge.position.set(0, 0.05, 0.455);
-  hinge.add(rbox(0.86, 0.3, 0.03, mat('#2a2a30', { metal: 0.4, rough: 0.3 }), 0, 0, -0.015, 0.01));
-  const glow = rbox(0.6, 0.17, 0.012, new THREE.MeshStandardMaterial({ color: '#1a1a20', emissive: new THREE.Color('#ff7a2a'), emissiveIntensity: 0, roughness: 0.15 }), 0, 0.05, 0.005, 0.01);
+  hinge.add(rbox(0.86, 0.06, 0.03, mat('#2a2a30', { metal: 0.4, rough: 0.3 }), 0, 0, -0.015, 0.01));
+  hinge.add(rbox(0.86, 0.06, 0.03, mat('#2a2a30', { metal: 0.4, rough: 0.3 }), 0, 0.24, -0.015, 0.01));
+  for (const sx of [-1, 1]) hinge.add(box(0.13, 0.18, 0.03, mat('#2a2a30', { metal: 0.4, rough: 0.3 }), sx * 0.365, 0.06, -0.015));
+  const glow = rbox(0.6, 0.18, 0.012, new THREE.MeshStandardMaterial({ color: '#1a1a20', emissive: new THREE.Color('#ff7a2a'), emissiveIntensity: 0, roughness: 0.1, transparent: true, opacity: 0.45, depthWrite: false }), 0, 0.06, -0.012, 0.01);
   hinge.add(glow);
   hinge.add(rod(v3(-0.3, 0.28, 0.025), v3(0.3, 0.28, 0.025), 0.012, M.steel()));
-  g.add(box(0.8, 0.28, 0.02, mat('#141016', { rough: 0.9 }), 0, 0.06, 0.43)); // the dark oven inside
   g.add(hinge);
   d.parts.glow = glow;
   d.parts.drop = hinge;
   g.add(box(0.86, 0.05, 0.02, mat('#1a1a20', { rough: 0.3 }), 0, 0.37, 0.45));
-  for (const x of [-0.25, 0, 0.25]) { const k = cyl(0.02, 0.022, 0.02, mat('#f2efe6'), x, 0.395, 0.47, 12); k.rotation.x = Math.PI / 2; g.add(k); }
+  for (const x of [-0.25, 0]) { const k = cyl(0.02, 0.022, 0.02, mat('#f2efe6'), x, 0.395, 0.47, 12); k.rotation.x = Math.PI / 2; g.add(k); }
+  // the temperature knob, on the right: it turns (with a mark to show how far)
+  const kn = live(new THREE.Group());
+  kn.position.set(0.25, 0.395, 0.47);
+  const kc = cyl(0.02, 0.022, 0.02, mat('#f2efe6'), 0, 0, 0, 12);
+  kc.rotation.x = Math.PI / 2;
+  kn.add(kc);
+  kn.add(box(0.005, 0.016, 0.005, mat('#e8573a'), 0, 0.004, 0.012));
+  g.add(kn);
+  d.parts.knobs = [kn];
   worktop(g, ctx, 1);
   void T;
-  d.anchors.inside = v3(0, 0.18, 0.1);
+  d.anchors.inside = v3(0, ry + 0.004, 0.06);
   d.anchors.top = v3(0, COUNTER_H, 0);
   d.anchors.scraps = v3(0.36, COUNTER_H, 0.36);
 }
@@ -569,7 +597,7 @@ function fridge(g, ctx, d) {
   // a fruit bowl on top
   g.add(lathe([[0, 0], [0.14, 0.02], [0.17, 0.08]], mat(ctx.T.tileB, { rough: 0.4, double: true }), 0, 1.18, -0.05));
   for (const [x, z, c] of [[-0.05, 0, '#e8432e'], [0.06, -0.06, '#f7d330'], [0.04, 0.06, '#f08a24']]) g.add(ball(0.05, mat(c, { rough: 0.5 }), x, 1.24, -0.05 + z));
-  d.anchors.shelf = v3(0, 0.335, -0.08); // where a pot chills
+  d.anchors.shelf = v3(0, 0.335, 0.06); // where a pot chills (the middle of the second shelf is kept for it)
   // where things are kept: four shelves (bottom to top), things spread along each
   d.anchors.shelfL = [0.085, 0.335, 0.575, 0.815].map((y) => v3(-0.32, y, 0.16));
   d.anchors.shelfR = [0.085, 0.335, 0.575, 0.815].map((y) => v3(0.32, y, 0.16));

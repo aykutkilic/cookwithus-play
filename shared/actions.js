@@ -570,7 +570,12 @@ export const ACTIONS = {
   },
   turn: {
     cap: 'vessel', verb: 'Turn', tool: 'pizzaPeel', icon: '🔄',
-    phases: () => [{ g: 'circle', n: 0.5, tool: 'pizzaPeel', turn: true, hint: 'Turn it round so it bakes evenly' }],
+    // (in a dome oven, with the peel through its mouth; in an oven, the door down first, with the tongs – and shut after)
+    phases: (s, bk) => bk === 'electric' ? [
+      doorPh('oven', 1, 'Take the handle and pull the oven door down'),
+      { g: 'circle', n: 0.5, tool: 'tongs', turn: true, hint: 'Turn them over with the tongs so they bake evenly' },
+      doorPh('oven', 0, 'Lift the door shut by its handle'),
+    ] : [{ g: 'circle', n: 0.5, tool: 'pizzaPeel', turn: true, hint: 'Turn it round so it bakes evenly' }],
   },
   chillIn: {
     cap: 'chill', moves: true, verb: 'Chill', tool: 'grab', icon: '🧊',

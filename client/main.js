@@ -937,6 +937,20 @@ function openWork(sid, fx) {
       const p = scene.workPoint(w, scene.boxSpot(w));
       return { x: p.x, y: p.y, r: Math.max(60, 0.075 / w.S) };
     }
+    // (into the oven, onto the fridge's shelf …: the real spot inside it – and out of it, toward me: over the open door)
+    if (['ovenRack', 'shelf', 'ovenMouth', 'tandoorWall'].includes(to)) {
+      const w = workFrame();
+      if (!w) return null;
+      const p = scene.workPoint(w, w.O);
+      return { x: p.x, y: p.y, r: Math.max(80, 0.11 / w.S) };
+    }
+    if (to === 'aside' && ['oven', 'dome', 'tandoor', 'chill'].includes(station.sceneKind())) {
+      const w = workFrame();
+      if (!w) return null;
+      // (out of the fridge: off to its handle's side, clear of the door as it swings shut)
+      const fridge = station.sceneKind() === 'chill';
+      return { x: 500 + (fridge ? 0.42 : 0) / w.S, y: 500 + (fridge ? 0.55 : 0.45) / w.S, r: Math.max(80, 0.12 / w.S) };
+    }
     if (to !== 'underTap' && to !== 'colander') return null;
     const w = workFrame();
     const F = w && scene.k3.fx[w.fx];
@@ -1025,6 +1039,15 @@ let pinch = 0;
 // first person at work: the pointer is my hand on the work (the close-up's gestures, in 3D)
 const workPtr = (type, e) => {
   const w = workFrame();
+  // (a door: you take its real handle – how far open it is, from where the pointer is along its swing)
+  const g = station.g, door = w && g && g.kind === 'door' && scene.doorHandleAt(w.fx, g.v || 0);
+  if (door) {
+    const now = scene.screenOf(door), hit = scene.doorVAt(w.fx, e.clientX, e.clientY);
+    const near = Math.hypot(now.x - e.clientX, now.y - e.clientY) < 70;
+    const p = g.drag ? station.doorGrab(g.geo, hit.v) : near ? station.doorGrab(g.geo, g.v || 0) : { x: -999, y: -999 };
+    station.pointer(type, p, e.pointerId, e.pointerType);
+    return;
+  }
   // (the knob / the tap's lever: the real one is what you take hold of)
   const off = w ? scene.workOffset(w, station) : { x: 0, y: 0 };
   const p = w && scene.workAt(w, e.clientX + off.x, e.clientY + off.y);
@@ -2138,6 +2161,9 @@ function goStore(fx) {
 function workScreen(x, y) {
   const w = workFrame();
   if (!w) return station.toClient(x, y);
+  // (a door: its real handle, as far open as the close-up point would have it)
+  const g = station.g;
+  if (g && g.kind === 'door' && scene.doorHandleAt(w.fx, 0)) return scene.screenOf(scene.doorHandleAt(w.fx, station.doorOpenAt(g.geo, { x, y })));
   const s = scene.screenOf(scene.workWorld(w, x, y)), off = scene.workOffset(w, station);
   return { x: s.x - off.x, y: s.y - off.y };
 }
