@@ -155,7 +155,7 @@ export function boardUnits(it) {
     if (it.peeled) cur.peeled = Math.max(0, Math.min(1, it.peeled * q - aside));
   }
   const cutAs = it.pile || it.cut;
-  const pile = aside < 1 ? null : cutAs ? { ...one, cut: cutAs, k: it.n || 1, n: it.n || 1, bits: aside / q, spread: 0.03 } : { ...one, qty: aside, cut: null, peeled: it.peeled ? 1 : 0 };
+  const pile = aside < 1 ? null : cutAs ? { ...one, cut: cutAs, k: it.n || 1, n: it.n || 1, bits: aside / q, units: aside, spread: 0.03 } : { ...one, qty: aside, cut: null, peeled: it.peeled ? 1 : 0 };
   return { cur, pile, left: q + extra - out, aside, q };
 }
 
@@ -261,7 +261,7 @@ export const ACTIONS = {
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'strips', k: ph.n, n: ph.n }); } },
       { g: 'circle', n: 0.25, tool: 'hand', turn: true, hint: 'Turn the strips a quarter round' },
       { g: 'chop', mode: 'slice', n: s.n || 4, cut: 'dice', tool: 'knife', hint: 'Now cut across into little cubes',
-        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n }); },
+        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n, turned: 1 }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'dice', k: ph.n, n: ph.n }); } },
     ], true),
   },
@@ -356,7 +356,9 @@ export const ACTIONS = {
     cap: 'board', verb: 'Shape', tool: 'hand', icon: '🤲',
     phases: (s) => [
       { g: 'circle', n: s.n || 4, tool: 'hand', hint: 'Roll each one round between your palms',
-        prog: (D, st, k) => { item(D, st).balls = Math.floor(k); }, eff: (S, st, v, fx, ph) => { item(S, st).balls = (item(S, st).balls || 0) + Math.round(ph.n); item(S, st).shape = 'ball'; } },
+        // (a ball rolled off the lump for each turn: ballsOf – how many it's divided into)
+        prog: (D, st, k, v, ph) => { const it = item(D, st); if (it) { it.balls = (it.balls || 0) + Math.floor(k); it.ballsOf = (it.balls || 0) - Math.floor(k) + Math.round(ph.n); } },
+        eff: (S, st, v, fx, ph) => { const it = item(S, st); it.balls = (it.balls || 0) + Math.round(ph.n); it.ballsOf = it.balls; it.shape = 'ball'; } },
     ],
   },
   spread: {
@@ -473,7 +475,10 @@ export const ACTIONS = {
   whisk: {
     cap: 'vessel', verb: 'Whisk', tool: 'whisk', icon: '🥣',
     phases: (s) => [
-      { g: 'circle', n: s.n || 6, tool: 'whisk', fast: true, hint: 'Whisk fast in circles', eff: (S, st) => { ves(S, st.vessel).mixed = 1; } },
+      { g: 'circle', n: s.n || 6, tool: 'whisk', fast: true, hint: 'Whisk fast in circles',
+        // (the yolks breaking, the whites turning yellow – turn by turn)
+        prog: (D, st, k, v, ph) => { const b = ves(D, st.vessel); if (b) b.mixed = Math.max(b.mixed || 0, k / ph.n); },
+        eff: (S, st) => { ves(S, st.vessel).mixed = 1; } },
     ],
   },
   saute: {
@@ -493,13 +498,17 @@ export const ACTIONS = {
   blend: {
     cap: 'vessel', verb: 'Blend', tool: 'blenderStick', icon: '🌀',
     phases: (s) => [
-      { g: 'circle', n: s.n || 5, tool: 'blenderStick', fast: true, hint: 'Blend it smooth in circles', eff: (S, st) => { ves(S, st.vessel).smooth = 1; } },
+      { g: 'circle', n: s.n || 5, tool: 'blenderStick', fast: true, hint: 'Blend it smooth in circles',
+        prog: (D, st, k, v, ph) => { const p = ves(D, st.vessel); if (p) p.smooth = Math.max(p.smooth || 0, k / ph.n); },
+        eff: (S, st) => { ves(S, st.vessel).smooth = 1; } },
     ],
   },
   mash: {
     cap: 'vessel', verb: 'Mash', tool: 'masher', icon: '🥔',
     phases: (s) => [
-      { g: 'strokes', axis: 'v', n: s.n || 8, tool: 'masher', hint: 'Press down, lift, press again', eff: (S, st) => { ves(S, st.vessel).smooth = 1; } },
+      { g: 'strokes', axis: 'v', n: s.n || 8, tool: 'masher', hint: 'Press down, lift, press again',
+        prog: (D, st, k, v, ph) => { const p = ves(D, st.vessel); if (p) p.smooth = Math.max(p.smooth || 0, k / ph.n); },
+        eff: (S, st) => { ves(S, st.vessel).smooth = 1; } },
     ],
   },
   dip: {

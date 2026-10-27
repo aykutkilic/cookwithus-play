@@ -137,6 +137,7 @@ export class Scene3D {
     this.fps = 0;
     this.K = null; this.k3 = null;
     this.vessels = new Map();  // vessel id -> {kind, group, liquid, lid, bits}
+    this.spins = new Map();    // vessel id -> how far round what's in it has been stirred {a, base, g}
     this.cooks = new Map();    // member id -> {fig, key}
     this.sprites = new Map();  // slot key -> sprite
     this.spriteTex = new Map();
@@ -1437,11 +1438,25 @@ export class Scene3D {
         if (!rec.group.visible || !rec.inside || !rec.inside.length) continue;
         const spread = Math.round(rec.r * 0.62 * 1000) / 1000;
         const v = D.vessels[vid];
+        // (whisked: the eggs beaten, turn by turn – the rest stirred into a batter; mashed, blended: going into
+        // the purée, the soup; in a pan with little water in it: browning as it fries; stirred round: turned
+        // round with the spoon, and left where it went)
+        const mix = v ? Math.min(1, v.mixed || 0) : 0, smooth = v ? Math.min(1, v.smooth || 0) : 0;
+        const fry = v && !(v.water > 0.05) && v.cook > 0 ? v.cook : 0;
+        const spin = (this.spins.get(vid) || { a: 0 }).a;
         rec.inside.forEach(([iid, it], k) => {
           // (the pot knows how it went in: an egg cracked into it, not dropped in whole)
           const c = v && v.contents.find((q) => q.kind === it.kind);
-          const pos = rec.group.localToWorld(v3(Math.cos(k * 2.4) * rec.r * 0.1, 0.01 + k * 0.002, Math.sin(k * 2.4) * rec.r * 0.1));
-          food(`in:${vid}:${iid}`, it.kind, { ...it, cut: (c && c.cut) || it.cut, spread }, pos, rec.group.rotation.y + k * 1.1);
+          let cut = (c && c.cut) || it.cut;
+          const egg = cut === 'cracked' || cut === 'beaten';
+          if (cut === 'cracked' && mix >= 1) cut = 'beaten';
+          const melt = egg ? smooth : Math.max(smooth, mix);
+          if (melt >= 0.999) return; // (all in the purée, the batter)
+          const pos = rec.group.localToWorld(v3(Math.cos(k * 2.4 + spin) * rec.r * 0.1, 0.01 + k * 0.002, Math.sin(k * 2.4 + spin) * rec.r * 0.1));
+          const sts = { ...it, cut, spread, ...(egg && mix > 0 ? { mix: Math.round(mix * 12) / 12 } : {}), ...(fry > 0 && Math.min(1, fry * 1.6) > (it.cook || 0) ? { cook: Math.round(Math.min(1, fry * 1.6) * 10) / 10 } : {}) }; // (fried in fat it colours quicker than it cooks through)
+          food(`in:${vid}:${iid}`, it.kind, sts, pos, rec.group.rotation.y + k * 1.1 - spin, null, 1 - 0.7 * melt);
+          const fg = this.foods.get(`in:${vid}:${iid}`);
+          if (fg && melt > 0) fg.g.scale.y *= 1 - 0.5 * melt; // (pressed down into it, sinking)
         });
       }
     }
@@ -1452,7 +1467,7 @@ export class Scene3D {
       const F = this.k3.fx[fxId];
       if (!F || !F.anchors.scraps) continue;
       const kind = sc.kinds[sc.kinds.length - 1] || 'onion';
-      const skin = { egg: '#f4e4c8', onion: '#c98a3c', potato: '#c49a5c', carrot: '#f08a24', tomato: '#4f9a3a', garlic: '#f1ead9' }[kind] || '#c98a3c';
+      const skin = { egg: '#e3c49c', onion: '#c98a3c', potato: '#c49a5c', carrot: '#f08a24', tomato: '#4f9a3a', garlic: '#f1ead9' }[kind] || '#c98a3c';
       put(`scraps:${fxId}`, { type: 'scraps', c1: skin, n: Math.min(6, sc.n) }, {}, () => this.scrapTex(kind, sc.n), F.anchors.scraps, 0.16 + Math.min(4, sc.n) * 0.02, yawAt(fxId));
     }
     for (const [slot, s] of this.sprites) if (!used.has(slot)) s.visible = false;
@@ -1465,7 +1480,7 @@ export class Scene3D {
     if (!tex) {
       const c = document.createElement('canvas'); c.width = c.height = 96;
       const g = c.getContext('2d');
-      const cols = { egg: '#f4e4c8', onion: '#c98a3c', potato: '#c49a5c', carrot: '#f08a24', tomato: '#4f9a3a', garlic: '#f1ead9' };
+      const cols = { egg: '#e3c49c', onion: '#c98a3c', potato: '#c49a5c', carrot: '#f08a24', tomato: '#4f9a3a', garlic: '#f1ead9' };
       for (let i = 0; i < Math.min(6, n) * 3; i++) {
         g.save(); g.translate(20 + (i * 37) % 56, 60 + (i * 23) % 26); g.rotate(i * 1.3);
         g.fillStyle = cols[kind] || ['#c98a3c', '#7ab05a', '#e8c88a'][i % 3];
@@ -2094,6 +2109,36 @@ export class Scene3D {
     const vKey = (q) => (q && q.type === 'vessel' && q.id ? `v:${q.id}` : q && q.type === 'item' && q.id ? `i:${q.id}` : null);
     const ring = (q, r = 60) => { if (q) out.rings.push({ w: at(q), r: (q.r || r) * w.S }); };
     switch (g.kind) {
+      case 'wrap': {
+        // Rolling a dolma: a leaf flat in the middle of the board; a spoonful of the filling from its bowl onto it;
+        // its sides folded in over it, a hand each side; rolled up from my side, both hands behind it – as far as
+        // the pointer's gone each time – onto the row of those done at the side.
+        const it = D && D.items[g.subject && g.subject.id];
+        if (!it) break;
+        const L = w.O.clone().addScaledVector(w.N, 0.02), fill = st.scoopColor ? st.scoopColor() : '#b8603a';
+        const f = Math.round((g.start && p.down ? (g.stage === 1 ? Math.min(1, Math.abs(p.x - g.start.x) / 80) : g.stage === 2 ? Math.max(0, Math.min(1, (g.start.y - p.y) / 90)) : 0) : 0) * 10) / 10;
+        out.ov.set(`i:${it.id || g.subject.id}`, { pos: L, yaw: out.yaw, st: { qty: 1, extra: 0, cut: null, k: 0, n: 0, fill: g.stage >= 1 ? fill : null, fold: g.stage === 1 ? f : g.stage >= 2 ? 1 : 0, roll: g.stage === 2 ? f : 0 } });
+        const done = (it.rolls || 0) + st.k;
+        if (done > 0) out.sprites.push({ tex: null, kind: it.kind, st: { cut: 'rolls', k: Math.min(12, done), qty: 1 }, pos: this.pileSpot(w), size: 0.12 });
+        const lw = 0.07;
+        if (g.stage === 0) {
+          // (a spoonful taken from the bowl's side, carried over to the leaf)
+          const P = g.drag && g.pos ? at(g.pos) : at(SIDE);
+          if (g.drag) out.sprites.push({ tex: this.blobTex(fill), kind: { type: 'blob', c1: fill }, st: {}, pos: P.clone().addScaledVector(UP, -0.015), size: 0.05 });
+          hand(wi, P.clone().addScaledVector(UP, 0.02), 'pinch', { curl: g.drag ? 0.7 : 0.3 });
+          hand(oi, L.clone().addScaledVector(w.R, -lw - 0.05).addScaledVector(UP, 0.01), 'rest');
+          ring(g.drag ? { x: MAIN.x, y: MAIN.y - 40, r: 90 } : SIDE, 50);
+        } else if (g.stage === 1) {
+          // (a hand each side, folding its side in)
+          const x = lw * (1 - 0.4 * f) + 0.01;
+          for (const [i, sd] of [[wi, 1], [oi, -1]]) hand(i, L.clone().addScaledVector(w.R, sd * x).addScaledVector(UP, 0.012 + 0.01 * f), 'hand', { curl: 0.35, dir: w.R.clone().multiplyScalar(-sd).addScaledVector(w.N, -0.6).normalize() });
+        } else {
+          // (both hands at my side of it, rolling it up and away)
+          const z = 0.055 - 0.09 * f;
+          for (const [i, sd] of [[wi, 1], [oi, -1]]) hand(i, L.clone().addScaledVector(w.R, sd * 0.03).addScaledVector(w.N, z + 0.02).addScaledVector(UP, 0.018), 'hand', { curl: 0.5, dir: w.N.clone().negate() });
+        }
+        break;
+      }
       case 'drag': {
         const k = vKey(g.source);
         if (g.source && g.source.fromBox) {
@@ -2562,6 +2607,17 @@ export class Scene3D {
     }
     out.rest = this.restAt.spots;
     this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen]);
+    // (coring: the knife's tip cut round the core as far as it's gone – it's out once it's gone all the way round)
+    if (def && def.do === 'core' && g.kind === 'circle' && D && D.items[def.item] && !(D.items[def.item].cored >= 1)) D.items[def.item].cored = Math.min(0.97, Math.abs(g.acc || 0) / (Math.PI * 2));
+    // (turning the strips a quarter round to cut them across: they turn as far as I've turned them)
+    if (ph.turn && g.kind === 'circle' && def && D && D.items[def.item]) D.items[def.item].turned = Math.round(Math.min(1, Math.abs(g.acc || 0) / (Math.PI / 2)) * 12) / 12;
+    // (stirring, whisking round a pot: what's in it goes round with the spoon – partly – and stays where it went)
+    if (g.kind === 'circle' && g.subject && g.subject.type === 'vessel' && !ph.turn) {
+      const S = this.spins.get(g.subject.id) || { a: 0, base: 0, g: null };
+      if (S.g !== g) { S.base = S.a; S.g = g; }
+      S.a = S.base + (g.acc || 0) * 0.4;
+      this.spins.set(g.subject.id, S);
+    }
     this.work = out;
   }
 
@@ -3200,9 +3256,14 @@ function updateVessel(rec, v, t, solid = false) {
   const r = rec.r;
   const level = Math.max(0, Math.min(1, v.water || 0));
   const wet = (v.contents || []).filter((c) => c.kind !== 'water' && (!solid || runny(c.kind, v)));
-  const hasFood = wet.length > 0 || (solid && !!v.liquid);
+  // (first person: mashed, blended – or whisked into a batter – what's in it rising as one purée, soup, batter, its
+  // colour theirs together, as far as it's got)
+  const lumps = solid ? (v.contents || []).filter((c) => c.kind !== 'water' && !runny(c.kind, v) && (v.smooth > 0 || !(c.kind === 'egg' && (c.cut === 'cracked' || c.cut === 'beaten')))) : [];
+  const melt = lumps.length ? Math.min(1, Math.max(v.smooth || 0, v.mixed || 0)) : 0;
+  const hasFood = wet.length > 0 || (solid && !!v.liquid) || melt > 0;
   const show = level > 0.02 || hasFood;
   rec.liquid.visible = show && !v.lid;
+  rec.liquid.material.roughness = 0.15;
   if (show) {
     rec.liquid.position.y = 0.008 + (level > 0.02 ? level : solid ? 0.03 : 0.25) * rec.h * 0.9;
     const brew = !v.liquid && level > 0.02 && brewColor(v);
@@ -3210,14 +3271,24 @@ function updateVessel(rec, v, t, solid = false) {
     rec.liquid.material.color.set(col);
     rec.liquid.material.opacity = brew ? 0.9 : level > 0.02 && !v.liquid ? 0.72 : solid && !v.liquid ? 0.55 : 0.96;
     if (v.cook) rec.liquid.material.color.lerp(new THREE.Color('#8a4a1a'), Math.min(0.5, v.cook * 0.4));
+    if (melt > 0) {
+      if (!(level > 0.02) && !wet.length && !v.liquid) rec.liquid.material.color.set(blendColor(v));
+      rec.liquid.material.color.lerp(new THREE.Color(blendColor(v)), melt);
+      rec.liquid.material.opacity += (1 - rec.liquid.material.opacity) * melt;
+      rec.liquid.material.roughness = 0.15 + 0.6 * melt;
+      rec.liquid.position.y = Math.max(rec.liquid.position.y, 0.008 + (0.08 + 0.22 * melt) * rec.h * 0.9);
+    }
   }
   rec.lid.visible = !!v.lid || !!rec.stowed;
   rec.towel.visible = !!v.towel;
   // bits of what's inside, bobbing
-  const kinds = solid ? [] : (v.contents || []).filter((c) => c.kind !== 'water');
+  // (first person, in a soup, a sauce: the bits of what's in it at the top – fewer as it's blended, none once it's smooth)
+  const sm = Math.min(1, v.smooth || 0);
+  const kinds = solid ? (v.liquid && sm < 1 ? (v.contents || []).filter((c) => c.kind !== 'water' && !runny(c.kind, v) && !(INGREDIENTS[c.kind] && INGREDIENTS[c.kind].art && CONTAINERS.has(INGREDIENTS[c.kind].art.type))) : []) : (v.contents || []).filter((c) => c.kind !== 'water');
+  const most = solid ? Math.round(Math.min(rec.bits.length, kinds.length * 3) * (1 - sm)) : kinds.length * 2;
   rec.bits.forEach((b, i) => {
     const c = kinds[i % Math.max(1, kinds.length)];
-    b.visible = !!c && !v.lid && i < kinds.length * 2;
+    b.visible = !!c && !v.lid && i < most;
     if (!b.visible) return;
     b.material = mat(bitColor(c.kind), { rough: 0.6 });
     const a = i * 2.4 + (v.boil > 0.3 ? t * 0.8 : 0);
@@ -3310,6 +3381,20 @@ function solidIn(it, v) {
 
 function bitColor(kind) {
   try { return liquidColor(kind) || '#e0c080'; } catch { return '#e0c080'; }
+}
+// what's in it all together: the colours of the food in it (the whole of a thing – a runny one half as much,
+// spices, salt nothing to speak of), a beaten egg yellow
+function blendColor(v) {
+  const c = new THREE.Color(0, 0, 0);
+  let n = 0;
+  for (const q of v.contents || []) {
+    if (q.kind === 'water') continue;
+    const I = INGREDIENTS[q.kind];
+    const w = q.kind === 'egg' ? 1 : I && I.art && CONTAINERS.has(I.art.type) && !I.liquid ? 0.05 : runny(q.kind, v) ? 0.5 : 1;
+    c.add(new THREE.Color(q.kind === 'egg' ? '#f2c64a' : bitColor(q.kind)).multiplyScalar(w));
+    n += w;
+  }
+  return n ? '#' + c.multiplyScalar(1 / n).getHexString() : '#e0c080';
 }
 function mainColor(v) {
   const c = (v.contents || []).find((q) => q.kind !== 'water');

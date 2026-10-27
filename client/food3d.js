@@ -109,7 +109,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -334,6 +334,22 @@ function foodLocal(g, kind, st) {
   if (a.type === 'dough') {
     const q = clamp(num(st.qty, 1) | 0, 1, 8);
     if (cut && cut !== 'whole') return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
+    // divided into balls (balls of ballsOf so far): what's left of the lump – smaller for each – and the balls
+    // rolled off it in rows beside it; all done, just the balls
+    const nb = clamp(num(st.balls, 0) | 0, 0, 12), of = clamp(Math.max(nb, num(st.ballsOf, nb) | 0), 1, 12);
+    if (nb > 0 && st.shape !== 'flat') {
+      const one = { ...st, shape: 'ball', qty: 1, balls: 0, ballsOf: 0 }, s1 = Math.cbrt(1 / of), left = of - nb;
+      if (left > 0) { const h = new THREE.Group(); dough(h, a, P, one, seed, wet); h.scale.setScalar(Math.cbrt(left / of)); g.add(h); }
+      const cols = Math.min(3, nb), x0 = left > 0 ? 0.075 : -((cols - 1) * 0.046) / 2;
+      for (let i = 0; i < nb; i++) {
+        const h = new THREE.Group();
+        dough(h, a, P, one, seed + i, wet);
+        h.scale.setScalar(s1);
+        h.position.set(x0 + (i % 3) * 0.046, 0, (Math.floor(i / 3) - (Math.ceil(nb / 3) - 1) / 2) * 0.046);
+        g.add(h);
+      }
+      return;
+    }
     if (q > 1 && st.shape !== 'flat') return cluster(g, a, q, (h) => dough(h, a, P, { ...st, qty: 1 }, seed, wet));
     return dough(g, a, P, st, seed, wet);
   }
@@ -391,7 +407,12 @@ function cluster(g, a, q, make, spread = 0, box = null, slots = q) {
 function whole(g, a, P, st, seed, wet) {
   const r = rng(seed);
   const rough = wet ? 0.16 : 0.62;
-  const skin = st.peeled ? mixHex(P.c2, P.c1, 0.15) : P.c1;
+  // (peeled – or being: pf of the skin off it, the flesh showing where it's gone)
+  const pf = clamp(num(st.peeled, 0), 0, 1), part0 = pf > 0 && pf < 1;
+  const skin = pf >= 1 || (part0 && a.type !== 'long') ? mixHex(P.c2, P.c1, 0.15) : P.c1;
+  // (what's left of the skin over it: the part of the way round that's still on)
+  const skinLeft = (geo, mat, x, y, z, sx, sy, sz) => { const m = mat.clone(); m.side = THREE.DoubleSide; return part(g, geo, m, x, y, z, sx, sy, sz); };
+  const cf = clamp(num(st.cored, 0), 0, 1);
   switch (a.type) {
     case 'round': {
       const { rx, ry } = roundDims(a);
@@ -403,9 +424,13 @@ function whole(g, a, P, st, seed, wet) {
         part(g, GEO.sphere, m, 0, H, 0, R, H, H * 0.98);
         for (const sx of [-1, 1]) part(g, GEO.cone, m, sx * (R + 0.006), H, 0, H * 0.22, 0.016, H * 0.22, 0, 0, -sx * Math.PI / 2);
       } else part(g, GEO.sphere, m, 0, H, 0, R, H, R * 0.97);
+      if (part0 && !a.lobes && !a.segments) skinLeft(new THREE.SphereGeometry(1, 20, 14, 0, TAU * (1 - pf)), fm(P.c1, { rough }), 0, H, 0, R * 1.015, H * 1.015, R * 0.985);
       if (a.tip && !a.segments) part(g, GEO.cone, fm(st.peeled ? skin : P.c3, { rough }), 0, H * 2 + 0.006, 0, H * 0.18, 0.018, H * 0.18);
+      // (cored – or being: the knife's cut round the stem as far as it's gone; then a hole where it was)
+      if (cf > 0 && cf < 1) part(g, new THREE.TorusGeometry(1, 0.08, 5, 24, TAU * cf), fm(mixHex(P.c2, '#3a2a1e', 0.35), { rough: 0.6 }), 0, H * 1.98, 0, R * 0.28, R * 0.28, R * 0.28, Math.PI / 2, 0, 0);
+      if (cf >= 1) part(g, GEO.disc, fm(mixHex(P.c2, '#000000', 0.25), { rough: 0.7 }), 0, H * 1.985, 0, R * 0.26, R * 0.26, R * 0.26, -Math.PI / 2, 0, 0);
       if (a.spots) for (let i = 0; i < 5; i++) { const an = r() * TAU, el = (r() - 0.5) * 1.6; part(g, GEO.sphereLo, fm(P.c3), Math.cos(an) * Math.cos(el) * R * 0.98, H + Math.sin(el) * H * 0.98, Math.sin(an) * Math.cos(el) * R * 0.95, 0.003); }
-      if ((a.stem || a.lobes) && !st.peeled) {
+      if ((a.stem || a.lobes) && !st.peeled && cf < 1) {
         const sm = fm(a.stem || P.c3);
         part(g, GEO.cyl, sm, 0, H * 2 + 0.005, 0, 0.0035, 0.014, 0.0035);
         if (!a.lobes) for (let i = 0; i < 5; i++) { const an = i * TAU / 5; part(g, GEO.sphereLo, sm, Math.cos(an) * R * 0.22, H * 1.98, Math.sin(an) * R * 0.22, R * 0.2, 0.003, R * 0.07, 0, -an, 0); }
@@ -452,15 +477,25 @@ function whole(g, a, P, st, seed, wet) {
       break;
     }
     case 'bulb': {
-      const m = fm(skin, { rough });
+      // (its papery skin coming off a piece at a time: the cloves bare – a little smaller, the pale flesh – where it has)
+      const m = fm(part0 ? P.c1 : skin, { rough }), bare = fm(mixHex(P.c2, '#ecd99a', 0.45), { rough: 0.4 });
       const geo = lathe([[0.001, 0], [0.02, 0.004], [0.034, 0.02], [0.033, 0.04], [0.02, 0.058], [0.006, 0.07], [0.001, 0.076]]);
-      for (let i = 0; i < 6; i++) { const mm = part(g, geo, m, 0, 0, 0, 1, 1, 0.55, 0, i * Math.PI / 6, 0); mm.scale.x = 0.8; }
-      if (!st.peeled) part(g, GEO.cylLo, fm(P.c3), 0, 0.001, 0, 0.012, 0.004, 0.012);
+      const off = part0 ? Math.max(1, Math.round(pf * 6)) : 0;
+      for (let i = 0; i < 6; i++) { const mm = part(g, geo, i < off ? bare : m, 0, 0, 0, i < off ? 0.93 : 1, i < off ? 0.93 : 1, 0.55, 0, i * Math.PI / 6, 0); mm.scale.x = 0.8 * (i < off ? 0.93 : 1); }
+      if (pf < 1) part(g, GEO.cylLo, fm(P.c3), 0, 0.001, 0, 0.012, 0.004, 0.012);
       break;
     }
     case 'egg': {
-      const col = st.peeled ? '#fbfaf4' : skin;
-      part(g, lathe([[0.0001, 0], [0.014, 0.003], [0.022, 0.015], [0.0235, 0.03], [0.02, 0.046], [0.012, 0.057], [0.0001, 0.061]], 18), fm(col, { rough: wet ? 0.18 : 0.45 }), 0, 0, 0, 1);
+      const prof = [[0.0001, 0], [0.014, 0.003], [0.022, 0.015], [0.0235, 0.03], [0.02, 0.046], [0.012, 0.057], [0.0001, 0.061]].map(([x, y]) => new THREE.Vector2(x, y));
+      const col = pf > 0 ? '#fbfaf4' : skin;
+      part(g, new THREE.LatheGeometry(prof, 18), fm(col, { rough: wet ? 0.18 : 0.45 }), 0, 0, 0, pf > 0 ? 0.985 : 1);
+      // (being shelled: the shell still on round the rest, cracked all over – crazed lines on it)
+      if (part0) {
+        skinLeft(new THREE.LatheGeometry(prof, 18, 0, TAU * (1 - pf)), fm(P.c1, { rough: 0.45 }), 0, 0, 0, 1.01, 1.01, 1.01);
+        const crk = fm(mixHex(P.c1, '#5a4636', 0.55), { rough: 0.8 });
+        const rAt = (y) => { for (let j = 1; j < prof.length; j++) if (y <= prof[j].y) { const t = (y - prof[j - 1].y) / (prof[j].y - prof[j - 1].y); return prof[j - 1].x + (prof[j].x - prof[j - 1].x) * t; } return 0.001; };
+        for (let i = 0; i < 7; i++) { const an = (i / 7) * TAU * (1 - pf) + 0.2, y = 0.014 + ((i * 0.37) % 1) * 0.03, rr = rAt(y) * 1.012; part(g, GEO.box, crk, Math.sin(an) * rr, y, Math.cos(an) * rr, 0.0007, 0.01, 0.0007, (i % 3 - 1) * 0.5, an, 0); }
+      }
       break;
     }
     case 'mushroom': {
@@ -491,9 +526,21 @@ function whole(g, a, P, st, seed, wet) {
     }
     case 'leaf': {
       const q = clamp(num(st.qty, 1) | 0, 1, 6);
-      if (st.filled || st.fill) { // a leaf with filling on it, about to be rolled
-        leafShape(g, a, P, 0, rough);
-        part(g, GEO.sphere, fm(typeof st.fill === 'string' ? st.fill : '#b8603a'), 0, 0.012, 0.01, 0.022, 0.009, 0.014);
+      if (st.filled || st.fill) { // a leaf with filling on it, being rolled: its sides folded in (fold 0 … 1) over the
+        // filling, then rolled up from the near edge (+z, my side; roll 0 … 1) into a little cigar
+        const fold = clamp(num(st.fold), 0, 1), roll = clamp(num(st.roll), 0, 1), fc = fm(typeof st.fill === 'string' ? st.fill : '#b8603a', { rough: 0.8 });
+        const lm = fm(P.c1, { rough }), w = 0.07 * (1 - 0.4 * fold);
+        const lg = new THREE.Group();
+        leafShape(lg, a, P, 0, rough);
+        lg.scale.set(1 - 0.4 * fold, 1, Math.max(0.05, 1 - roll));
+        lg.position.z = -0.055 * roll;
+        g.add(lg);
+        if (roll < 0.95) part(g, GEO.sphere, fc, 0, 0.012, 0.01 - 0.06 * roll, 0.022, 0.009, 0.014);
+        // (the sides, folded over the filling)
+        if (fold > 0) for (const sd of [-1, 1]) part(g, GEO.sphereLo, lm, sd * (0.05 - 0.028 * fold), 0.012 + 0.008 * fold, 0.01 - 0.06 * roll, 0.022, 0.004, 0.04 * Math.max(0.2, 1 - roll), 0, 0, sd * (0.5 - 0.35 * fold));
+        // (what's rolled up so far: a roll at my side of it, fatter as it goes, moving away)
+        const rr = 0.008 + 0.007 * roll; // (GEO.caps: radius 0.5, 2 long)
+        if (roll > 0) part(g, GEO.caps, lm, 0, rr, 0.055 - 0.07 * roll, rr * 2, w * 0.62, rr * 2, 0, 0, Math.PI / 2);
         break;
       }
       for (let i = 0; i < Math.min(q, 4); i++) leafShape(g, a, P, i, rough);
@@ -507,6 +554,12 @@ function whole(g, a, P, st, seed, wet) {
         const lf = part(g, new THREE.SphereGeometry(1, 14, 10, 0, Math.PI * 1.1, 0.2, 2.2), i % 2 ? m1 : m3, Math.cos(an) * 0.006, 0.045, Math.sin(an) * 0.006, 0.05, 0.047, 0.05, 0, an, 0);
         lf.material = lf.material.clone(); lf.material.side = THREE.DoubleSide;
       }
+      // its core (it lies stem up to be cored): the stump – the knife's cut round it as far as it's gone – then a
+      // hole where it was
+      const pale = fm(mixHex(P.c2, '#f4f0d8', 0.4), { rough: 0.6 });
+      if (cf < 1) part(g, GEO.cyl, pale, 0, 0.092, 0, 0.011, 0.008, 0.011);
+      if (cf > 0 && cf < 1) part(g, new THREE.TorusGeometry(1, 0.1, 5, 24, TAU * cf), fm('#33421a', { rough: 0.7 }), 0, 0.0935, 0, 0.018, 0.018, 0.018, Math.PI / 2, 0, 0);
+      if (cf >= 1) part(g, GEO.disc, fm(mixHex(P.c2, '#22300f', 0.55), { rough: 0.8 }), 0, 0.0935, 0, 0.017, 0.017, 0.017, -Math.PI / 2, 0, 0);
       break;
     }
     case 'pile': {
@@ -772,9 +825,9 @@ function cutMany(g, a, P, cut, st, seed, wet, q, k, n) {
   }
   if (U.u > 0) {
     const C = cutGeom(a), row = cut === 'slices' || cut === 'rings';
-    const pg = new THREE.Group();
-    pieces(pg, a, P, cut, row ? Math.min(12, U.before + U.u) : Math.max(1, Math.round((defaultCount(a, cut, st) * U.before) / Math.max(1, n))), seed + 7, st);
-    pg.position.set(C.xR + 0.02, 0, deep * 0.9);
+    const pg = new THREE.Group(), cnt = row ? Math.min(12, U.before + U.u) : Math.max(1, Math.round((defaultCount(a, cut, st) * U.before) / Math.max(1, n)));
+    pieces(pg, a, P, cut, cnt, seed + 7, st);
+    pg.position.set(C.xR + (row ? 0.02 : heapGap(a, cut, cnt, st) * 0.85), 0, deep * 0.9);
     pg.scale.setScalar(0.85);
     g.add(pg);
   }
@@ -793,6 +846,9 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   }
   if (cut === 'slit') { whole(g, a, P, { ...st, cut: null }, seed, wet); return slitGroove(g, a, st, done ? 1 : clamp(k / n, 0, 1)); }
   if (cut === 'rolls' && a.type === 'leaf') return pieces(g, a, P, 'rolls', defaultCount(a, cut, st), seed, st);
+  // (cut into strips: they lie together where it was – turned a quarter round, as far as it's been, to be cut across)
+  const loose = Array.isArray(st.box) || num(st.spread) > 0;
+  if (done && cut === 'strips' && !loose && cutGeom(a).sec) return stripsLayout(g, a, P, cutGeom(a), n || 4, num(st.turned));
   if (done) return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
   const q = clamp(num(st.qty, 1) | 0, 1, 8);
   if (q > 1 && cut !== 'halves') return cutMany(g, a, P, cut, st, seed, wet, q, k, n);
@@ -800,20 +856,38 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   const wholeG = new THREE.Group();
   whole(wholeG, a, P, { ...st, cut: null, qty: 1 }, seed, wet);
   if (cut === 'halves' || frac <= 0) { g.add(wholeG); return; }
+  // (leaves taken off a head one by one: the head smaller all round for each, the leaves piled up beside it)
+  if (cut === 'leaves') {
+    wholeG.scale.setScalar(1 - 0.4 * frac);
+    g.add(wholeG);
+    const lg = new THREE.Group();
+    for (let i = 0; i < Math.min(6, Math.max(1, Math.round(k))); i++) leafShape(lg, a, P, i, 0.6);
+    lg.position.set(0.115, 0, 0.01);
+    g.add(lg);
+    return;
+  }
   const C = cutGeom(a);
   const xc = cutAt(C, k, n);
   const row = cut === 'slices' || cut === 'rings';
   const cnt = row ? Math.min(12, Math.max(1, k)) : Math.max(1, Math.round(defaultCount(a, cut, st) * frac));
   if (C.sec) {
     // cut off clean where the knife went through, the cut face showing; the
-    // slices off it standing against each other beside it (the bits: a heap)
-    wholeG.userData.clipX = xc;
-    g.add(wholeG);
-    cutFace(g, a, P, C.sec(xc), xc);
+    // slices off it standing against each other beside it (the bits: a heap) – diced: the strips (turned a
+    // quarter round) cut across, the cubes beside them
+    if (cut === 'dice') {
+      const sg = new THREE.Group();
+      stripsLayout(sg, a, P, C, num(st.strips, 4) || 4, 1);
+      sg.userData.clipX = xc;
+      g.add(sg);
+    } else {
+      wholeG.userData.clipX = xc;
+      g.add(wholeG);
+      cutFace(g, a, P, C.sec(xc), xc);
+    }
     if (row) return cutSlices(g, a, P, C, k, n);
     const pg = new THREE.Group();
     pieces(pg, a, P, cut, cnt, seed, st);
-    pg.position.x = xc + 0.022 + Math.sqrt(cnt) * 0.0065;
+    pg.position.x = xc + 0.006 + heapGap(a, cut, cnt, st);
     g.add(pg);
     return;
   }
@@ -825,7 +899,7 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   g.add(wholeG);
   const pg = new THREE.Group();
   pieces(pg, a, P, cut, cnt, seed, st);
-  const half = row ? ((cnt - 1) * Math.min(0.016, Math.max(0.04, W) / cnt)) / 2 + 0.012 : 0.016 + Math.sqrt(cnt) * 0.0065;
+  const half = row ? ((cnt - 1) * Math.min(0.016, Math.max(0.04, W) / cnt)) / 2 + 0.012 : heapGap(a, cut, cnt, st);
   pg.position.x = -W / 2 + W * f + 0.006 + half * 0.85;
   pg.scale.setScalar(0.85);
   g.add(pg);
@@ -870,12 +944,64 @@ function cutSlices(g, a, P, C, k, n) {
       part(sl, GEO.annulus, flesh, 0, -0.5, 0, 1, 1, 1, Math.PI / 2, 0, 0);
     } else {
       part(sl, GEO.cyl, [skin, flesh, flesh], 0, 0, 0, 1, 1, 1);
-      if (a.type === 'round' && !a.spots) for (const y of [0.502, -0.502]) part(sl, GEO.disc, fm(P.c3, { rough: 0.5 }), 0, y, 0, 0.55, 0.55, 0.55, y > 0 ? -Math.PI / 2 : Math.PI / 2, 0, 0);
+      if ((a.type === 'round' && !a.spots) || a.type === 'egg') for (const y of [0.502, -0.502]) part(sl, GEO.disc, fm(a.type === 'egg' ? mixHex(P.c3, '#f6e7a0', 0.35) : P.c3, { rough: 0.5 }), 0, y, 0, 0.55, 0.55, 0.55, y > 0 ? -Math.PI / 2 : Math.PI / 2, 0, 0);
     }
     h.add(sl);
     g.add(h);
   }
 }
+// Cut into strips (n cuts): side by side where it was, each as tall and deep as it was there – turned (0 … 1) a
+// quarter round, as far as it's been turned to be cut across
+function stripsLayout(g, a, P, C, n, turned = 0) {
+  const skin = fm(P.c1, { rough: 0.5 }), flesh = fm(pieceCol(a, P), { rough: 0.5 });
+  const L = C.xR - C.xL, m = clamp(Math.round(n) + 1, 3, 10);
+  const grp = new THREE.Group();
+  // (sticks as wide as they're tall, side by side as long as it was across there – a second layer on top, shorter)
+  const sw = (L / m) * 0.88;
+  for (let layer = 0; layer < 2; layer++) for (let j = 0; j < m; j++) {
+    const xc = C.xL + ((j + 0.5) * L) / m, sc = C.sec(xc);
+    if (!sc || sc.ry < 0.002 || (layer && (j === 0 || j === m - 1))) continue;
+    const d = sc.rz * 1.9 * (layer ? 0.65 : 1);
+    part(grp, GEO.box, [flesh, flesh, flesh, flesh, skin, skin], xc + (j - (m - 1) / 2) * 0.0016 + (layer ? sw * 0.5 : 0), sw * (layer + 0.5), (layer ? 0.004 : 0), sw, sw, d, 0, layer ? 0.08 : 0, 0);
+  }
+  const wrap = new THREE.Group();
+  grp.rotation.y = (clamp(num(turned), 0, 1) * Math.PI) / 2;
+  wrap.add(grp);
+  g.add(wrap);
+  return wrap;
+}
+// how much of it there is – what it's cut up into heaps up as much
+const FILL = { round: 0.52, long: 0.45, bulb: 0.35, egg: 0.5, herb: 0.03, leaf: 0.04, head: 0.45, mushroom: 0.4, block: 0.5, dough: 0.5, pile: 0.4 };
+function volumeOf(a) {
+  const S = sizeArt(a), w = S.w * K, h = S.h * K;
+  return w * h * Math.min(w, h) * (FILL[a.type] ?? 0.4);
+}
+// (the size of a piece of each cut, for how many lie on a heap's top)
+const HEAP_PIECE = { dice: 0.009, mince: 0.0035, grated: 0.008, torn: 0.012, chunks: 0.014 };
+// a heap's shape: a dome, lumpy all over (a pile of bits, not a cake) – a few of them, made once
+const HEAPS = [];
+function heapGeo(i) {
+  if (!HEAPS[i]) {
+    const geo = new THREE.SphereGeometry(1, 28, 12, 0, TAU, 0, Math.PI / 2), pos = geo.attributes.position, v0 = new THREE.Vector3();
+    for (let j = 0; j < pos.count; j++) {
+      v0.fromBufferAttribute(pos, j);
+      const a = Math.atan2(v0.z, v0.x), up = v0.y, bump = 1 + 0.09 * Math.sin(a * 7 + i * 1.3) * Math.sin(up * 9 + i) + 0.06 * Math.sin(a * 13 + up * 5 + i * 2.1);
+      v0.multiplyScalar(up < 0.02 ? 1 : bump);
+      pos.setXYZ(j, v0.x, v0.y, v0.z);
+    }
+    geo.computeVertexNormals();
+    HEAPS[i] = geo;
+  }
+  return HEAPS[i];
+}
+// a heap's radius: of count pieces (of all it's cut into) of qty of them
+function heapRadius(a, cut, count, st) {
+  const q = clamp(num(st && st.qty, 1), 1, 8), full = Math.max(1, defaultCount(a, cut, st || {})), units = num(st && st.units, 0);
+  const V = (volumeOf(a) * (units > 0 ? Math.min(8, units) : clamp(count / full, 0.03, 1) * q)) / 0.6;
+  return Math.max(0.01, Math.cbrt((3 * V) / Math.PI));
+}
+// (how far from where it's cut its heap lies: clear of it)
+const heapGap = (a, cut, count, st) => (HEAP_PIECE[cut] ? heapRadius(a, cut, count, st) + 0.012 : 0.016 + Math.sqrt(count) * 0.0065);
 function slitGroove(g, a, st, open) {
   const T = tubeOf(a);
   const fill = st.filling || st.stuffed ? (typeof (st.filling || st.stuffed) === 'string' ? st.filling || st.stuffed : '#b8603a') : '#f2ecd0';
@@ -886,19 +1012,49 @@ function slitGroove(g, a, st, open) {
 // a little heap / row of pieces
 function pieces(g, a, P, cut, count, seed, st) {
   const r = rng(seed);
+  const count0 = count;
   count = clamp(count | 0, 1, 40);
   const S = sizeArt(a);
   const W = Math.max(0.04, S.w * K);
   const spread = num(st && st.spread);
+  // slit ones (done, on the pile): each whole, its pocket open along the top
+  if (cut === 'slit') {
+    count = clamp(num(st && st.units, 0) || Math.round(num(st && st.qty, 1)), 1, 8);
+    for (let i = 0; i < count; i++) { const h = new THREE.Group(); whole(h, a, P, { ...st, cut: null, qty: 1 }, seed + i * 31, false); slitGroove(h, a, st || {}, 1); h.position.set((i % 2) * 0.01, 0, i * Math.min(S.w, S.h) * K * 1.05); g.add(h); }
+    return;
+  }
+  // diced, minced, grated, torn, in chunks – on the board: a heap as big as what it was cut from (as much of it as
+  // has been: count of what there'll be), its pieces all over it
+  // (a pile beside the board – spread a little – is a heap too; in a pan it's all over its floor)
+  if (HEAP_PIECE[cut] && !Array.isArray(st && st.box) && !(spread > 0.035)) {
+    const Rh = heapRadius(a, cut, count0, st), Hh = Rh * (cut === 'mince' || cut === 'grated' ? 0.4 : 0.48);
+    const col = pieceCol(a, P);
+    part(g, heapGeo(seed % 3), fm(mixHex(col, '#000000', 0.12), { rough: 0.9 }), 0, 0, 0, Rh * 0.9, Hh * 0.88, Rh * 0.76);
+    const sz = HEAP_PIECE[cut], m = clamp(Math.round(((Math.PI * Rh * Rh * 0.8) / (sz * sz)) * 0.45), 8, cut === 'mince' || cut === 'grated' ? 70 : 46);
+    for (let i = 0; i < m; i++) {
+      const an = r() * TAU, d = Math.sqrt(r()), x = Math.cos(an) * d * Rh * 0.95, z = Math.sin(an) * d * Rh * 0.8;
+      const h = new THREE.Group();
+      piece(h, a, P, cut, 0, 0, r, 1, i, m, true);
+      h.position.set(x, Hh * 0.88 * Math.sqrt(Math.max(0, 1 - d * d)) - sz * 0.25, z);
+      h.rotation.set((r() - 0.5) * 0.8, r() * TAU, (r() - 0.5) * 0.8);
+      g.add(h);
+    }
+    return;
+  }
   if (cut === 'cracked' || cut === 'beaten') {
     // in a pan / bowl: whites and yolks, or beaten yellow
     const ck = clamp(num(st && st.cook), 0, 1);
+    // (being whisked – mix 0 … 1: the yolks broken and running, the whites going yellow and frothy, the beaten
+    // egg spreading out from the middle till it's all one)
+    const mx = cut === 'cracked' ? clamp(num(st && st.mix), 0, 0.99) : 0;
+    if (mx > 0) part(g, GEO.cyl, fm(mixHex('#f8e08a', '#f8d55a', mx), { rough: 0.5, opacity: 0.6 + 0.4 * mx }), 0, 0.0025, 0, (spread > 0 ? spread * 0.9 : 0.035) * (0.35 + 0.65 * mx), 0.004, (spread > 0 ? spread * 0.9 : 0.03) * (0.35 + 0.65 * mx));
     for (let i = 0; i < count; i++) {
       let x = (i - (count - 1) / 2) * 0.05, z = 0;
       if (spread > 0) { const an = i * 2.4 + 0.5, d = count > 1 ? Math.max(0, spread - 0.035) * (0.45 + 0.5 * ((i * 0.618) % 1)) : 0; x = Math.cos(an) * d; z = Math.sin(an) * d; }
       if (cut === 'beaten') { part(g, GEO.cyl, fm(mixHex('#f8d55a', '#e8a840', ck), { rough: 0.5 }), x, 0.002, z, spread > 0 ? spread * 0.9 : 0.035, 0.004, spread > 0 ? spread * 0.9 : 0.03); if (spread > 0) break; continue; }
-      part(g, GEO.sphere, fm(ck > 0.2 ? '#fbfaf4' : '#f4f2ea', { rough: 0.3, opacity: ck > 0.2 ? 1 : 0.85 }), x, 0.002, z, 0.032, 0.004, 0.028);
-      part(g, GEO.sphere, fm(mixHex(P.c3, '#f0a020', ck * 0.4), { rough: 0.3 }), x + 0.004, 0.006, z - 0.002, 0.012, 0.007, 0.012);
+      const sw = 1 - 0.55 * mx;
+      part(g, GEO.sphere, fm(mx > 0 ? mixHex('#f4f2ea', '#f6dc78', mx) : ck > 0.2 ? '#fbfaf4' : '#f4f2ea', { rough: 0.3, opacity: ck > 0.2 ? 1 : 0.85 }), x * (1 - 0.4 * mx), 0.002, z * (1 - 0.4 * mx), 0.032 * sw, 0.004, 0.028 * sw);
+      part(g, GEO.sphere, fm(mixHex(P.c3, '#f0a020', ck * 0.4), { rough: 0.3 }), x * (1 - 0.4 * mx) + 0.004, 0.006 - 0.003 * mx, z * (1 - 0.4 * mx) - 0.002, 0.012 * (1 + 0.8 * mx) * sw, 0.007 * (1 - 0.6 * mx), 0.012 * (1 + 0.5 * mx) * sw);
     }
     return;
   }
@@ -926,7 +1082,9 @@ function pieces(g, a, P, cut, count, seed, st) {
 // one piece (its colour: the flesh, or the skin for small bits of some)
 function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1, lying = false) {
   const flesh = fm(cut === 'dice' || cut === 'mince' || cut === 'chunks' || cut === 'strips' || cut === 'grated' || cut === 'torn' || cut === 'crushed' ? pieceCol(a, P) : P.c2, { rough: 0.5 });
-  const skin = fm(P.c1, { rough: 0.5 });
+  // (an egg cut up is a shelled one: white outside, its yolk in the middle of the cut)
+  const skin = fm(a.type === 'egg' ? P.c2 : P.c1, { rough: 0.5 });
+  const yolk = a.type === 'egg' ? fm(mixHex(P.c3, '#f6e7a0', 0.35), { rough: 0.7 }) : null;
   let R = 0.026;
   if (a.type === 'round') R = roundDims(a).rx * K * 0.9;
   else if (a.type === 'long') { const T = tubeOf(a); R = T.r[Math.floor(T.N / 2)] * K * 1.0; }
@@ -945,11 +1103,27 @@ function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1, lying = false) {
       break;
     }
     // (a hollow thing's ring is its skin – a pepper's green; an onion's is its flesh)
-    case 'rings': part(g, GEO.torus, a.type === 'long' ? skin : flesh, x, 0.004, z, R * 0.9, R * 0.9, 0.006, Math.PI / 2 - (lying ? 0.02 : 0.25), 0, 0); break;
+    case 'rings': {
+      part(g, GEO.torus, a.type === 'long' ? skin : flesh, x, 0.004, z, R * 0.9, R * 0.9, 0.006, Math.PI / 2 - (lying ? 0.02 : 0.25), 0, 0);
+      // (fried: blistered brown here and there)
+      if (P.ck > 0.3) { const sear = fm(mixHex('#7a4a1e', P.c1, 0.3), { rough: 0.7 }); for (let j = 0; j < 2; j++) { const an = (i * 2.4 + j * 3.3) % TAU; part(g, GEO.sphereLo, sear, x + Math.cos(an) * R * 0.9, 0.0062, z + Math.sin(an) * R * 0.9, R * 0.3 * P.ck, 0.0015, R * 0.22 * P.ck, 0, an, 0); } }
+      break;
+    }
     case 'halves': {
       const h = new THREE.Group();
+      if (yolk) {
+        // (a boiled egg's halves lie cut face up: the white round the yolk)
+        part(h, GEO.hemi, skin, 0, 0, 0, R, R * 0.9, R * 1.25, Math.PI, 0, 0);
+        part(h, GEO.disc, flesh, 0, 0.0004, 0, R * 0.98, R * 1.22, 1, -Math.PI / 2, 0, 0);
+        part(h, GEO.sphere, yolk, 0, 0.0005, 0, R * 0.52, R * 0.14, R * 0.62);
+        h.position.set(x, R * 0.9, z);
+        h.rotation.y = i * 0.5;
+        g.add(h);
+        break;
+      }
       part(h, GEO.hemi, skin, 0, 0, 0, R, R, R * 0.95);
       part(h, GEO.disc, flesh, 0, 0.0005, 0, R * 0.96, R * 0.96, R * 0.96, -Math.PI / 2, 0, 0);
+      if (yolk) part(h, GEO.sphere, yolk, 0, 0, 0, R * 0.55, R * 0.12, R * 0.52);
       h.rotation.x = i % 2 ? Math.PI / 2 : -Math.PI / 2 + 0.2; // (cut face up / to the side)
       h.position.set(x, R * 0.9, z);
       g.add(h);
@@ -963,7 +1137,7 @@ function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1, lying = false) {
     case 'strips': part(g, GEO.box, flesh, x, 0.003, z, 0.004, 0.004, Math.max(0.02, R * 1.6), 0, r() * 0.6 - 0.3, 0); break;
     case 'mince': part(g, GEO.box, flesh, x, 0.0018, z, 0.0035, 0.0035, 0.0035, r(), r(), r()); break;
     case 'grated': part(g, GEO.cylLo, flesh, x, 0.0015, z, 0.0012, 0.012, 0.0012, Math.PI / 2, r() * TAU, 0); break;
-    case 'torn': part(g, GEO.sphereLo, flesh, x, 0.002, z, 0.01, 0.0015, 0.008, 0, r() * TAU, 0); break;
+    case 'torn': if (a.type === 'block') part(g, GEO.sphereLo, flesh, x, 0.005, z, 0.012, 0.006, 0.01, 0, r() * TAU, 0); else part(g, GEO.sphereLo, flesh, x, 0.002, z, 0.01, 0.0015, 0.008, 0, r() * TAU, 0); break;
     case 'crushed': part(g, GEO.sphereLo, flesh, x, 0.003, z, 0.008, 0.003, 0.007, 0, r() * TAU, 0); break;
     case 'chunks': part(g, GEO.box, flesh, x, 0.007, z, 0.014, 0.014, 0.014, r() * 0.3, r() * TAU, 0); break;
     default: part(g, GEO.box, flesh, x, 0.0045, z, 0.009, 0.009, 0.009, r() * 0.3, r() * TAU, 0); break; // dice

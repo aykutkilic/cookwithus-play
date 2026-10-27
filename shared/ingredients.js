@@ -28,7 +28,7 @@
 
 export const INGREDIENTS = {
   // ---------------------------------------------------------------- produce
-  egg:        { name: 'Egg', plural: 'Eggs', emoji: '🥚', art: { type: 'egg', c1: '#f4e4c8', c2: '#fffaf0', c3: '#ffb627' } },
+  egg:        { name: 'Egg', plural: 'Eggs', emoji: '🥚', art: { type: 'egg', c1: '#e3c49c', c2: '#fffaf0', c3: '#ffb627' } }, // (a brown egg's shell – a peeled one shows white)
   tomato:     { name: 'Tomato', plural: 'Tomatoes', emoji: '🍅', art: { type: 'round', c1: '#e8432e', c2: '#f26b4f', c3: '#ffd166', sx: 1.05, sy: 0.92, stem: '#3f8f3a' } },
   onion:      { name: 'Onion', plural: 'Onions', emoji: '🧅', art: { type: 'round', c1: '#c98a3c', c2: '#f6ecd6', c3: '#e8d6b0', sx: 1, sy: 1, tip: true } },
   redOnion:   { name: 'Red onion', plural: 'Red onions', emoji: '🧅', art: { type: 'round', c1: '#8a2e57', c2: '#f3dbe6', c3: '#c77a9c', sx: 1, sy: 1, tip: true } },
