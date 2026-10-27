@@ -800,7 +800,11 @@ export class Scene3D {
         const wl = this.work && this.work.washing && this.work.washing.fx === id && !this.work.washing.vid ? this.work.washing : null;
         // (and while a step's worked on it, coming as it goes)
         const going = this.work && !this.work.idle && this.work.fx === id ? this.work.boardDirt || 0 : 0;
-        P.stains.visible = !!(fxs[id] && fxs[id].dirty) || !!wl || going > 0.05;
+        // (cleaned freehand: the stains as they're left, rubbed off where the sponge went)
+        const mask = wl && wl.mask && wl.mask.board ? wl.mask : null;
+        if (mask && P.board) this.cleanLayer(P.board, mask, () => new THREE.PlaneGeometry(0.52, 0.36), 0.0257);
+        else if (P.board && P.board.userData.cleanLayer) P.board.userData.cleanLayer.visible = false;
+        P.stains.visible = !mask && (!!(fxs[id] && fxs[id].dirty) || !!wl || going > 0.05);
         if (P.stains.visible) {
           const dirt = wl ? wl.dirt : fxs[id] && fxs[id].dirty ? 1 : going, suds = wl ? wl.suds : 0;
           P.stains.children.forEach((m, i) => { m.visible = m.userData.dirt ? i / 9 < dirt - 0.02 : suds > (i % 7) / 9; });
@@ -1159,7 +1163,12 @@ export class Scene3D {
         else if (A.burners && (v.onHob || F.f.type === 'stove' || F.f.type === 'paellaBurner') && A.burners[v.at.slot]) stand = A.burners[v.at.slot];
         else if (A.mouth) stand = A.mouth;
         else if (A.inside) stand = A.inside; // on the oven's rack (it shows through the door's glass)
-        else if (A.basin && F.f.type === 'sink') stand = (A.spout || A.basin).clone().setY(A.basin.y + 0.02); // (right under the spout)
+        else if (A.basin && F.f.type === 'sink') {
+          stand = (A.spout || A.basin).clone().setY(A.basin.y + 0.02); // (right under the spout)
+          const wv = this.work && this.work.washing && this.work.washing.fx === v.at.fx ? this.work.washing.vid : null;
+          // (several in it, one being washed up: that one under the spout, the rest waiting on the worktop beside the sink)
+          if (wv && wv !== id) stand = stand.clone().addScaledVector(new THREE.Vector3().crossVectors(UP, F.front).normalize(), -0.4).addScaledVector(F.front, 0.02).setY(COUNTER_H);
+        }
         else if (F.f.type === 'fridge') stand = A.shelf; // chilling (behind the door)
         // (something big on a counter with its board stood up: in the middle, where the board lay)
         else if (A.bigSpot && VESSELS[v.kind] && VESSELS[v.kind].big && F.parts.board && F.parts.board.userData.posed > 0.5) stand = A.bigSpot;
@@ -1199,13 +1208,17 @@ export class Scene3D {
         // while it's carried empty; it comes off as the pot's set down to cook)
         const empty = !(v.contents && v.contents.length) && !(v.water > 0.05) && !(v.items && v.items.length) && !v.dirty;
         rec.stowed = rec.ownLid && !ov && !!kept && (kept.stored || !!kept.place || ((kept.held || kept.fp) && empty));
-        updateVessel(rec, v, this.t, this.firstPerson);
+        // (washed up freehand: its water tipped out first – what's stuck to its floor to be seen, scrubbed off)
+        const wl = this.work && this.work.washing && this.work.washing.vid === id ? this.work.washing : null;
+        const vmask = wl && wl.mask && !wl.mask.board ? wl.mask : null;
+        updateVessel(rec, vmask ? { ...v, water: 0, contents: [] } : v, this.t, this.firstPerson);
         if (this.work && this.work.lid && this.work.lid.vid === id) { rec.lid.visible = false; rec.towel.visible = false; }
         // dirty: a smear of what was in it (going as it's scrubbed) – and the suds while it's washed
-        const wl = this.work && this.work.washing && this.work.washing.vid === id ? this.work.washing : null;
-        const grime = v.dirty && !rec.liquid.visible && !v.lid ? (wl ? wl.dirt : 1) : 0;
+        if (vmask) { const fl = this.vesselFloor(rec); this.cleanLayer(rec.group, vmask, () => new THREE.CircleGeometry(fl.r, 40), fl.y + 0.002); }
+        else if (rec.group.userData.cleanLayer) rec.group.userData.cleanLayer.visible = false;
+        const grime = v.dirty && !rec.liquid.visible && !v.lid && !vmask ? (wl ? wl.dirt : 1) : 0;
         if (grime > 0.02) { rec.liquid.visible = true; rec.liquid.position.y = 0.012; rec.liquid.material.color.set('#7a5232'); rec.liquid.material.opacity = 0.4 * grime; }
-        if (wl && wl.suds > 0.05) rec.bubbles.forEach((b, i) => { b.visible = true; b.position.set(Math.cos(i * 2.1) * rec.r * 0.55, 0.02 + (i % 2) * 0.008, Math.sin(i * 2.1) * rec.r * 0.55); b.scale.setScalar(1.2 + wl.suds * 1.5); });
+        if (wl && wl.suds > 0.05 && !vmask) rec.bubbles.forEach((b, i) => { b.visible = true; b.position.set(Math.cos(i * 2.1) * rec.r * 0.55, 0.02 + (i % 2) * 0.008, Math.sin(i * 2.1) * rec.r * 0.55); b.scale.setScalar(1.2 + wl.suds * 1.5); });
         // first person: what's in it, in 3D (what's runny is its surface)
         rec.inside = this.firstPerson && !v.lid ? Object.entries(D.items).filter(([, it]) => it.in === id && !it.hidden && solidIn(it, v)) : null;
         if (v.boil > 0.25 && Math.random() < v.boil * dt * 25) this.puff(p.clone().setY(p.y + rec.h), 'steam');
@@ -1874,6 +1887,81 @@ export class Scene3D {
     const d = P.clone().sub(w.O);
     const x = MAIN.x + d.dot(w.R) / w.S, up = d.dot(w.U);
     return up > 0.001 ? { x, y: MAIN.y - up / w.S } : { x, y: MAIN.y + d.dot(w.N) / w.S };
+  }
+  // Cleaning freehand (client/station.js cleanAt): the surface cleaned – a board's top (-1 … 1 across its 52 cm, deep
+  // its 36), a pot's floor (-1 … 1 across it) – and a close-up point as a point of it, along the line from my eye
+  // through it (the close-up's point is on its upright plane over the work, or on the worktop before it)
+  cleanSurface(w, def, vid) {
+    if (def.do === 'wipe') { const F = this.k3.fx[w.fx], b = F && F.parts.board; return b ? { obj: b, y: 0.025, hx: 0.26, hz: 0.18 } : null; }
+    const rec = vid && this.vessels.get(vid), fl = rec && this.vesselFloor(rec);
+    return rec ? { obj: rec.group, y: fl.y + 0.002, hx: fl.r, hz: fl.r } : null;
+  }
+  // a pot's, a bowl's inner floor: how high it is, how far out it's flat (felt for with rays down into its model)
+  vesselFloor(rec) {
+    if (rec.floor) return rec.floor;
+    const skip = new Set([rec.liquid, ...rec.bits, ...rec.bubbles]);
+    for (const o of [rec.lid, rec.towel, rec.group.userData.cleanLayer]) if (o) o.traverse((m) => skip.add(m));
+    const meshes = [];
+    rec.group.updateMatrixWorld(true);
+    rec.group.traverse((o) => { if (o.isMesh && !skip.has(o)) meshes.push(o); });
+    const rc = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0).transformDirection(rec.group.matrixWorld);
+    const hitY = (x) => { rc.set(rec.group.localToWorld(new THREE.Vector3(x, rec.h + 0.2, 0)), down); const h = rc.intersectObjects(meshes, false)[0]; return h ? rec.group.worldToLocal(h.point.clone()).y : null; };
+    const y0 = hitY(0) ?? 0.01;
+    let r = rec.r * 0.3;
+    for (let f = 0.3; f <= 0.95; f += 0.05) { const y = hitY(f * rec.r); if (y == null || y > y0 + 0.008) break; r = f * rec.r; }
+    rec.floor = { y: y0, r };
+    return rec.floor;
+  }
+  cleanWorld(w, p, def, vid) {
+    const S = p && this.cleanSurface(w, def, vid);
+    if (!S) return null;
+    S.obj.updateMatrixWorld();
+    const Pw = this.workWorld(w, p.x, p.y), eye = this.camera.getWorldPosition(new THREE.Vector3());
+    const top = S.obj.localToWorld(new THREE.Vector3(0, S.y, 0)).y, d = Pw.clone().sub(eye);
+    if (Math.abs(d.y) < 1e-5) return null;
+    const t = (top - eye.y) / d.y;
+    return t > 0 ? { S, P: eye.addScaledVector(d, t) } : null;
+  }
+  cleanUV(w, p, def, vid) {
+    const c = this.cleanWorld(w, p, def, vid);
+    if (!c) return null;
+    const L = c.S.obj.worldToLocal(c.P.clone());
+    return { x: L.x / c.S.hx, z: L.z / c.S.hz };
+  }
+  // (and where that surface is in the close-up, as the pointer has it over it on the screen)
+  cleanRect(w, def, vid) {
+    const S = this.cleanSurface(w, def, vid);
+    if (!S) return null;
+    S.obj.updateMatrixWorld();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const s = this.screenOf(S.obj.localToWorld(new THREE.Vector3(a * S.hx, S.y, b * S.hz))), q = this.workAt(w, s.x, s.y);
+      if (!q) continue;
+      x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y);
+    }
+    return Number.isFinite(x0) ? { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) } : null;
+  }
+  // the dirt and suds left on a surface being cleaned (the station's mask, drawn on it as it's rubbed off)
+  cleanLayer(parent, mask, makeGeo, y) {
+    let L = parent.userData.cleanLayer;
+    if (!L) {
+      L = new THREE.Mesh(makeGeo(), new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 }));
+      L.rotation.x = -Math.PI / 2;
+      L.userData.noAO = true;
+      parent.add(L);
+      parent.userData.cleanLayer = L;
+    }
+    L.position.y = y;
+    if (L.userData.src !== mask.tex) {
+      if (L.material.map) L.material.map.dispose();
+      L.material.map = new THREE.CanvasTexture(mask.tex);
+      L.material.map.colorSpace = THREE.SRGBColorSpace;
+      L.material.needsUpdate = true;
+      L.userData.src = mask.tex; L.userData.ver = -1;
+    }
+    if (L.userData.ver !== mask.ver) { L.material.map.needsUpdate = true; L.userData.ver = mask.ver; }
+    L.visible = true;
+    return L;
   }
   // the close-up point under this point of the screen
   workAt(w, cx, cy) {
@@ -2580,6 +2668,18 @@ export class Scene3D {
           const off = Math.ceil(Math.min(1, Number(pst.peeled) || 0) * 5);
           if (!leaves && off > 0) out.sprites.push({ tex: null, kind: { type: 'scraps', c1: skin, n: off }, st: {}, pos: C.clone().addScaledVector(w.R, rad + 0.075).addScaledVector(w.N, 0.035), size: 0.08 });
           break;
+        }
+        // Cleaning freehand: the sponge on the board / the pot's floor right under the pointer – pressed down on it while
+        // held – the other hand steadying the pot by its side, or flat on the board's corner
+        if (g.kind === 'paint' && ph.clean && def) {
+          const vid = st.c.st && st.c.st.vid, cw = this.cleanWorld(w, pt, def, vid);
+          if (cw) {
+            toolHand(cw.P.clone().addScaledVector(UP, p.down ? 0.003 : 0.022));
+            const S = cw.S;
+            if (def.do === 'scrub') { const sd = S.obj.localToWorld(new THREE.Vector3(-S.hx * 1.05, S.y + 0.05, 0)); hand(oi, sd, 'side', { curl: 0.6 }); }
+            else hand(oi, S.obj.localToWorld(new THREE.Vector3(-S.hx * 0.85, S.y + 0.004, S.hz * 0.55)), 'rest');
+            break;
+          }
         }
         // knife, peeler, grater, spoon, whisk, brush … – and the other hand on the food
         toolHand(at(pt));

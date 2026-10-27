@@ -926,6 +926,12 @@ function openWork(sid, fx) {
   station.headless = true;
   // things put under the tap / in the colander go where the water falls in the basin
   station.targetHook = (to, vid) => {
+    // (cleaning freehand: the pointer on the board's top / the pot's floor – and where that surface is, as the pointer has it)
+    if (to === 'cleanUV' || to === 'cleanRect') {
+      const w = workFrame(), def = station.c && station.c.def, v = station.c && station.c.st && station.c.st.vid;
+      if (!w || !def) return null;
+      return to === 'cleanUV' ? scene.cleanUV(w, vid, def, v) : scene.cleanRect(w, def, v);
+    }
     // (the board's own knife, peeler, grater, where it lies)
     // (as the pointer has it, over it on the screen – the grater stands up at the back of the board)
     if (to.startsWith('tool:')) {

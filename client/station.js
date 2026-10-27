@@ -16,6 +16,25 @@ import { themeOf, splashTexture, topTexture } from './theme.js';
 
 export const SW = 1000, SH = 620;
 const TAU = Math.PI * 2;
+// the stains knife work leaves on a board (as client/kitchen3d.js lays them: its 52 × 36 cm top, -1 … 1 across and deep)
+function boardStains() {
+  const out = [];
+  for (let i = 0; i < 9; i++) {
+    const r = 0.012 + ((i * 37) % 10) * 0.0025, sy = 0.6 + ((i * 13) % 5) * 0.12;
+    out.push({ x: (((i * 53) % 9) - 4) * 0.05 / 0.26, z: (((i * 29) % 7) - 3) * 0.04 / 0.18, rx: (r * 1.35) / 0.26, rz: (r * sy * 1.35) / 0.18, col: i % 3 ? 'rgba(138,90,50,0.62)' : 'rgba(184,64,42,0.58)' });
+  }
+  return out;
+}
+// what's left stuck on a pot's floor: a ring by its wall, patches here and there (-1 … 1 across its floor)
+function potGrime(seed) {
+  let x = seed || 1;
+  const r = () => ((x = (x * 16807) % 2147483647) / 2147483647);
+  const out = [];
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * TAU + r() * 0.4; out.push({ x: Math.cos(a) * 0.82, z: Math.sin(a) * 0.82, rx: 0.2 + r() * 0.1, rz: 0.16 + r() * 0.1, col: 'rgba(96,58,28,0.82)' }); }
+  for (let i = 0; i < 6; i++) { const a = r() * TAU, d = Math.sqrt(r()) * 0.6; out.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, rx: 0.12 + r() * 0.14, rz: 0.1 + r() * 0.12, col: i % 2 ? 'rgba(104,64,34,0.85)' : 'rgba(140,84,32,0.78)' }); }
+  return out;
+}
+function hashStr(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 2147483646 + 1; }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -208,7 +227,7 @@ export class Station {
         break;
       default: break;
     }
-    if (ph.g === 'paint') this.resetPaint();
+    if (ph.g === 'paint') { if (ph.clean) this.cleanSetup(g); else this.resetPaint(); }
     if (ph.g === 'circle' && ph.turn) g.rot = 0;
     this.g = g;
     this.idle = 0;
@@ -739,6 +758,9 @@ export class Station {
   surfaceRound() { const it = this.subjectItem(); return !it || it.kind === 'dough'; }
 
   surfaceRect() {
+    // (cleaning: the board's top, the pot's floor – where it really is, as the pointer has it)
+    const cr = this.g && this.g.ph && this.g.ph.clean && this.targetHook && this.targetHook('cleanRect');
+    if (cr) return cr;
     const b = this.subjectBox();
     const r = Math.max(b.w, b.h * 1.3) / 2;
     return { x: b.cx - r, y: b.cy - r * 0.62, w: 2 * r, h: 2 * r * 0.62 };
@@ -746,6 +768,7 @@ export class Station {
 
   paintAt(p, prev) {
     const g = this.g;
+    if (g.ph.clean) return this.cleanAt(p, prev);
     const R = this.surfaceRect();
     const round = this.surfaceRound();
     const toUV = (q) => ({ u: (q.x - R.x) / R.w * 2 - 1, v: (q.y - R.y) / R.h * 2 - 1 });
@@ -2336,9 +2359,115 @@ export class Station {
   washLook() {
     const P = this.c.phases || [];
     const n = (i) => (P[i] ? phaseTarget(P[i]) : 1);
-    const f = (i) => (this.ph > i ? 1 : this.ph === i ? Math.min(1, this.k / n(i)) : 0);
-    if (this.c.def.do === 'wipe') return { dirt: 1 - f(1) * 0.75 - f(2) * 0.25, suds: Math.max(0, f(1) - f(2)) };
-    return { dirt: 1 - f(1), suds: Math.max(0, f(1) - f(3)) };
+    const f = (i) => (this.ph > i ? 1 : this.ph === i ? (P[i] && P[i].g === 'paint' ? Math.min(1, (this.g && this.g.v) || 0) : Math.min(1, this.k / n(i))) : 0);
+    // (mask: the dirt and the suds where they really are, rubbed off freehand – see cleanAt)
+    const mask = this.clean && this.clean.key === this.sid ? this.clean : null;
+    if (this.c.def.do === 'wipe') return { dirt: 1 - f(1) * 0.75 - f(2) * 0.25, suds: Math.max(0, f(1) - f(2)), mask };
+    return { dirt: 1 - f(1), suds: Math.max(0, f(1) - f(3)), mask };
+  }
+
+  // ------------------------------------------------------------------ cleaning, freehand
+  // As the pen in lalinea: the sponge goes where the pointer does, and held down, what it rubs over – and a little
+  // round it, so it doesn't take long – comes clean. The dirt is where it really is: the stains on the board (where
+  // the knife work left them), the grime on the pot's floor; the suds stay where the soapy sponge went till they're
+  // rinsed or wiped off. Done once (nearly) all of it is.
+  cleanSetup(g) {
+    const ph = g.ph, def = this.c.def;
+    let C = this.clean && this.clean.key === this.sid ? this.clean : null;
+    if (!C) {
+      const board = def.do === 'wipe';
+      // (in the surface's own space, -1 … 1 across and deep; a board's metres: its half size – a pot's floor: 1)
+      const hx = board ? 0.26 : 1, hz = board ? 0.18 : 1, W = board ? 520 : 320, H = board ? 360 : 320, GW = board ? 40 : 32, GH = board ? 28 : 32;
+      const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+      C = this.clean = { key: this.sid, board, hx, hz, W, H, GW, GH, dirt: mk(), suds: mk(), tex: mk(), ver: 1, brush: board ? 0.05 : 0.36 };
+      const blots = board ? boardStains() : potGrime(hashStr(String((this.c.st && this.c.st.vid) || this.sid)));
+      const dc = C.dirt.getContext('2d');
+      for (const b of blots) {
+        const px = (b.x * 0.5 + 0.5) * W, py = (b.z * 0.5 + 0.5) * H, rx = (b.rx * 0.5) * W, rz = (b.rz * 0.5) * H;
+        dc.save(); dc.translate(px, py); dc.scale(1, rz / rx);
+        const gr = dc.createRadialGradient(0, 0, rx * 0.2, 0, 0, rx);
+        gr.addColorStop(0, b.col); gr.addColorStop(0.75, b.col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+        dc.fillStyle = gr; dc.beginPath(); dc.arc(0, 0, rx, 0, TAU); dc.fill(); dc.restore();
+      }
+      // (where it's dirty: the cells under a stain – a pot's only within its floor)
+      const cells = new Uint8Array(GW * GH);
+      for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+        const x = ((i + 0.5) / GW) * 2 - 1, z = ((j + 0.5) / GH) * 2 - 1;
+        if (!board && x * x + z * z > 1) continue;
+        if (blots.some((b) => ((x - b.x) / b.rx) ** 2 + ((z - b.z) / b.rz) ** 2 <= 0.8)) cells[j * GW + i] = 1;
+      }
+      C.cells = cells; C.n0 = Math.max(1, cells.reduce((t, c) => t + c, 0));
+      C.sudsCells = new Uint8Array(GW * GH);
+      this.cleanCompose();
+    }
+    // (rinsing, wiping the suds off: as many as there are now)
+    if (ph.clean === 'suds') C.sudsN0 = C.sudsCells.reduce((t, c) => t + c, 0);
+    g.v = this.cleanProgress(ph);
+    if (g.v >= ph.cover) setTimeout(() => { if (this.g === g && !this.done) this.value(1, true); }, 200);
+  }
+  cleanProgress(ph = this.g && this.g.ph) {
+    const C = this.clean;
+    if (!C || !ph) return 0;
+    if (ph.clean === 'suds') return C.sudsN0 ? 1 - C.sudsCells.reduce((t, c) => t + c, 0) / C.sudsN0 : 1;
+    return 1 - C.cells.reduce((t, c) => t + c, 0) / C.n0;
+  }
+  cleanCompose() {
+    const C = this.clean, t = C.tex.getContext('2d');
+    t.clearRect(0, 0, C.W, C.H);
+    t.drawImage(C.dirt, 0, 0);
+    t.drawImage(C.suds, 0, 0);
+    C.ver++;
+  }
+  cleanAt(p, prev) {
+    const C = this.clean, g = this.g, mode = g.ph.clean;
+    if (!C) return;
+    // (the pointer on the surface: where the scene has it – else across the close-up's surface rect)
+    const on = (q) => (this.targetHook && this.targetHook('cleanUV', q)) || (() => { const R = this.surfaceRect(); return { x: ((q.x - R.x) / R.w) * 2 - 1, z: ((q.y - R.y) / R.h) * 2 - 1 }; })();
+    const a = on(prev || p), b = on(p);
+    const len = Math.hypot((b.x - a.x) * C.hx, (b.z - a.z) * C.hz), steps = Math.max(1, Math.ceil(len / (C.brush * 0.35)));
+    for (let i = 1; i <= steps || (i === 1 && !prev); i++) {
+      const t = i / steps;
+      this.cleanDab(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, mode);
+      if (!prev) break;
+    }
+    this.cleanCompose();
+    if (Math.random() < 0.25) this.hooks.sfx('smear', 0.5);
+    g.v = this.cleanProgress();
+    this.value(g.v, false);
+    this.report();
+    if (g.v >= g.ph.cover && !g.doneSent) { g.doneSent = true; this.value(g.v, true); }
+  }
+  // one press of the sponge at (x, z): the dirt (and, rinsing / wiping, the suds) gone under it and a little round;
+  // soapy, it leaves suds
+  cleanDab(x, z, mode) {
+    const C = this.clean, W = C.W, H = C.H;
+    if (Math.abs(x) > 1.25 || Math.abs(z) > 1.25) return;
+    const px = (x * 0.5 + 0.5) * W, py = (z * 0.5 + 0.5) * H, r = ((C.brush / C.hx) * 0.5) * W;
+    const off = (cv) => {
+      const c = cv.getContext('2d');
+      c.save(); c.globalCompositeOperation = 'destination-out';
+      const gr = c.createRadialGradient(px, py, r * 0.55, px, py, r);
+      gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = gr; c.beginPath(); c.arc(px, py, r, 0, TAU); c.fill(); c.restore();
+    };
+    off(C.dirt);
+    if (mode === 'suds') off(C.suds);
+    else {
+      // (the soap's foam, left where the sponge went)
+      const sc = C.suds.getContext('2d');
+      for (let k = 0; k < 3; k++) {
+        const a = Math.random() * TAU, d = Math.random() * r * 0.6, rr = r * (0.18 + Math.random() * 0.2);
+        sc.fillStyle = 'rgba(255,255,255,0.8)'; sc.strokeStyle = 'rgba(170,205,230,0.7)'; sc.lineWidth = 1.5;
+        sc.beginPath(); sc.arc(px + Math.cos(a) * d, py + Math.sin(a) * d, rr, 0, TAU); sc.fill(); sc.stroke();
+      }
+    }
+    // (the cells it went over: clean – or with suds on them)
+    const rm = C.brush, rs = C.brush * 0.75;
+    for (let j = 0; j < C.GH; j++) for (let i = 0; i < C.GW; i++) {
+      const cx = ((i + 0.5) / C.GW) * 2 - 1, cz = ((j + 0.5) / C.GH) * 2 - 1, d = Math.hypot((cx - x) * C.hx, (cz - z) * C.hz), k = j * C.GW + i;
+      if (d < rm) { C.cells[k] = 0; if (mode === 'suds') C.sudsCells[k] = 0; }
+      if (mode !== 'suds' && d < rs && (C.board || cx * cx + cz * cz <= 1)) C.sudsCells[k] = 1;
+    }
   }
   // grime and suds on what's being washed, over an ellipse (cx, cy, rx, ry)
   drawDirt(ctx, cx, cy, rx, ry, dirt, suds) {

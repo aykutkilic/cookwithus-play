@@ -682,9 +682,10 @@ export const ACTIONS = {
     cap: 'sink', verb: 'Wash up', tool: 'sponge', icon: '🧽', chore: true,
     phases: () => [
       { g: 'tap', hot: 'soap', hint: 'Squeeze some dish soap onto the sponge' },
-      { g: 'strokes', axis: 'h', n: 6, tool: 'sponge', hint: 'Scrub it all over with the sponge' },
+      // (freehand: the sponge where the pointer is – what it's rubbed over comes clean, leaving suds)
+      { g: 'paint', clean: 'dirt', cover: 0.93, tool: 'sponge', hint: 'Scrub it clean – rub the sponge over the dirt' },
       { g: 'tap', hot: 'faucet', hint: 'Turn on the tap', eff: (S, st, v, fx) => { fx.tap = 1; } },
-      { g: 'circle', n: 2, tool: 'hand', hint: 'Rinse the suds off under the water' },
+      { g: 'paint', clean: 'suds', cover: 0.9, tool: 'sponge', hint: 'Rinse the suds off under the water – rub them away' },
       { g: 'tap', hot: 'faucet', hint: 'Turn off the tap', eff: (S, st, v, fx) => { fx.tap = 0; } },
     ],
   },
@@ -693,8 +694,9 @@ export const ACTIONS = {
     cap: 'board', verb: 'Clean the board', tool: 'sponge', icon: '🧽', chore: true,
     phases: () => [
       { g: 'tap', hot: 'soap', hint: 'A squeeze of dish soap on the sponge' },
-      { g: 'strokes', axis: 'h', n: 5, tool: 'sponge', hint: 'Scrub the board with the sponge' },
-      { g: 'strokes', axis: 'v', n: 3, tool: 'sponge', hint: 'Wipe it down clean' },
+      // (freehand: the sponge where the pointer is – where it rubs (and a little round) comes clean, leaving suds)
+      { g: 'paint', clean: 'dirt', cover: 0.93, tool: 'sponge', hint: 'Scrub the stains off – rub the sponge over them' },
+      { g: 'paint', clean: 'suds', cover: 0.9, tool: 'sponge', hint: 'Wipe the suds off' },
     ],
   },
   // a bunch with more than the recipe takes: just what's needed into an empty container of its
