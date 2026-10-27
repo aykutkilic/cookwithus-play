@@ -367,6 +367,8 @@ function cookTo(a) {
       return [shade(a.c1, -0.25), mix(a.c2 || a.c1, '#b8742a', 0.5)];
     case 'long':
       if ((a.taper || 0) < 0) return ['#3c2232', '#a87a4a'];
+      // (a pepper goes olive, blistered, as it fries)
+      if (a.hollow) return [mix(shade(a.c1, -0.3), '#7a6226', 0.45), mix(a.c2 || a.c1, '#c08a3a', 0.55)];
       return [shade(a.c1, -0.3), mix(a.c2 || a.c1, '#c08a3a', 0.55)];
     case 'egg': return ['#e8b860', '#fff3d8'];
     case 'mushroom': return ['#9a6438', '#b88a58'];

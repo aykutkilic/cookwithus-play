@@ -477,24 +477,34 @@ function whole(g, a, P, st, seed, wet) {
       break;
     }
     case 'bulb': {
-      // (its papery skin coming off a piece at a time: the cloves bare – a little smaller, the pale flesh – where it has)
-      const m = fm(part0 ? P.c1 : skin, { rough }), bare = fm(mixHex(P.c2, '#ecd99a', 0.45), { rough: 0.4 });
-      const geo = lathe([[0.001, 0], [0.02, 0.004], [0.034, 0.02], [0.033, 0.04], [0.02, 0.058], [0.006, 0.07], [0.001, 0.076]]);
-      const off = part0 ? Math.max(1, Math.round(pf * 6)) : 0;
-      for (let i = 0; i < 6; i++) { const mm = part(g, geo, i < off ? bare : m, 0, 0, 0, i < off ? 0.93 : 1, i < off ? 0.93 : 1, 0.55, 0, i * Math.PI / 6, 0); mm.scale.x = 0.8 * (i < off ? 0.93 : 1); }
+      // garlic: its papery skin faintly mauve, the cloves under it a warm ivory – peeled, the skin's left on round
+      // the rest of it, as far as it's still on
+      const prof = [[0.001, 0], [0.02, 0.004], [0.034, 0.02], [0.033, 0.04], [0.02, 0.058], [0.006, 0.07], [0.001, 0.076]];
+      const geo = lathe(prof), skinM = fm(mixHex(P.c1, '#c9a3b8', 0.28), { rough }), bare = fm(mixHex(P.c2, '#e8cf86', 0.6), { rough: 0.3 });
+      for (let i = 0; i < 6; i++) { const mm = part(g, geo, pf > 0 ? bare : skinM, 0, 0, 0, 1, 1, 0.55, 0, i * Math.PI / 6, 0); mm.scale.x = 0.8; }
+      if (part0) {
+        const sm = skinM.clone(); sm.side = THREE.DoubleSide;
+        part(g, new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x * 0.8, y)), 18, 0, TAU * (1 - pf)), sm, 0, 0, 0, 1.04, 1.01, 1.04);
+      }
       if (pf < 1) part(g, GEO.cylLo, fm(P.c3), 0, 0.001, 0, 0.012, 0.004, 0.012);
       break;
     }
     case 'egg': {
       const prof = [[0.0001, 0], [0.014, 0.003], [0.022, 0.015], [0.0235, 0.03], [0.02, 0.046], [0.012, 0.057], [0.0001, 0.061]].map(([x, y]) => new THREE.Vector2(x, y));
       const col = pf > 0 ? '#fbfaf4' : skin;
-      part(g, new THREE.LatheGeometry(prof, 18), fm(col, { rough: wet ? 0.18 : 0.45 }), 0, 0, 0, pf > 0 ? 0.985 : 1);
-      // (being shelled: the shell still on round the rest, cracked all over – crazed lines on it)
+      // (lying on its side, as an egg does – its length across, front to back)
+      const eg = new THREE.Group();
+      eg.rotation.x = Math.PI / 2;
+      eg.position.set(0, 0.0235, -0.0305);
+      g.add(eg);
+      part(eg, new THREE.LatheGeometry(prof, 18), fm(col, { rough: wet ? 0.18 : 0.45 }), 0, 0, 0, pf > 0 ? 0.985 : 1);
+      // (being shelled: the top first – the shell still on round the rest, underneath, cracked all over)
       if (part0) {
-        skinLeft(new THREE.LatheGeometry(prof, 18, 0, TAU * (1 - pf)), fm(P.c1, { rough: 0.45 }), 0, 0, 0, 1.01, 1.01, 1.01);
+        const sm = fm(P.c1, { rough: 0.45 }); sm.side = THREE.DoubleSide;
+        part(eg, new THREE.LatheGeometry(prof, 18, -TAU * (1 - pf) / 2, TAU * (1 - pf)), sm, 0, 0, 0, 1.01, 1.01, 1.01);
         const crk = fm(mixHex(P.c1, '#5a4636', 0.55), { rough: 0.8 });
         const rAt = (y) => { for (let j = 1; j < prof.length; j++) if (y <= prof[j].y) { const t = (y - prof[j - 1].y) / (prof[j].y - prof[j - 1].y); return prof[j - 1].x + (prof[j].x - prof[j - 1].x) * t; } return 0.001; };
-        for (let i = 0; i < 7; i++) { const an = (i / 7) * TAU * (1 - pf) + 0.2, y = 0.014 + ((i * 0.37) % 1) * 0.03, rr = rAt(y) * 1.012; part(g, GEO.box, crk, Math.sin(an) * rr, y, Math.cos(an) * rr, 0.0007, 0.01, 0.0007, (i % 3 - 1) * 0.5, an, 0); }
+        for (let i = 0; i < 7; i++) { const an = ((i + 0.5) / 7 - 0.5) * TAU * (1 - pf), y = 0.014 + ((i * 0.37) % 1) * 0.03, rr = rAt(y) * 1.012; part(eg, GEO.box, crk, Math.sin(an) * rr, y, Math.cos(an) * rr, 0.0007, 0.01, 0.0007, (i % 3 - 1) * 0.5, an, 0); }
       }
       break;
     }
@@ -646,6 +656,8 @@ function whole(g, a, P, st, seed, wet) {
     }
     // (not ingredients: a spoonful of something; peelings left on a counter)
     case 'blob': part(g, GEO.sphere, fm(P.c1, { rough: 0.45 }), 0, 0.008, 0, 0.02, 0.01, 0.018); break;
+    // (a piece of shell, of papery skin, being pulled off)
+    case 'flake': { const fl = fm(P.c1, { rough: 0.6 }); fl.side = THREE.DoubleSide; part(g, new THREE.SphereGeometry(1, 10, 6, 0, TAU, 0, 0.9), fl, 0, 0.002, 0, 0.014, 0.006, 0.011); break; }
     case 'scraps': {
       const r2 = rng(seed);
       const n = clamp(num(a.n, 3), 1, 6) * 3;
@@ -1106,7 +1118,7 @@ function piece(g, a, P, cut, x, z, r, s = 1, i = 0, count = 1, lying = false) {
     case 'rings': {
       part(g, GEO.torus, a.type === 'long' ? skin : flesh, x, 0.004, z, R * 0.9, R * 0.9, 0.006, Math.PI / 2 - (lying ? 0.02 : 0.25), 0, 0);
       // (fried: blistered brown here and there)
-      if (P.ck > 0.3) { const sear = fm(mixHex('#7a4a1e', P.c1, 0.3), { rough: 0.7 }); for (let j = 0; j < 2; j++) { const an = (i * 2.4 + j * 3.3) % TAU; part(g, GEO.sphereLo, sear, x + Math.cos(an) * R * 0.9, 0.0062, z + Math.sin(an) * R * 0.9, R * 0.3 * P.ck, 0.0015, R * 0.22 * P.ck, 0, an, 0); } }
+      if (P.ck > 0.3) { const sear = fm(mixHex('#7a4a1e', P.c1, 0.3), { rough: 0.7 }); for (let j = 0; j < 2; j++) { const an = (i * 2.4 + j * 3.3) % TAU; part(g, GEO.sphereLo, sear, x + Math.cos(an) * R * 0.9, 0.0062, z + Math.sin(an) * R * 0.9, R * 0.5 * P.ck, 0.0018, R * 0.32 * P.ck, 0, an, 0); } }
       break;
     }
     case 'halves': {

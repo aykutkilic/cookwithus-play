@@ -1453,7 +1453,7 @@ export class Scene3D {
           const melt = egg ? smooth : Math.max(smooth, mix);
           if (melt >= 0.999) return; // (all in the purée, the batter)
           const pos = rec.group.localToWorld(v3(Math.cos(k * 2.4 + spin) * rec.r * 0.1, 0.01 + k * 0.002, Math.sin(k * 2.4 + spin) * rec.r * 0.1));
-          const sts = { ...it, cut, spread, ...(egg && mix > 0 ? { mix: Math.round(mix * 12) / 12 } : {}), ...(fry > 0 && Math.min(1, fry * 1.6) > (it.cook || 0) ? { cook: Math.round(Math.min(1, fry * 1.6) * 10) / 10 } : {}) }; // (fried in fat it colours quicker than it cooks through)
+          const sts = { ...it, cut, spread, ...(egg && mix > 0 ? { mix: Math.round(mix * 12) / 12 } : {}), ...(fry > 0 && Math.min(1, fry * 2) > (it.cook || 0) ? { cook: Math.round(Math.min(1, fry * 2) * 10) / 10 } : {}) }; // (fried in fat it colours quicker than it cooks through)
           food(`in:${vid}:${iid}`, it.kind, sts, pos, rec.group.rotation.y + k * 1.1 - spin, null, 1 - 0.7 * melt);
           const fg = this.foods.get(`in:${vid}:${iid}`);
           if (fg && melt > 0) fg.g.scale.y *= 1 - 0.5 * melt; // (pressed down into it, sinking)
@@ -2552,6 +2552,30 @@ export class Scene3D {
           if (frac > 0) out.sprites.push({ tex: null, kind: gIt.kind, st: { cut: 'grated', k: 1, n: 1, bits: frac }, pos: G.clone().addScaledVector(w.R, 0.036).addScaledVector(w.N, 0.012), size: 0.1 }); // (just out from its face, under the food)
           break;
         }
+        // Peeling by hand – an egg's shell, garlic's papery skin, an onion's, a cabbage's leaves: my other hand holds
+        // it from its side (its top in sight); my fingertips take hold of its edge where I pressed and pull a piece
+        // off, out to where the pointer's gone; what's come off so far lies beside it
+        const pIt = g.kind === 'peel' && ph.tool === 'hand' && st.subjectItem(), pOv = pIt && out.ov.get(`i:${pIt.id}`);
+        if (pOv && !pOv.hide) {
+          const pst = pOv.st ? { ...pIt, ...pOv.st } : pIt, leaves = def && def.do === 'separate';
+          const C = pOv.pos.clone(), h = this.foodHeight(pIt.kind, pst), rad = Math.min(0.07, Math.max(0.022, h * 0.62));
+          hand(oi, C.clone().addScaledVector(w.R, -(rad + 0.006)).addScaledVector(UP, h * 0.5), 'grab', { curl: 0.5, dir: w.R.clone().addScaledVector(UP, -0.35).normalize() });
+          const skin = PEEL_COL[pIt.kind] || (INGREDIENTS[pIt.kind] && INGREDIENTS[pIt.kind].art.c1) || '#c98a3c';
+          if (p.down && g.start) {
+            const pull = at(pt).sub(at(g.start)).setY(0);
+            if (pull.length() > 0.12) pull.setLength(0.12);
+            const edge = at(g.start).sub(C).setY(0);
+            if (edge.lengthSq() < 1e-6 || edge.dot(w.R) < 0) edge.copy(w.R);
+            edge.setLength(rad * 0.85);
+            const P = C.clone().add(edge).addScaledVector(UP, h * 0.75).add(pull);
+            pinch(P, 0.75);
+            const away = pull.lengthSq() > 1e-6 ? pull.clone().normalize() : edge.clone().normalize();
+            out.sprites.push(leaves ? { tex: null, kind: pIt.kind, st: { cut: 'leaves', k: 1, n: 1, qty: 1 }, pos: P.clone().addScaledVector(away, 0.045).addScaledVector(UP, -0.03), size: 0.12 } : { tex: null, kind: { type: 'flake', c1: skin }, st: {}, pos: P.clone().addScaledVector(UP, -0.006), size: 0.04 });
+          } else hand(wi, C.clone().addScaledVector(w.R, rad + 0.03).addScaledVector(UP, 0.03), 'hand', { curl: 0.35 });
+          const off = Math.ceil(Math.min(1, Number(pst.peeled) || 0) * 5);
+          if (!leaves && off > 0) out.sprites.push({ tex: null, kind: { type: 'scraps', c1: skin, n: off }, st: {}, pos: C.clone().addScaledVector(w.R, rad + 0.075).addScaledVector(w.N, 0.035), size: 0.08 });
+          break;
+        }
         // knife, peeler, grater, spoon, whisk, brush … – and the other hand on the food
         toolHand(at(pt));
         const s2 = st.steadies && st.steadies() && st.steadyAt();
@@ -3243,6 +3267,8 @@ function towelMat() {
 }
 
 const CONTENT_COL = { water: '#8fc8ea' };
+// what comes off a thing peeled by hand (or by the peeler): an egg's shell, papery skins, peel
+const PEEL_COL = { egg: '#e3c49c', onion: '#c98a3c', potato: '#c49a5c', carrot: '#f08a24', tomato: '#4f9a3a', garlic: '#eadde0' };
 // a brew: water with tea or coffee steeped in it is that colour – Turkish tea's deep red ("tavşan kanı"), coffee's
 // near black – and paler with milk in it
 function brewColor(v) {
@@ -3265,7 +3291,8 @@ function updateVessel(rec, v, t, solid = false) {
   rec.liquid.visible = show && !v.lid;
   rec.liquid.material.roughness = 0.15;
   if (show) {
-    rec.liquid.position.y = 0.008 + (level > 0.02 ? level : solid ? 0.03 : 0.25) * rec.h * 0.9;
+    // (first person, no water in it: the fat's a film on the floor, the food lying in it – not under it)
+    rec.liquid.position.y = level > 0.02 ? 0.008 + level * rec.h * 0.9 : solid ? 0.004 : 0.008 + 0.25 * rec.h * 0.9;
     const brew = !v.liquid && level > 0.02 && brewColor(v);
     const col = v.liquid || brew || (level > 0.02 ? CONTENT_COL.water : wet.length ? bitColor(wet[0].kind) : mainColor(v));
     rec.liquid.material.color.set(col);
