@@ -554,17 +554,21 @@ export class FpArms {
     };
     // (all the way round, every way of leaning, now and then – in between, just near where it is: it's a body, it
     // doesn't leap)
+    // (the whole circle, every way of leaning, now and then – and what it found is where the arm goes: in between,
+    // only near that, so it's not drawn back to where it was by the way there)
     let best = { a: 0, lean: 0 }, bc = Infinity;
     h.solveN = (h.solveN || 0) + 1;
-    const wide = h.swivel == null || h.solveN % 6 === 0;
-    const leans = wide ? [-0.04, 0, 0.04, 0.08, 0.12] : [Math.max(-0.04, h.lean - 0.03), h.lean, Math.min(0.12, h.lean + 0.03)];
+    const wide = h.swivel == null || h.goal == null || h.solveN % 6 === 0;
+    const ga = h.goal ?? h.swivel ?? 0, gl = h.goalLean ?? h.lean ?? 0;
+    const leans = wide ? [-0.04, 0, 0.04, 0.08, 0.12] : [Math.max(-0.04, gl - 0.03), gl, Math.min(0.12, gl + 0.03)];
     for (const lean of leans) {
       if (lean > 0.5 * across && lean > 0) continue;
       const R = ringAt(lean);
       if (wide) { for (let a = -Math.PI; a < Math.PI; a += 0.2) { const c = cost(R, a); if (c < bc) { bc = c; best = { a, lean }; } } }
-      else for (let a = h.swivel - 0.4; a <= h.swivel + 0.4; a += 0.1) { const c = cost(R, a); if (c < bc) { bc = c; best = { a, lean }; } }
+      else for (let a = ga - 0.4; a <= ga + 0.4; a += 0.1) { const c = cost(R, a); if (c < bc) { bc = c; best = { a, lean }; } }
     }
     { const R = ringAt(best.lean); for (let a = best.a - 0.14; a <= best.a + 0.14; a += 0.035) { const c = cost(R, a); if (c < bc) { bc = c; best = { a, lean: best.lean }; } } }
+    h.goal = best.a; h.goalLean = best.lean;
     if (h.swivel == null) { h.swivel = best.a; h.lean = best.lean; } else {
       let da = best.a - h.swivel;
       da -= Math.round(da / (2 * Math.PI)) * 2 * Math.PI;
