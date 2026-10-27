@@ -2073,7 +2073,8 @@ export class Scene3D {
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
-    const pinch = (P, curl = 0.6, i = wi) => hand(i, P.clone().addScaledVector(w.N, 0.08).addScaledVector(UP, 0.03), 'hand', { curl });
+    // (a pinch: the piece between my thumb's and index's tips – the grip point of the pinch hold)
+    const pinch = (P, curl = 0.6, i = wi) => hand(i, P.clone().addScaledVector(UP, 0.004), 'pinch', { curl });
     // a tool's working end where I point: the knife's edge (the blade forward over the food), a spoon's bowl …
     const into = w.N.clone().negate();
     const toolHand = (pos) => {

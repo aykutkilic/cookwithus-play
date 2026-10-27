@@ -31,8 +31,38 @@ const FINGER_BONES = ['Index', 'Middle', 'Ring', 'Little'].map((f) => ['Proximal
 const THUMB_BONES = ['Thumb_Metacarpal_R', 'Thumb_Proximal_R', 'Thumb_Distal_R'];
 export const RIG_BEND = [1.45, 1.7, 1.15]; // a fist: how far each finger knuckle bends (rad)
 export const RIG_SIGN = 1; // (which way round the bones' z is a bend toward the palm)
-// the thumb, open … wrapped round a handle: each of its bones turned about its own x, z (rad)
-export const RIG_THUMB = { open: [[0, 0], [0, 0], [0, 0]], fist: [[-0.5, -0.2], [-0.42, 0.45], [0, 0.65]] };
+// The thumb's poses: each of its bones turned about its own x, z (rad) – found in test/hands.html (?search: by its
+// tip's distance to where it should be; by eye, beside photos of real grips). open: as modelled; fist: wrapped over
+// the fingers; pinch: its pad on the index's (with the index at 0.45 – a pinch of salt, a basil leaf); knife: its
+// pad on the blade's side, the curled index on the other (the chef's grip); flat: along the index, the hand flat;
+// along: lying along the top of a pan's handle
+export const RIG_THUMB = {
+  open: [[0, 0], [0, 0], [0, 0]], fist: [[-0.5, -0.2], [-0.42, 0.45], [0, 0.65]], pinch: [[-0.6, -0.4], [0, 0.8], [0, 0.4]],
+  knife: [[-0.6, -0.6], [0, 0.6], [0, 1]], flat: [[-0.25, -0.6], [0, 0.2], [0, 0.2]], along: [[-0.3, -0.3], [0, 0], [0, 0]],
+};
+const thumbAt = (a, b, t) => RIG_THUMB[a].map((p, j) => [p[0] + (RIG_THUMB[b][j][0] - p[0]) * t, p[1] + (RIG_THUMB[b][j][1] - p[1]) * t]);
+// (the pinch's point, between the thumb's and the index's tips – hand space, as the rigged hand is drawn)
+const PINCH = new THREE.Vector3(-0.0383, 0.0247, -0.106).multiplyScalar(0.875);
+// How each hold shapes the hand (c: how closed the scene asks it to be, 0 … 1): a curl for each finger – index to
+// little – or each joint's bend (rad), and the thumb's pose.
+const SHAPES = {
+  handle: (c) => ({ fingers: [c, c, c * 1.02, c * 1.05], thumb: thumbAt('open', 'along', Math.min(1, c * 1.2)) }),
+  tool: (c) => ({ thumb: thumbAt('open', 'fist', c) }),
+  grab: (c) => ({ thumb: thumbAt('open', 'fist', c) }),
+  knife: () => ({ fingers: [0.72, 1, 1, 1], thumb: RIG_THUMB.knife }),
+  knifeFlat: () => ({ fingers: [0.45, 0.8, 0.85, 0.9], thumb: RIG_THUMB.flat }),
+  pinch: (c) => ({ fingers: [0.45, 0.6, 0.8, 0.9].map((f) => f * (0.6 + 0.4 * Math.min(1, c / 0.6))), thumb: thumbAt('flat', 'pinch', Math.min(1, c / 0.6)) }),
+  // (fingertips tucked under the knuckles, the thumb behind them: what the knife's blade runs along)
+  claw: () => ({ joints: [[0.45, 1.5, 0.9], [0.4, 1.55, 0.9], [0.4, 1.5, 0.85], [0.45, 1.4, 0.8]], thumb: thumbAt('flat', 'fist', 0.55) }),
+  // (open and relaxed – flat – closing toward a grasp: the thumb in along the index first, then over)
+  hand: (c) => ({ thumb: c < 0.5 ? thumbAt('open', 'flat', c * 2) : thumbAt('flat', 'fist', (c - 0.5) * 2) }),
+  rest: () => ({ fingers: [0.05, 0.05, 0.06, 0.07], thumb: RIG_THUMB.flat }),
+  palm: () => ({ fingers: [0.15, 0.15, 0.17, 0.2], thumb: thumbAt('open', 'flat', 0.6) }),
+  tub: () => ({ fingers: [0.3, 0.3, 0.32, 0.35], thumb: thumbAt('open', 'flat', 0.5) }),
+  side: (c) => ({ fingers: [c * 0.75, c * 0.75, c * 0.78, c * 0.8], thumb: thumbAt('open', 'along', 0.5) }),
+  away: () => ({ fingers: [0.25, 0.3, 0.33, 0.36], thumb: thumbAt('open', 'flat', 0.7) }),
+};
+export function shapeOf(hold, c) { const f = SHAPES[hold]; return f ? f(c) : {}; }
 const qe = new THREE.Euler(), qq = new THREE.Quaternion();
 // a hand of its own, skinned in this skin
 export function makeRig(skin) {
@@ -46,20 +76,17 @@ export function makeRig(skin) {
     if (o.isBone) { bones[o.name] = o; o.userData.rest = o.quaternion.clone(); }
     if (o.isSkinnedMesh) { o.material = skin; o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; }
   });
-  return { root: inner, fingers: FINGER_BONES.map((f) => f.map((n) => bones[n])), thumb: THUMB_BONES.map((n) => bones[n]) };
+  return { root: inner, bones, fingers: FINGER_BONES.map((f) => f.map((n) => bones[n])), thumb: THUMB_BONES.map((n) => bones[n]) };
 }
-// posed: curl 0 open … 1 a fist (the little finger a little ahead); fingers: a curl each (else curl); thumb: its own
-export function poseRig(R, curl, { fingers = null, thumb = null } = {}) {
+// posed: curl 0 open … 1 a fist (the little finger a little ahead); fingers: a curl each (else curl); joints: each
+// joint's bend (rad) instead; thumb: its bones' turns – else from open to the fist as curl says
+export function poseRig(R, curl, { fingers = null, joints = null, thumb = null } = {}) {
   R.fingers.forEach((f, i) => {
     const c = Math.max(0, Math.min(1.1, fingers ? fingers[i] : curl * (1 + 0.06 * i)));
-    f.forEach((b, j) => { if (b) b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(0, 0, RIG_SIGN * (0.06 + c * RIG_BEND[j])))); });
+    f.forEach((b, j) => { if (b) b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(0, 0, RIG_SIGN * (joints ? joints[i][j] : 0.06 + c * RIG_BEND[j])))); });
   });
-  const t = Math.max(0, Math.min(1, thumb != null ? thumb : curl));
-  R.thumb.forEach((b, j) => {
-    if (!b) return;
-    const [ox, oz] = RIG_THUMB.open[j], [fx, fz] = RIG_THUMB.fist[j];
-    b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(ox + (fx - ox) * t, 0, oz + (fz - oz) * t)));
-  });
+  const T = thumb || thumbAt('open', 'fist', Math.max(0, Math.min(1, curl)));
+  R.thumb.forEach((b, j) => { if (b) b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(T[j][0], 0, T[j][1]))); });
 }
 
 const HS = 0.5;
@@ -111,6 +138,8 @@ const HOLDS = {
   knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
   // (the same, turned palm down – the knife on its side, its edge away: crushing)
   knifeFlat: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-1, -0.1, -0.4), c: v(1, 0, 0), pref: v(0, 1, 0), curl: 1, top: true },
+  // (a pinch: between the thumb's and the index's tips – a basil leaf, a pinch of salt, a garlic clove)
+  pinch: { at: v(0.1, -0.1, -0.4), grip: PINCH, a: v(0, 0, -1), b: v(0, -0.8, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.6 },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
   claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
   // resting on the worktop near its edge: the palm flat on it, the fingers straight on from the forearm
@@ -433,7 +462,7 @@ export class FpArms {
     L.wrist.quaternion.setFromUnitVectors(v(0, 1, 0), wd);
     // the fingers close as far as curl says
     const c = h.curl;
-    if (L.rig) poseRig(L.rig, c);
+    if (L.rig) poseRig(L.rig, c, shapeOf(h.reach ? h.reach.hold || h.hold : h.hold, c));
     if (!L.rig) FINGERS.forEach(([y, ...ls], i) => {
       let p = v(0.002, y, -0.084), A = 0;
       ls.forEach((l, j) => {

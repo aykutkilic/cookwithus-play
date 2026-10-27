@@ -5,7 +5,7 @@
 // with a flaky connection). The deploy workflow stamps VERSION, so every
 // release starts a fresh cache and old ones are dropped.
 
-const VERSION = 'b7b2a2e.10271227';
+const VERSION = 'ae865fd.10271237';
 const CACHE = `cookwithus-${VERSION}`;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './client/style.css', './client/main.js', './client/icons/icon.svg'];
 
