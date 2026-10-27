@@ -1743,7 +1743,7 @@ export class Scene3D {
       if (view.fpGrab && view.fpGrab.key === k && h !== 'side') return { kind: h, at: handAt(view.fpGrab.w, i ? 1 : -1) };
       if (h !== 'side') return { kind: h };
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
-      return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.17, -0.3 - r) };
+      return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.21, -0.25 - r) }; // (held before me, elbows bent – not out at arm's length)
     });
     // at work: what my hands are doing
     if (this.work && !this.work.idle) {
@@ -2051,7 +2051,9 @@ export class Scene3D {
       const at = realW || doorW;
       out.body = { pos: at.clone().addScaledVector(w.N, 0.45).setY(Math.min(EYE_H, at.y + 0.45)), fwd: w.N.clone().negate() };
     } else if (inside) out.body = { pos: w.O.clone().addScaledVector(w.N, inside.body).addScaledVector(w.R, (inside.side || 0) * 0.5).addScaledVector(UP, inside.eye), fwd: w.N.clone().negate() };
-    else out.body = { pos: w.O.clone().addScaledVector(w.N, 0.25).addScaledVector(UP, 0.46), fwd: w.N.clone().negate() };
+    // (at a worktop: right up to it, leaning in over the work – my eyes about 63 cm over it, 24 cm back: my elbows bent
+    // and down at my sides, as a cook's are, not reaching out at arm's length)
+    else out.body = { pos: w.O.clone().addScaledVector(w.N, 0.12).addScaledVector(UP, 0.32), fwd: w.N.clone().negate() };
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -2084,7 +2086,8 @@ export class Scene3D {
     // (Q – the left hand – doing it, if it's free)
     // (the knife held at rest in my right hand meanwhile: the left does it)
     // (the food out of its container onto the board: the left – the right's for the knife, the peeler …)
-    const leftTakes = g.kind === 'drag' && g.source && g.source.fromBox && this.fpSlots[0] == null;
+    // (only when my right's busy: the container's on my right – reaching it with my left would be across my chest)
+    const leftTakes = g.kind === 'drag' && g.source && g.source.fromBox && this.fpSlots[0] == null && this.fpSlots[1] != null;
     const wi = ph.held || leftTakes ? 0 : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
@@ -2208,7 +2211,7 @@ export class Scene3D {
             const K = this.knifeAt(P.clone().addScaledVector(push, -0.05).setY(w.O.y + 0.001), d, 0.04);
             out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
             hand(wi, K.fist, 'knife', { dir: K.xA });
-          } else hand(wi, P.clone().addScaledVector(push, -0.045).addScaledVector(UP, 0.02), 'hand', { curl: 0.3, dir: push });
+          } else hand(wi, P.clone().addScaledVector(push, -0.045).addScaledVector(UP, 0.02), 'hand', { curl: 0.3, dir: into.clone().addScaledVector(push, 0.3).normalize() }); // (palm down, the fingers forward: pushed with the hand's edge)
           ring(g.target);
           break;
         }
