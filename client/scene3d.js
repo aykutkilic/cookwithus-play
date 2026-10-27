@@ -1881,6 +1881,8 @@ export class Scene3D {
       return this.fitCam({ look, pos: look.clone().addScaledVector(w.N, 0.3).addScaledVector(UP, 0.55) }, pts, 0.5, 0.25);
     }
     const real = this.workReal(w, st);
+    // (the oven gloves, lying on its worktop: looking at them, from where I stand)
+    if (real && g.kind === 'tap' && g.ph.hot === 'gloves') return { look: real.w.clone(), pos: real.w.clone().addScaledVector(w.N, 0.5).addScaledVector(UP, 0.5) };
     if (real) {
       // (a knob low on the front: from further out and lower – the knob, the hand coming to it and the pan above)
       const low = real.w.y < COUNTER_H - 0.02;
