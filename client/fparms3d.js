@@ -16,6 +16,51 @@ import * as THREE from 'three';
 import { mat } from './parts3d.js';
 import { toolMesh } from './cook3d.js';
 import { mittPieces } from './props3d.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
+
+// ------------------------------------------------------------------ the hand itself
+// A rigged hand – Godot XR Tools' (CC0: client/models/hand/License.md) – one smooth skin with knuckles, nails, the
+// thumb's web, posed bone by bone from how closed the hand is. Its axes are this file's (fingers −z, the thumb +y,
+// the palm −x); its wrist joint is 2.72 cm along z (moved to the origin) and it's a little long (×0.875 – the hand
+// as long as before). Till it's loaded (or if it can't be), the old jointed one.
+const RIG = { scene: null, wait: [] };
+export function whenRig(f) { if (RIG.scene) f(); else RIG.wait.push(f); }
+new GLTFLoader().load(new URL('./models/hand/Hand_Nails_R.gltf', import.meta.url).href, (g) => { RIG.scene = g.scene; for (const f of RIG.wait.splice(0)) f(); }, undefined, () => { RIG.wait.length = 0; });
+const FINGER_BONES = ['Index', 'Middle', 'Ring', 'Little'].map((f) => ['Proximal', 'Intermediate', 'Distal'].map((b) => `${f}_${b}_R`));
+const THUMB_BONES = ['Thumb_Metacarpal_R', 'Thumb_Proximal_R', 'Thumb_Distal_R'];
+export const RIG_BEND = [1.45, 1.7, 1.15]; // a fist: how far each finger knuckle bends (rad)
+export const RIG_SIGN = 1; // (which way round the bones' z is a bend toward the palm)
+// the thumb, open … wrapped round a handle: each of its bones turned about its own x, z (rad)
+export const RIG_THUMB = { open: [[0, 0], [0, 0], [0, 0]], fist: [[-0.5, -0.2], [-0.42, 0.45], [0, 0.65]] };
+const qe = new THREE.Euler(), qq = new THREE.Quaternion();
+// a hand of its own, skinned in this skin
+export function makeRig(skin) {
+  if (!RIG.scene) return null;
+  const root = cloneRig(RIG.scene), inner = new THREE.Group();
+  root.position.z = -0.0272;
+  inner.add(root);
+  inner.scale.setScalar(0.875);
+  const bones = {};
+  root.traverse((o) => {
+    if (o.isBone) { bones[o.name] = o; o.userData.rest = o.quaternion.clone(); }
+    if (o.isSkinnedMesh) { o.material = skin; o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; }
+  });
+  return { root: inner, fingers: FINGER_BONES.map((f) => f.map((n) => bones[n])), thumb: THUMB_BONES.map((n) => bones[n]) };
+}
+// posed: curl 0 open … 1 a fist (the little finger a little ahead); fingers: a curl each (else curl); thumb: its own
+export function poseRig(R, curl, { fingers = null, thumb = null } = {}) {
+  R.fingers.forEach((f, i) => {
+    const c = Math.max(0, Math.min(1.1, fingers ? fingers[i] : curl * (1 + 0.06 * i)));
+    f.forEach((b, j) => { if (b) b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(0, 0, RIG_SIGN * (0.06 + c * RIG_BEND[j])))); });
+  });
+  const t = Math.max(0, Math.min(1, thumb != null ? thumb : curl));
+  R.thumb.forEach((b, j) => {
+    if (!b) return;
+    const [ox, oz] = RIG_THUMB.open[j], [fx, fz] = RIG_THUMB.fist[j];
+    b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(ox + (fx - ox) * t, 0, oz + (fz - oz) * t)));
+  });
+}
 
 const HS = 0.5;
 const UPPER = 0.17, FORE = 0.155, SLIDE = 0.3; // arm bones; how far the (unseen) shoulder may come forward
@@ -36,11 +81,11 @@ const v = (x, y, z) => new THREE.Vector3(x, y, z);
 const Z = v(0, 0, 1); // (hand space) toward the elbow
 
 // hand space, metres
-const FIST = v(-0.03, 0, -0.1);          // the axis a closed fist holds
-const PALM = v(-0.026, 0, -0.058);       // the middle of the palm's face
+export const FIST = v(-0.01, 0, -0.08);  // the axis a closed fist holds (inside the rigged hand's fist)
+export const PALM = v(-0.026, 0, -0.058); // the middle of the palm's face
 const ON_PALM = v(-0.034, 0, -0.06);     // where something sits on it
 const UNDER_PALM = v(-0.03, 0.004, -0.06); // (lying flat: where the palm meets the worktop)
-const IN_FIST = v(0, 0.87, -0.5);        // a handle through the fist (a hammer grip: tilted toward the fingers)
+export const IN_FIST = v(0, 0.87, -0.5); // a handle through the fist (a hammer grip: tilted toward the fingers)
 const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
 const FINGERS = [[0.029, 0.044, 0.026, 0.02], [0.01, 0.048, 0.028, 0.022], [-0.009, 0.045, 0.026, 0.02], [-0.028, 0.036, 0.02, 0.016]];
@@ -100,6 +145,8 @@ export class FpArms {
     this.group.visible = false;
     camera.add(this.group);
     this.poseCache = new Map();
+    // (the rigged hand loaded: the arms made again with it, next time they're drawn)
+    whenRig(() => { this.lookKey = null; });
     // [left, right]: where each wrist is, how the hand is turned, how closed
     this.hands = [-1, 1].map((s) => {
       const p = this.pose(s, 'away');
@@ -115,6 +162,8 @@ export class FpArms {
     for (const h of this.hands) if (h.limb) this.group.remove(h.limb.root);
     const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 }), cuff = mat('#f6f2ea', { rough: 0.8 });
     const sleeve = fading(shirt);
+    // (the rigged hand's skin: a soft warm sheen at its edges, as skin has)
+    const skinRig = new THREE.MeshPhysicalMaterial({ color: look.skin, roughness: 0.55, sheen: 0.6, sheenColor: new THREE.Color('#ff9a8a'), sheenRoughness: 0.5 });
     const tube = new THREE.CylinderGeometry(0.85, 1, 1, 18, 1, true);
     const ball = new THREE.SphereGeometry(1, 24, 16);
     for (const h of this.hands) {
@@ -146,10 +195,13 @@ export class FpArms {
       mThumb.add(new THREE.Mesh(M.thumb, M.mat));
       mitt.visible = false;
       hand.add(mitt);
+      // the rigged hand, when it's loaded (the jointed one stays, hidden – the way back if it isn't)
+      const rig = makeRig(skinRig);
+      if (rig) { hand.add(rig.root); for (const m of [palm, ...bones.flat(), ...thumb]) m.visible = false; }
       root.add(upper, fore, elbow, band, hand, wrist);
       root.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; } });
       this.group.add(root);
-      h.limb = { root, upper, fore, elbow, band, hand, wrist, bones, thumb, palm, mitt, mFingers, mThumb };
+      h.limb = { root, upper, fore, elbow, band, hand, wrist, bones, thumb, palm, mitt, mFingers, mThumb, rig };
     }
     this.gloved = null; // (put on again as they're drawn)
   }
@@ -162,8 +214,9 @@ export class FpArms {
       const L = h.limb;
       if (!L) continue;
       L.mitt.visible = on;
-      L.palm.visible = L.wrist.visible = !on;
-      for (const m of [...L.bones.flat(), ...L.thumb]) m.visible = !on;
+      L.wrist.visible = !on;
+      if (L.rig) L.rig.root.visible = !on;
+      else for (const m of [L.palm, ...L.bones.flat(), ...L.thumb]) m.visible = !on;
     }
   }
 
@@ -365,11 +418,13 @@ export class FpArms {
     h.fore = w.clone().sub(e);
     const up = sh.clone().sub(e).normalize();
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
-    tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024);
-    tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021);
+    // (a shirt sleeve over a forearm, its cuff close round the wrist – slimmer with the rigged hand, which is life size)
+    const k = L.rig ? 0.82 : 1;
+    tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024 * k);
+    tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021 * k);
     L.elbow.position.copy(e);
-    L.elbow.scale.setScalar(0.0232); // (round over both sleeves' ends)
-    tube(L.band, w.clone().add(f.clone().multiplyScalar(0.022)), w.clone().add(f.clone().multiplyScalar(0.008)), 0.019);
+    L.elbow.scale.setScalar(0.0232 * k); // (round over both sleeves' ends)
+    tube(L.band, w.clone().add(f.clone().multiplyScalar(0.022)), w.clone().add(f.clone().multiplyScalar(0.008)), 0.019 * (L.rig ? 0.78 : 1));
     L.hand.position.copy(w);
     L.hand.quaternion.copy(h.q);
     // (the wrist halfway between the hand's line and the forearm's)
@@ -378,7 +433,8 @@ export class FpArms {
     L.wrist.quaternion.setFromUnitVectors(v(0, 1, 0), wd);
     // the fingers close as far as curl says
     const c = h.curl;
-    FINGERS.forEach(([y, ...ls], i) => {
+    if (L.rig) poseRig(L.rig, c);
+    if (!L.rig) FINGERS.forEach(([y, ...ls], i) => {
       let p = v(0.002, y, -0.084), A = 0;
       ls.forEach((l, j) => {
         A += 0.06 + c * BEND[j];
@@ -388,8 +444,10 @@ export class FpArms {
       });
     });
     const t1 = THUMB.open[0].clone().lerp(THUMB.fist[0], c), t2 = THUMB.open[1].clone().lerp(THUMB.fist[1], c);
-    bone(L.thumb[0], THUMB.base, t1.clone().sub(THUMB.base).normalize(), 0.04);
-    bone(L.thumb[1], t1, t2.clone().sub(t1).normalize(), 0.036);
+    if (!L.rig) {
+      bone(L.thumb[0], THUMB.base, t1.clone().sub(THUMB.base).normalize(), 0.04);
+      bone(L.thumb[1], t1, t2.clone().sub(t1).normalize(), 0.036);
+    }
     // (in an oven glove: its fingers' pocket closes as one, the thumb's goes where my thumb does)
     if (L.mitt.visible) {
       L.mFingers.rotation.set(0, 0.06 + c * 1.55, 0);

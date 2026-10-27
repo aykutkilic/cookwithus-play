@@ -2117,9 +2117,10 @@ export class Scene3D {
             hand(wi, P.clone().addScaledVector(w.R, 0.019), 'palm', { curl: 0.55 });
             hand(oi, P.clone().addScaledVector(w.R, -0.019), 'palm', { curl: 0.55 });
           } else {
-            // (held from above, the fingers round it – just the one)
-            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -0.03), yaw: out.yaw, st: U ? { qty: 1, extra: 0, cut: null, k: 0, n: 0, peeled: 0 } : null });
-            hand(wi, P.clone(), 'hand', { curl: 0.8 });
+            // (held from above, the fingers round it – just the one: the palm on its top, not in it)
+            const one = U ? { qty: 1, extra: 0, cut: null, k: 0, n: 0, peeled: 0 } : null;
+            out.ov.set(k, { pos: P.clone().addScaledVector(UP, -(it ? this.foodHeight(it.kind, one ? { ...it, ...one } : it) : 0.04) - 0.006), yaw: out.yaw, st: one });
+            hand(wi, P.clone(), 'hand', { curl: 0.55 });
           }
           ring(g.target);
           break;
