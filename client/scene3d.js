@@ -410,14 +410,13 @@ export class Scene3D {
     // (lifted at its near edge first, then over: the back edge stays near the worktop)
     B.quaternion.slerpQuaternions(u.flat.q, u.up.q, Math.min(1, e * 1.15));
     u.posed = o;
-    for (const q of [P.nest, ...(P.tools ? Object.values(P.tools) : [])]) {
-      if (!q || !q.userData.flat) continue;
-      const k = Math.min(1, e * 1.6); // (they're moved first)
-      q.position.lerpVectors(q.userData.flat.pos, q.userData.up.pos, k);
-      q.quaternion.slerpQuaternions(q.userData.flat.q, q.userData.up.q, k);
-    }
     B.updateMatrixWorld(true);
   }
+  // the board's knife / peeler / grater, or the stack of containers: where it lies now, where it goes (laid at the
+  // back – aside – or on the board)
+  boardPart(fx, name) { const P = this.k3.fx[fx] && this.k3.fx[fx].parts; return P ? (name === 'nest' ? P.nest : P.tools && P.tools[name]) : null; }
+  partWorld(fx, name) { const o = this.boardPart(fx, name); return o ? o.getWorldPosition(new THREE.Vector3()) : null; }
+  partHome(fx, name, aside) { const o = this.boardPart(fx, name); return o && o.userData.flat ? (aside ? o.userData.up.pos : o.userData.flat.pos).clone() : null; }
   // where a door's handle would be, open this far (0 … 1) – as it swings in updateFixtures
   doorHandleAt(fx, v) {
     const F = this.k3.fx[fx], P = F && F.parts;
@@ -824,6 +823,16 @@ export class Scene3D {
         if (B.kind === 'drawer') B.obj.position.copy(B.base.pos).addScaledVector(B.out, B.slide * u.o);
         else B.obj.rotation.y = B.base.rotY + B.sign * u.o * 1.75;
         B.obj.updateMatrixWorld(true);
+      }
+      // (the board's things, each where it lies – moved by a hand, one at a time – or in my hand right now)
+      for (const name of ['knife', 'peeler', 'grater', 'nest']) {
+        const o = name === 'nest' ? P.nest : P.tools && P.tools[name];
+        if (!o || !o.userData.flat) continue;
+        const held = this.work && !this.work.idle && this.work.part && this.work.part.fx === id && this.work.part.name === name ? this.work.part : null;
+        const T = held || (fxs[id] && fxs[id].aside && fxs[id].aside[name] ? o.userData.up : o.userData.flat);
+        const k = held ? 1 : Math.min(1, (this.dt || 0.016) * 10 * BRISK);
+        o.position.lerp(T.pos, k);
+        o.quaternion.slerp(T.q || o.userData.flat.q, k);
       }
       if (P.board && P.board.userData.flat) {
         // a counter's board stood up at the back (for something big) or laid down – by my hands at work, else as
@@ -2013,7 +2022,7 @@ export class Scene3D {
     const at = (p) => this.workWorld(w, p.x, p.y);
     const D = view.D, ph = g.ph, p = st.ptr;
     const def = st.c && st.c.def, n = st.c ? st.c.phases.length : 1;
-    const boardDirt = def && ACTIONS[def.do] && ACTIONS[def.do].cap === 'board' ? Math.min(1, (st.ph + Math.min(1, st.k / Math.max(1, phaseTarget(ph)))) / Math.max(1, n)) : 0;
+    const boardDirt = def && !def.chore && ACTIONS[def.do] && ACTIONS[def.do].cap === 'board' ? Math.min(1, (st.ph + Math.min(1, st.k / Math.max(1, phaseTarget(ph)))) / Math.max(1, n)) : 0;
     const out = { fx: w.fx, boardDirt, hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st), boxes: [] };
     // (into the oven: the tray's set down on the oven's worktop while the gloves go on and the door comes down –
     // then slid in from there)
@@ -2191,6 +2200,20 @@ export class Scene3D {
           if (vr && F) { vr.group.position.copy(P); vr.group.rotation.set(0, this.sinkYaw(F), 0); const G = this.sinkGrip(vr, F); hand(0, G.w, G.kind, { curl: g.drag ? 0.95 : 0.6, dir: G.dir }); }
           if (!g.drag) ring(g.pos, 50);
           ring(g.target);
+          break;
+        }
+        if (g.source && g.source.type === 'part') {
+          // the board's knife / peeler / grater, or the stack of containers: in my hand, slid along the worktop (not
+          // through the air: where the pointer has it on the screen, at the worktop's height)
+          const name = g.source.name, o = this.boardPart(w.fx, name);
+          if (o) {
+            const sc = this.screenOf(at(g.pos)), ray = this.rayAt(sc.x, sc.y), y = o.userData.flat.pos.y + (g.drag ? 0.015 : 0), t = (y - ray.origin.y) / (ray.direction.y || -1e-6);
+            const P = g.drag && t > 0 ? ray.at(t, new THREE.Vector3()) : o.getWorldPosition(new THREE.Vector3());
+            if (g.drag) out.part = { fx: w.fx, name, pos: P.clone(), q: o.quaternion.clone() };
+            hand(wi, P.clone().addScaledVector(UP, name === 'nest' ? 0.06 : name === 'grater' ? 0.11 : 0.02), name === 'nest' ? 'hand' : 'grab', { curl: g.drag ? 0.85 : 0.4 });
+            const to = this.partHome(w.fx, name, g.ph.to.startsWith('aside'));
+            if (to) out.rings.push({ w: to, r: name === 'nest' ? 0.08 : 0.05 });
+          }
           break;
         }
         if (g.source && g.source.type === 'lid') {

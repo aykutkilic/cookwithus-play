@@ -161,6 +161,15 @@ export function boardUnits(it) {
 
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)
 const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, fx) => { fx.door = to; } });
+// a counter's board and what's on it / beside it, moved by hand one at a time (room, lay)
+export const BOARD_PARTS = ['knife', 'peeler', 'grater', 'nest'];
+const PART_NAME = { knife: 'the knife', peeler: 'the peeler', grater: 'the grater', nest: 'the stack of containers' };
+const partPh = (q, off) => ({
+  g: 'drag', obj: `part:${q}`, to: `${off ? 'aside' : 'back'}:${q}`, part: q,
+  hint: off ? (q === 'nest' ? 'Move the stack of containers to the back corner' : `Take ${PART_NAME[q]} off the board – lay it at the back`)
+    : (q === 'nest' ? 'The stack of containers back beside the board' : `Put ${PART_NAME[q]} back on the board`),
+  eff: (S, st, v, fx) => { fx.aside = { ...(fx.aside || {}), [q]: off ? 1 : 0 }; },
+});
 // (the oven gloves on first – a hot oven, a hot tray without a handle; already on: there's nothing to do – shared/cook.js)
 const glovesPh = { g: 'tap', hot: 'gloves', hint: 'Put on the oven gloves' };
 
@@ -518,13 +527,16 @@ export const ACTIONS = {
   // ------------------------------------------------------------- a counter: room for something big
   // (a paella pan, a baking tray or dish on a counter: its board – the knife, the peeler, the grater with it –
   // stood up at the back against the wall first; laid back down for board work. shared/cook.js boardDown)
+  // (one thing at a time, by hand – nothing's shoved along with the board to fall off it: the knife, the peeler and the
+  // grater taken off and laid at the back, the stack of containers moved to the back corner, then the empty board
+  // stood up; laid down again, they go back the same way. One that isn't there – in someone's hand – is skipped.)
   room: {
     cap: 'board', verb: 'Make room', tool: 'hand', icon: '↕️',
-    phases: () => [{ g: 'door', hot: 'board', to: 1, hint: 'Stand the board up at the back – room for the big one', eff: (S, st, v, fx) => { fx.boardUp = 1; } }],
+    phases: () => [...BOARD_PARTS.map((q) => partPh(q, true)), { g: 'door', hot: 'board', to: 1, hint: 'Stand the empty board up against the wall', eff: (S, st, v, fx) => { fx.boardUp = 1; } }],
   },
   lay: {
     cap: 'board', verb: 'Lay the board down', tool: 'hand', icon: '🔪',
-    phases: () => [{ g: 'door', hot: 'board', to: 0, hint: 'Lay the board back down in front of you', eff: (S, st, v, fx) => { fx.boardUp = 0; } }],
+    phases: () => [{ g: 'door', hot: 'board', to: 0, hint: 'Lay the board back down in front of you', eff: (S, st, v, fx) => { fx.boardUp = 0; } }, ...BOARD_PARTS.map((q) => partPh(q, false))],
   },
 
   heat: {

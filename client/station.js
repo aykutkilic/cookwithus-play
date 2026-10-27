@@ -10,7 +10,7 @@
 import { drawIngredient, drawPieces, drawVessel, drawTool, itemSize, liquidColor, vesselGrip, OUTLINE, shade } from './art.js';
 import { phaseTarget, displayState } from '../shared/cook.js';
 import { HEAT_NAMES, boardUnits } from '../shared/actions.js';
-import { INGREDIENTS, VESSELS, twoHanded } from '../shared/ingredients.js';
+import { INGREDIENTS, VESSELS, TOOLS, twoHanded } from '../shared/ingredients.js';
 import { heldBy, thingName, needsOf } from '../shared/cook.js';
 import { themeOf, splashTexture, topTexture } from './theme.js';
 
@@ -143,6 +143,7 @@ export class Station {
         else if (obj === 'unit') { g.source = { type: 'item', id: s.item, unit: true }; g.subject = null; } // (the one just done, to the pile at the side)
         else if (obj === 'newBox') { g.source = { type: 'newBox' }; g.subject = null; } // (an empty container off the stack)
         else if (obj === 'oneOver') { g.source = { type: 'item', id: s.item, oneOver: true }; g.subject = null; } // (portioning: one from the bunch to the new container)
+        else if (obj.startsWith('part:')) { g.source = { type: 'part', name: obj.slice(5) }; g.subject = null; } // (the board's knife … off it / back on it)
         const toMain = ph.to !== 'aside';
         const start = toMain ? { ...SIDE } : { ...MAIN };
         if (obj === 'lidOff') { start.x = MAIN.x; start.y = MAIN.y - 150; }
@@ -158,6 +159,8 @@ export class Station {
         if (obj === 'oneOver') { const pf = this.targetFor('portionFrom'); start.x = pf.x; start.y = pf.y; }
         // (into the oven: from where it was set down on its worktop while the gloves went on)
         if (obj === 'vessel' && ph.to === 'ovenRack') { const r = this.targetHook && this.targetHook('ovenRest'); if (r) { start.x = r.x; start.y = r.y; } }
+        // (first person: where it really lies now)
+        if (obj.startsWith('part:')) { const a = this.targetHook && this.targetHook(`at:${obj.slice(5)}`); start.x = a ? a.x : 330; start.y = a ? a.y : 560; }
         if (obj === 'fromBox') { const bx = this.targetFor('box'); start.x = bx.x; start.y = bx.y - 10; } // (first person: the real container)
         g.from = start; g.pos = { ...start };
         g.target = this.targetFor(ph.to);
@@ -168,6 +171,8 @@ export class Station {
         const sv = g.source && g.source.type === 'vessel' && this.c.C.vessels[g.source.id];
         const gr = sv && ph.tool !== 'pizzaPeel' && vesselGrip(sv.kind);
         if (gr) { const sc = this.dragScale(sv.kind); g.grip = { x: gr.x * sc, y: gr.y * sc }; }
+        // (a part of the board that isn't there – in someone's hand – or already where it goes: nothing to move)
+        if (obj.startsWith('part:') && this.partDone(ph)) setTimeout(() => { if (this.g === g && !this.done) this.count(); }, 200);
         // it's already standing there (put on the burner earlier): nothing to carry over
         if (obj === 'vessel' && ph.to !== 'aside' && sv && sv.at && sv.at.fx === this.c.f.id && sv.held == null) setTimeout(() => { if (this.g === g && !this.done) this.count(); }, 200);
         break;
@@ -846,6 +851,13 @@ export class Station {
   // The fridge and the pantry swing open on their left hinge, the oven door
   // drops down towards you. You take the handle and drag: the door follows
   // your hand, in perspective.
+  // the board's knife / peeler / grater (or the stack beside it): not lying there (taken away), or already moved
+  partDone(ph) {
+    const q = ph.part, fx = this.c.f.id, aside = ((this.c.C.fx[fx] || {}).aside || {})[q] ? 1 : 0;
+    if (aside === (ph.to.startsWith('aside') ? 1 : 0)) return true;
+    if (q === 'nest') return false;
+    return !Object.values(this.c.C.tools || {}).some((t) => t.at === `${fx}/board` && t.held == null && TOOLS[t.kind] && TOOLS[t.kind].board === q);
+  }
   doorGeo(hot) {
     if (!hot) hot = this.c.f.type === 'fridge' ? 'fridge' : this.c.f.type === 'shelf' ? 'pantry' : 'oven';
     if (hot === 'oven') return { kind: 'drop', hy: 570, x0: 250, x1: 750, h: 360 };

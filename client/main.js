@@ -966,6 +966,16 @@ function openWork(sid, fx) {
       if (to === 'scoopFrom') { const p = cp(sw.from); return { x: p.x, y: p.y, r: 60 }; }
       return sw.to.map((P) => { const p = cp(P); return { x: p.x, y: p.y }; });
     }
+    // (the board's knife, peeler, grater, the stack of containers: where each lies now – and where it goes, at the
+    // back or back on the board – as the pointer has it over it on the screen)
+    const pm = /^(at|aside|back):(knife|peeler|grater|nest)$/.exec(to);
+    if (pm) {
+      const w = workFrame();
+      const P = w && (pm[1] === 'at' ? scene.partWorld(w.fx, pm[2]) : scene.partHome(w.fx, pm[2], pm[1] === 'aside'));
+      if (!P) return null;
+      const sc = scene.screenOf(P), p = scene.workAt(w, sc.x, sc.y) || scene.workPoint(w, P);
+      return { x: p.x, y: p.y, r: pm[2] === 'nest' ? 90 : 60 };
+    }
     // (a tray set down on the oven's worktop while the gloves went on)
     if (to === 'ovenRest') {
       const w = workFrame();
