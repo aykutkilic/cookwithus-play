@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { mat } from './parts3d.js';
 import { toolMesh } from './cook3d.js';
+import { mittPieces } from './props3d.js';
 
 const HS = 0.5;
 const UPPER = 0.17, FORE = 0.155, SLIDE = 0.3; // arm bones; how far the (unseen) shoulder may come forward
@@ -135,10 +136,34 @@ export class FpArms {
         return m;
       }));
       const thumb = [0.0105, 0.0095].map((r, j) => { const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, j ? 0.036 : 0.04, 3, 8), skin); hand.add(m); return m; });
+      // the oven glove on it (shown while I wear them): the padded palm, the fingers' pocket hinged at the
+      // knuckles, the thumb's, the cuff over my wrist
+      const M = mittPieces(), mitt = new THREE.Group(), mFingers = new THREE.Group(), mThumb = new THREE.Group();
+      mitt.add(new THREE.Mesh(M.palm, M.mat), new THREE.Mesh(M.cuff, M.mat), mFingers, mThumb);
+      mFingers.position.set(-0.006, -0.003, -0.094);
+      mFingers.add(new THREE.Mesh(M.fingers, M.mat));
+      mThumb.position.copy(THUMB.base);
+      mThumb.add(new THREE.Mesh(M.thumb, M.mat));
+      mitt.visible = false;
+      hand.add(mitt);
       root.add(upper, fore, elbow, band, hand, wrist);
       root.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; } });
       this.group.add(root);
-      h.limb = { root, upper, fore, elbow, band, hand, wrist, bones, thumb };
+      h.limb = { root, upper, fore, elbow, band, hand, wrist, bones, thumb, palm, mitt, mFingers, mThumb };
+    }
+    this.gloved = null; // (put on again as they're drawn)
+  }
+
+  // the oven gloves on my hands (or off)
+  setGloves(on) {
+    if (this.gloved === on) return;
+    this.gloved = on;
+    for (const h of this.hands) {
+      const L = h.limb;
+      if (!L) continue;
+      L.mitt.visible = on;
+      L.palm.visible = L.wrist.visible = !on;
+      for (const m of [...L.bones.flat(), ...L.thumb]) m.visible = !on;
     }
   }
 
@@ -365,6 +390,11 @@ export class FpArms {
     const t1 = THUMB.open[0].clone().lerp(THUMB.fist[0], c), t2 = THUMB.open[1].clone().lerp(THUMB.fist[1], c);
     bone(L.thumb[0], THUMB.base, t1.clone().sub(THUMB.base).normalize(), 0.04);
     bone(L.thumb[1], t1, t2.clone().sub(t1).normalize(), 0.036);
+    // (in an oven glove: its fingers' pocket closes as one, the thumb's goes where my thumb does)
+    if (L.mitt.visible) {
+      L.mFingers.rotation.set(0, 0.06 + c * 1.55, 0);
+      L.mThumb.quaternion.setFromUnitVectors(v(0, 0, -1), t2.clone().sub(THUMB.base).normalize());
+    }
   }
 }
 

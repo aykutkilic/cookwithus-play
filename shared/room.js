@@ -12,7 +12,7 @@
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
   recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange, openBay,
-  setSpeed, skipWait, SPEEDS, skipDw, refresh, sakirTick, sakirStart,
+  setSpeed, skipWait, SPEEDS, skipDw, refresh, sakirTick, sakirStart, wearGloves, hangGloves,
 } from './cook.js';
 import { ingName } from './ingredients.js';
 import { sanitizeProfile, QUICK_CHAT, COOK_COLORS } from './names.js';
@@ -192,6 +192,14 @@ export class Room {
         const err = swingDoor(C, K, m.id, String(msg.fx || ''), msg.v, !!msg.done);
         if (err && msg.done) client.sendText(JSON.stringify({ t: 'handled', what: 'door', fx: msg.fx, err }));
         if (!err && (msg.done || this.now - this.lastFlush > 120)) this.flush(true);
+        break;
+      }
+      case 'wear': {
+        // the oven gloves put on, or hung back beside the oven
+        if (!C) return;
+        const err = msg.on ? wearGloves(C, m.id, String(msg.fx || '')) : hangGloves(C, m.id);
+        client.sendText(JSON.stringify({ t: 'handled', what: 'wear', err }));
+        if (!err) this.flush(true);
         break;
       }
       case 'bay': {

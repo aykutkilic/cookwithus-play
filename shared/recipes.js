@@ -108,7 +108,7 @@ export const RECIPES = [
       { id: 'off', do: 'off', vessel: 'caydanlik', after: ['brew'] },
       { id: 'glasses', do: 'pour', from: 'caydanlik', into: 'glasses', keep: true, adds: 0.85, band: [0.65, 0.9], after: ['brew'], title: 'Pour into the tulip glasses' },
       { id: 'sugar', do: 'add', item: 'sugar', into: 'glasses', after: ['glasses'], title: 'A sugar cube for each glass' },
-      { id: 'stir', do: 'stir', vessel: 'glasses', n: 3, after: ['sugar'], title: 'Stir with the little spoons – tink tink!' },
+      { id: 'stir', do: 'stir', vessel: 'glasses', n: 3, tool: 'teaspoon', after: ['sugar'], title: 'Stir with the little spoons – tink tink!' },
       { id: 'serve', do: 'serve', after: ['stir', 'off'] },
     ],
   },

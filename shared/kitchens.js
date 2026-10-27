@@ -223,6 +223,7 @@ export const BAYS = {
   board: { name: 'board', levels: 1, slots: 3 },
   crock: { name: 'crock', levels: 1, slots: 4 },
   corner: { name: 'corner', levels: 1, slots: 2 },
+  gloves: { name: 'beside the oven', levels: 1, slots: 1 }, // (where the oven gloves lie, on its worktop)
 };
 
 // '<fixture>/<bay>' -> [fixture, bay] (a plain fixture id: [id, null])
@@ -285,6 +286,7 @@ export function baysOf(K) {
     if (decor[f.id] === 0) add(f, 'crock');
     if (decor[f.id] === 1 || decor[f.id] === 2) add(f, 'corner');
     if (walls[f.id] === 'cupboard') { add(f, 'u0'); add(f, 'u1'); }
+    if (f.type === 'oven') add(f, 'gloves');
   }
   return out;
 }

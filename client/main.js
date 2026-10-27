@@ -17,10 +17,10 @@ import { RECIPES } from '../shared/recipes.js';
 import {
   expanded, stepDef, stepPlaces, placeBusy, canCook, recipeById, displayState, stepIcon, SPEEDS,
   choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
-  handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR,
+  handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR, glovesOn,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS, BOARD_TOOLS } from '../shared/actions.js';
-import { ingName } from '../shared/ingredients.js';
+import { ingName, TOOLS } from '../shared/ingredients.js';
 import { foodWidth } from './food3d.js';
 import {
   randomProfile, sanitizeProfile, isProfane, cleanName, QUICK_CHAT, SKINS, HAIR_COLORS, HAIR_STYLES, HATS, HAT_COLORS,
@@ -781,6 +781,8 @@ function fpLookTarget() {
 function fpPointed() {
   if (!S.fp || S.working || !S.M.cook) return null;
   const c = scene.viewCenter();
+  // (the oven gloves on: at where they lie beside the oven – to hang them back)
+  if (glovesOn(S.M.cook, S.myId)) { const g = scene.glovesSpotAt(c.x, c.y); if (g) return { kind: 'hangGloves', fx: g.fx, w: g.w }; }
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }); // (past what's in my hands)
   if (!pick) return null;
   if (pick.kind === 'bay' || pick.kind === 'bayIn') return pick;
@@ -791,8 +793,12 @@ function fpPointed() {
   return null;
 }
 function placeName(id) { const B = S.K.bays && S.K.bays[id]; return B ? B.name : 'cupboard'; }
+// the oven gloves: put on (not held) – not taken in a hand
+const isGloves = (key) => { const t = key && key[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[key.slice(2)]; return !!(t && TOOLS[t.kind] && TOOLS[t.kind].worn); };
 function fpPointLabel(pt) {
   const C = S.M.cook;
+  if (pt.kind === 'hangGloves') return '🧤 Hang up the oven gloves';
+  if (pt.kind === 'thing' && isGloves(pt.key)) return '🧤 Put on the oven gloves';
   if (pt.kind === 'bay') return `${pt.open ? 'Shut' : 'Open'} the ${placeName(pt.fx)}`;
   if (pt.kind === 'bayIn') { const k = fpPutWhat(-1); return k ? `${thingEmoji(C, k)} Put the ${thingName(C, S.x, k)} in the ${placeName(pt.fx)}` : ''; }
   return `${thingEmoji(C, pt.key)} Take the ${thingName(C, S.x, pt.key)}`;
@@ -804,6 +810,16 @@ function fpPutWhat(hand) {
 }
 // do it: open / shut it (a free hand on its handle), put what I hold in it, take the thing
 function fpPointAct(pt, hand = -1) {
+  // (the gloves on / off: both hands to them – free of anything else first)
+  if (pt.kind === 'hangGloves' || (pt.kind === 'thing' && isGloves(pt.key))) {
+    const on = pt.kind === 'thing';
+    if (handsUsed(S.M.cook, S.myId) > 0) { toast(on ? 'Put down what you hold first – both hands go in the gloves' : 'Put down what you hold first, then hang the gloves up'); return; }
+    const w = pt.w || (on && scene.thingWorld && scene.thingWorld(pt.key));
+    if (w) for (const i of [0, 1]) scene.fpArms.reach(i, { key: null, take: false, hold: 'palm', world: w });
+    send({ t: 'wear', on, fx: splitPlace(pt.fx)[0] });
+    sfx.play('grab', 0.4);
+    return;
+  }
   if (pt.kind === 'bay') {
     const i = freeHandSlot(hand);
     if (i < 0) { toast(`Both your hands are full – put something down first, then open the ${placeName(pt.fx)}`); return; }
@@ -906,7 +922,7 @@ function openWork(sid, fx) {
   S.working = { sid, fx: f.id, fp: true };
   station.headless = true;
   // things put under the tap / in the colander go where the water falls in the basin
-  station.targetHook = (to) => {
+  station.targetHook = (to, vid) => {
     // (the board's own knife, peeler, grater, where it lies)
     // (as the pointer has it, over it on the screen – the grater stands up at the back of the board)
     if (to.startsWith('tool:')) {
@@ -936,6 +952,30 @@ function openWork(sid, fx) {
       if (!w) return null;
       const p = scene.workPoint(w, scene.boxSpot(w));
       return { x: p.x, y: p.y, r: Math.max(60, 0.075 / w.S) };
+    }
+    // (scooping: from the real pot – into the real plates / cups / the pockets of what's in the dish, side by side –
+    // the close-up's point for each being where the pointer is when it's over it on the screen)
+    if (to === 'scoopFrom' || to === 'scoopTo') {
+      const w = workFrame(), def = station.c && station.c.def;
+      const sw = w && def && scene.scoopWorld(w, def, vid || 2, myHeld().includes(`v:${def.from}`));
+      if (!sw) return null;
+      const cp = (P) => { const s = scene.screenOf(P); return scene.workAt(w, s.x, s.y) || scene.workPoint(w, P); };
+      if (to === 'scoopFrom') { const p = cp(sw.from); return { x: p.x, y: p.y, r: 60 }; }
+      return sw.to.map((P) => { const p = cp(P); return { x: p.x, y: p.y }; });
+    }
+    // (a tray set down on the oven's worktop while the gloves went on)
+    if (to === 'ovenRest') {
+      const w = workFrame();
+      if (!w || !scene.k3.fx[w.fx] || !scene.k3.fx[w.fx].parts.drop) return null;
+      const p = scene.workPoint(w, scene.ovenRest(w));
+      return { x: p.x, y: p.y, r: 80 };
+    }
+    // (a lid: its knob on the pot, or where it lies beside it)
+    if (to === 'lidKnob' || to === 'lidAt') {
+      const w = workFrame(), P = w && (to === 'lidKnob' ? scene.lidKnobWorld(vid) : scene.lidRestWorld(vid, w));
+      if (!P) return null;
+      const p = scene.workPoint(w, P);
+      return { x: p.x, y: p.y, r: 50 };
     }
     // (into the oven, onto the fridge's shelf …: the real spot inside it – and out of it, toward me: over the open door)
     if (['ovenRack', 'shelf', 'ovenMouth', 'tandoorWall'].includes(to)) {

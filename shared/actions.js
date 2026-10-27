@@ -161,6 +161,8 @@ export function boardUnits(it) {
 
 // a door, by its handle: v is how far open it is (0 shut … 1 wide open)
 const doorPh = (hot, to, hint) => ({ g: 'door', hot, to, hint, eff: (S, st, v, fx) => { fx.door = to; } });
+// (the oven gloves on first – a hot oven, a hot tray without a handle; already on: there's nothing to do – shared/cook.js)
+const glovesPh = { g: 'tap', hot: 'gloves', hint: 'Put on the oven gloves' };
 
 // --------------------------------------------------------------- the actions
 // Each: { cap, moves?, verb, tool, icon, phases(step, bk) → [phase] }
@@ -397,7 +399,7 @@ export const ACTIONS = {
   squeeze: {
     cap: 'vessel', verb: 'Squeeze', tool: 'grab', icon: '🍋',
     phases: (s) => [
-      { g: 'strokes', axis: 'v', n: s.n || 4, tool: 'grab', hint: 'Squeeze it hard over the pot',
+      { g: 'strokes', axis: 'v', n: s.n || 4, tool: 'grab', hint: 'Squeeze it hard over the {into}',
         eff: (S, st) => { useItem(S, st.item, st.into); } },
     ],
   },
@@ -543,6 +545,7 @@ export const ACTIONS = {
       if (bk === 'dome') return [{ g: 'drag', obj: 'vessel', to: 'ovenMouth', tool: 'pizzaPeel', hint: 'Slide it into the fire', eff: (S, st) => { ves(S, st.vessel).heat = 3; } }];
       if (bk === 'tandoor') return [{ g: 'drag', obj: 'vessel', to: 'tandoorWall', hint: 'Slap it onto the hot clay wall', eff: (S, st) => { ves(S, st.vessel).heat = 3; } }];
       return [
+        glovesPh,
         doorPh('oven', 1, 'Take the handle and pull the oven door down'),
         { g: 'drag', obj: 'vessel', to: 'ovenRack', hint: 'Slide it onto the rack' },
         doorPh('oven', 0, 'Lift the door shut by its handle'),
@@ -561,6 +564,7 @@ export const ACTIONS = {
       if (bk === 'dome') return [{ g: 'drag', obj: 'vessel', to: 'aside', tool: 'pizzaPeel', hint: 'Pull it out with the peel', eff: out }];
       if (bk === 'tandoor') return [{ g: 'drag', obj: 'vessel', to: 'aside', tool: 'tongs', hint: 'Peel it off the wall with the tongs', eff: out }];
       return [
+        glovesPh,
         { g: 'knob', to: 0, hint: 'Turn the oven off', eff: (S, st) => { ves(S, st.vessel).heat = 0; } },
         doorPh('oven', 1, 'Pull the oven door down by its handle'),
         { g: 'drag', obj: 'vessel', to: 'aside', hint: 'Take it out (careful, hot!)', eff: (S, st) => out(S, st) },
@@ -572,6 +576,7 @@ export const ACTIONS = {
     cap: 'vessel', verb: 'Turn', tool: 'pizzaPeel', icon: '🔄',
     // (in a dome oven, with the peel through its mouth; in an oven, the door down first, with the tongs – and shut after)
     phases: (s, bk) => bk === 'electric' ? [
+      glovesPh,
       doorPh('oven', 1, 'Take the handle and pull the oven door down'),
       { g: 'circle', n: 0.5, tool: 'tongs', turn: true, hint: 'Turn them over with the tongs so they bake evenly' },
       doorPh('oven', 0, 'Lift the door shut by its handle'),
@@ -598,7 +603,7 @@ export const ACTIONS = {
   plate: {
     cap: 'plate', verb: 'Plate up', tool: 'ladle', icon: '🍽️',
     phases: (s) => [
-      { g: 'scoop', n: s.n || 2, tool: s.tool || 'ladle', target: 'plates', hint: 'Scoop from the pot onto each plate',
+      { g: 'scoop', n: s.n || 2, tool: s.tool || 'ladle', target: 'plates', hint: 'Scoop from the {from} into each of the {into}',
         prog: (D, st, k) => { ves(D, st.into || 'plates').served = k; },
         eff: (S, st, v, fx, ph) => { const p = S.vessels[st.into || 'plates']; if (p) p.served = ph.n; } },
     ],

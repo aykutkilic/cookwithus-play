@@ -25,7 +25,7 @@ import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt } from './props3d.js';
 import { ACTIONS, BOARD_TOOLS, boardUnits } from '../shared/actions.js';
-import { SAKIR, phaseTarget } from '../shared/cook.js';
+import { SAKIR, phaseTarget, glovesOn } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
@@ -39,6 +39,15 @@ const UP = new THREE.Vector3(0, 1, 0);
 const WORK_S = 0.001;  // first person at work: kitchen units per close-up px
 const BOX_HALF = [0.06, 0.08, 0.105];
 const TIP_LOW = 0.05; // (a food's container held over the pot to tip it in: this far below where the close-up has it – just over the rim) // (a food container's half width, by its size in the nesting set)
+// One piece of a food as it's been cut (a torn bit of mozzarella, a lemon wedge, a basil leaf, a garlic clove) –
+// pinched in the fingertips to top or garnish with
+function pieceCut(kind, it) {
+  if (it && it.cut && it.cut !== 'whole') return it.cut;
+  const a = (INGREDIENTS[kind] && INGREDIENTS[kind].art) || {};
+  return a.type === 'herb' || a.type === 'leaf' ? 'leaves' : a.type === 'round' || a.type === 'bulb' ? 'wedges' : a.type === 'block' ? 'torn' : 'slices';
+}
+const rgb01 = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
+
 // working in an oven, a fridge …: where the camera looks (look, lookUp: out from the spot inside it, up), where it
 // looks from (out, up from there – low enough to see in under the oven's top) and where I am (body: out from the
 // spot, eye: up from it – crouched for a low oven – near enough for my arms to reach in)
@@ -64,7 +73,7 @@ const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0
 // (where a hand holds a pan by its long handle: GRIP3D, props3d.js – two thirds along it)
 // the tools the work puts in my hand that are the kitchen's own utensils (props3d.js), and how far below the
 // fist each one's working end reaches (from its model)
-const WORK_UTENSIL = { spoon: 'woodSpoon', ladle: 'ladle', whisk: 'whisk', masher: 'masher', spatula: 'spatula', tongs: 'tongs', peeler: 'peeler' };
+const WORK_UTENSIL = { teaspoon: 'teaspoon', spoon: 'woodSpoon', ladle: 'ladle', whisk: 'whisk', masher: 'masher', spatula: 'spatula', tongs: 'tongs', peeler: 'peeler' };
 for (const [t, k] of Object.entries(WORK_UTENSIL)) TOOL_LEN[t] = utensilMesh(k).userData.foot * 0.88;
 const mobile = matchMedia('(pointer: coarse)').matches;
 // ?lite: no shadows or ambient occlusion and a low frame rate (slow machines, headless tests)
@@ -331,6 +340,58 @@ export class Scene3D {
   doorOpenness(fx) {
     const F = this.k3.fx[fx];
     return F && F.parts.door ? F.parts.door.userData.o || 0 : 0;
+  }
+  // a lid: how high its knob stands above its rim; where the knob is, on its pot – or lying beside it (put down
+  // there when it came off; else on the worktop to the pot's right)
+  lidTop(vr) {
+    if (vr.lidTopH == null) { const b = new THREE.Box3().setFromObject(vr.lid.clone()); vr.lidTopH = Math.max(0.02, b.max.y - b.min.y); }
+    return vr.lidTopH;
+  }
+  lidKnobWorld(vid) {
+    const vr = this.vessels.get(vid);
+    return vr ? vr.group.position.clone().addScaledVector(UP, vr.h + this.lidTop(vr)) : null;
+  }
+  lidRestWorld(vid, w) {
+    const vr = this.vessels.get(vid);
+    if (!vr) return null;
+    const pk = this.lidsAside && this.lidsAside.get(vid);
+    if (pk) return pk.base.clone().addScaledVector(UP, this.lidTop(vr));
+    return vr.group.position.clone().addScaledVector(w.R, vr.r * 2.3).setY(COUNTER_H + this.lidTop(vr));
+  }
+  // scooping from a pot in my other hand: held just left of the work, over the board – its mouth
+  scoopHeldAt(w, vid) { const vr = this.vessels.get(vid); return w.O.clone().addScaledVector(w.R, -0.2).addScaledVector(UP, 0.03 + (vr ? vr.h * 0.9 : 0.06)); }
+  // scooping: the real mouths – the pot it's taken from (in my other hand: just left of the work), and n places
+  // across what it goes into
+  scoopWorld(w, def, n, held) {
+    const from = held ? this.scoopHeldAt(w, def.from) : this.vesselMouth(def.from), into = def.into || 'plates', to = this.vesselMouth(into);
+    if (!from || !to) return null;
+    const r = this.vesselRadius(into) * 0.45;
+    return { from, to: Array.from({ length: n }, (_, i) => to.clone().addScaledVector(w.R, n > 1 ? (i / (n - 1) - 0.5) * 2 * r : 0)) };
+  }
+  // a pot's mouth (as drawn), how wide it is
+  vesselMouth(vid) { const vr = vid && this.vessels.get(vid); return vr && vr.group.visible ? vr.group.position.clone().addScaledVector(UP, vr.h * 0.9) : null; }
+  vesselRadius(vid) { const vr = vid && this.vessels.get(vid); return vr ? vr.r : 0.1; }
+  // where a tray rests on the oven's worktop while the gloves go on (right over the spot inside, on the work's
+  // plane – where the close-up's point for it is too)
+  ovenRest(w) { return w.O.clone().addScaledVector(w.R, 0.22).setY(COUNTER_H + 0.002); }
+  // where the oven gloves lie beside this oven (drawn there – or where they'd lie)
+  glovesWorld(fx) {
+    for (const [id, t] of Object.entries(this.toolsNow || {})) {
+      if (!(TOOLS[t.kind] && TOOLS[t.kind].worn) || !t.at || !t.at.startsWith(`${fx}/`)) continue;
+      const rec = this.tools.get(id);
+      if (rec && rec.g.visible) return rec.g.position.clone().addScaledVector(UP, 0.01);
+    }
+    const F = this.k3.fx[fx];
+    return F && F.anchors.gloves ? F.anchors.gloves[0].clone() : null;
+  }
+  // with the oven gloves on: the place by an oven they're hung back on, under this point of the screen (in reach)
+  glovesSpotAt(cx, cy) {
+    for (const [fx, F] of Object.entries(this.k3.fx)) {
+      if (!F.anchors.gloves) continue;
+      const w = F.anchors.gloves[0], s = this.screenOf(w);
+      if (s.on && Math.hypot(s.x - cx, s.y - cy) < Math.max(60, this.pxOf(w, 0.1)) && w.distanceTo(this.camera.position) < 1.4) return { fx, w: w.clone() };
+    }
+    return null;
   }
   // a store's handle (where a hand takes it), in the world
   handleWorld(fx) {
@@ -941,7 +1002,7 @@ export class Scene3D {
     const [fid, bay] = splitPlace(place);
     const F = this.k3.fx[fid], spec = this.K.bays && this.K.bays[place];
     if (!F || !spec) return null;
-    if (bay === 'board' || bay === 'crock' || bay === 'corner') {
+    if (bay === 'board' || bay === 'crock' || bay === 'corner' || bay === 'gloves') {
       const A = bay === 'board' ? F.anchors.boardTools : F.anchors[bay];
       if (!A) return null;
       return { spec, out: F.front, lie: bay === 'board' ? 'board' : bay === 'crock' ? 'crock' : 'up', hidden: false, open: 1, at: (r, i) => A[Math.min(i, A.length - 1)].clone() };
@@ -1036,6 +1097,7 @@ export class Scene3D {
 
   updateVessels(view, dt) {
     const D = view.D;
+    this.lastD = D;
     const seen = new Set();
     // vessels resting on the same counter / table share its spots
     const spotUse = new Map();
@@ -1084,7 +1146,7 @@ export class Scene3D {
           this.dynamic.add(rec.group);
         }
         rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
-        rec.group.rotation.set(0, kept && kept.yaw != null ? kept.yaw : pk && !ov && this.parkedAt.has(`v:${id}`) ? pk.yaw : F && F.f.type === 'sink' && !kept ? this.sinkYaw(F) : 0, 0);
+        rec.group.rotation.set(0, ov && ov.yaw != null ? ov.yaw : kept && kept.yaw != null ? kept.yaw : pk && !ov && this.parkedAt.has(`v:${id}`) ? pk.yaw : F && F.f.type === 'sink' && !kept ? this.sinkYaw(F) : 0, 0);
         rec.group.scale.setScalar(ov || (kept && kept.fp) ? 1 : kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         // (at work, first person: tipped to pour, tossed …)
         if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
@@ -1094,6 +1156,7 @@ export class Scene3D {
         const empty = !(v.contents && v.contents.length) && !(v.water > 0.05) && !(v.items && v.items.length) && !v.dirty;
         rec.stowed = rec.ownLid && !ov && !!kept && (kept.stored || !!kept.place || ((kept.held || kept.fp) && empty));
         updateVessel(rec, v, this.t, this.firstPerson);
+        if (this.work && this.work.lid && this.work.lid.vid === id) { rec.lid.visible = false; rec.towel.visible = false; }
         // dirty: a smear of what was in it (going as it's scrubbed) – and the suds while it's washed
         const wl = this.work && this.work.washing && this.work.washing.vid === id ? this.work.washing : null;
         const grime = v.dirty && !rec.liquid.visible && !v.lid ? (wl ? wl.dirt : 1) : 0;
@@ -1248,6 +1311,7 @@ export class Scene3D {
       if (ov) {
         if (ov.hide) continue;
         put(`item:${id}`, it.kind, ov.st ? { ...it, ...ov.st } : it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, ov.yaw ?? (this.work.yaw || 0), ov.box ? { ...ov.box, of: it } : null, ov.scale);
+        if (fp && ov.q) this.foods.get(`item:${id}`).g.quaternion.premultiply(ov.q);
         // (where it is now, for where it goes next to glide from – not where it was before the work)
         this.glides.set(`i:${id}`, { sig: 'work', pos: ov.pos.clone(), from: null, t: 1 });
         continue;
@@ -1313,7 +1377,7 @@ export class Scene3D {
       list.forEach(([id, it], i) => food(`empty:${fxId}:${id}`, it.kind, null, spot.clone().setY(spot.y + i * 0.004), yawAt(fxId), { of: it, empty: true }));
     }
     // at work (first person): what's in my hand that isn't a thing of its own (an egg to crack, a topping, a spoonful)
-    if (this.work) this.work.sprites.forEach((q, i) => put(`work:${i}`, q.kind, q.st, () => q.tex, q.pos, q.size, this.work.yaw || 0));
+    if (this.work) this.work.sprites.forEach((q, i) => { put(`work:${i}`, q.kind, q.st, () => q.tex, q.pos, q.size, q.yaw ?? (this.work.yaw || 0)); if (fp && q.q && this.foods.get(`work:${i}`)) this.foods.get(`work:${i}`).g.quaternion.premultiply(q.q); });
     // food on trays and plates
     for (const [vid, rec] of this.vessels) {
       if (!rec.group.visible || !rec.items) continue;
@@ -1568,6 +1632,7 @@ export class Scene3D {
     }
     if (!on) { this.restLean = false; this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
     this.fpArms.setLook(lookOf(me.avatar));
+    this.fpArms.setGloves(!!(view.C && glovesOn(view.C, me.id)));
     const right = new THREE.Vector3(-Math.cos(rec.yaw), 0, Math.sin(rec.yaw));
     // where a hand takes hold of a thing lying at base (yaw: how it lies)
     const gripAt = (k, i, base, yaw) => {
@@ -1785,6 +1850,8 @@ export class Scene3D {
     if ((g.kind === 'tap' && g.ph.hot === 'faucet') && F.parts.lever) {
       return { w: F.parts.lever.localToWorld(new THREE.Vector3(0.1, 0.03, 0)), at: st.hotspot() };
     }
+    // the oven gloves, where they lie beside it
+    if (g.kind === 'tap' && g.ph.hot === 'gloves') { const gw = this.glovesWorld(w.fx); if (gw) return { w: gw, at: st.hotspot() }; }
     // the dishwasher's start button
     if (g.kind === 'tap' && g.ph.hot === 'dwStart' && F.parts.dwButton) return { w: F.parts.dwButton.getWorldPosition(new THREE.Vector3()).addScaledVector(w.N, 0.02), at: st.hotspot() };
     // the dish soap: on the sink's rim – or, cleaning a board, standing beside it on the worktop
@@ -1806,6 +1873,13 @@ export class Scene3D {
       const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, -0.1);
       return { look, pos: look.clone().addScaledVector(w.N, 0.64).addScaledVector(UP, 0.46) };
     }
+    // (scooping from one pot into others: wide enough to see them all)
+    const sw = g && g.kind === 'scoop' && st.c && this.scoopWorld(w, st.c.def, g.n || 2, this.fpSlots.includes(`v:${st.c.def.from}`));
+    if (sw) {
+      const pts = [sw.from, ...sw.to];
+      const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, 0.03);
+      return this.fitCam({ look, pos: look.clone().addScaledVector(w.N, 0.3).addScaledVector(UP, 0.55) }, pts, 0.5, 0.25);
+    }
     const real = this.workReal(w, st);
     if (real) {
       // (a knob low on the front: from further out and lower – the knob, the hand coming to it and the pan above)
@@ -1825,12 +1899,34 @@ export class Scene3D {
     const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, 0.03);
     return { look, pos: look.clone().addScaledVector(w.N, 0.21).addScaledVector(UP, 0.5) };
   }
+  // What a step works with, in my hand while I use it: a shaker (shaken upside down) or a bottle (tipped) of what
+  // seasons it, a sack's sugar – a pinch – the lemon squeezed, the garlic rubbed on. {id, how, col} or null.
+  useInHand(def, D) {
+    if (!def || !D) return null;
+    const of = (id) => { const it = D.items[id]; return it && !it.used ? (INGREDIENTS[it.kind] && INGREDIENTS[it.kind].art) || {} : null; };
+    if (def.do === 'season') {
+      const a = of(def.item);
+      if (!a) return null;
+      return { id: def.item, how: a.type === 'shaker' ? 'shake' : a.type === 'bottle' ? 'pour' : 'sprinkle', col: rgb01(a.type === 'shaker' ? a.c3 === '#c9ccd2' ? '#ffffff' : a.c1 : a.c1 || '#ffffff') };
+    }
+    if (def.do === 'squeeze' && of(def.item)) return { id: def.item, how: 'squeeze' };
+    if (def.do === 'brush' && def.tool === 'grab' && def.with && of(def.with)) return { id: def.with, how: 'rub' };
+    return null;
+  }
+  // how tall a food stands, as built (a shaker, a bottle …)
+  foodHeight(kind, st) {
+    const key = foodKey(kind, st);
+    this.heights = this.heights || new Map();
+    if (!this.heights.has(key)) { const b = new THREE.Box3().setFromObject(buildFood(kind, st)); this.heights.set(key, Math.max(0.02, b.max.y - b.min.y)); }
+    return this.heights.get(key);
+  }
   // When a step ends, what's on its counter / stove stays just where it's drawn – the glass I stirred on the
   // board, the dough I rolled, the bowl that stood aside – till someone takes it (not back to where the
   // kitchen would set it, by itself). Not what was in the air or tipped: that glides back down.
   parkAfterWork(prev, view) {
     const D = view.D;
     if (!D) return;
+    if (prev.lid && prev.lid.off && D.vessels[prev.lid.vid] && !D.vessels[prev.lid.vid].lid) (this.lidsAside = this.lidsAside || new Map()).set(prev.lid.vid, { base: prev.lid.base.clone() });
     this.parkedAt = this.parkedAt || new Map();
     for (const [id, v] of Object.entries(D.vessels)) {
       if (!v.at || v.at.fx !== prev.fx || v.held != null) continue;
@@ -1840,7 +1936,7 @@ export class Scene3D {
     }
     for (const [id, it] of Object.entries(D.items)) {
       const ov = prev.ov.get(`i:${id}`);
-      if (!ov || ov.hide || ov.box || it.in || it.hidden || it.held != null || it.at !== prev.fx || boxable(it.kind)) continue;
+      if (!ov || ov.hide || ov.box || ov.q || it.in || it.hidden || it.held != null || it.at !== prev.fx || boxable(it.kind)) continue;
       this.parkedAt.set(`i:${id}`, { fx: prev.fx, pos: ov.pos.clone(), yaw: ov.yaw ?? prev.yaw ?? 0, scale: ov.scale });
     }
   }
@@ -1881,6 +1977,9 @@ export class Scene3D {
     const def = st.c && st.c.def, n = st.c ? st.c.phases.length : 1;
     const boardDirt = def && ACTIONS[def.do] && ACTIONS[def.do].cap === 'board' ? Math.min(1, (st.ph + Math.min(1, st.k / Math.max(1, phaseTarget(ph)))) / Math.max(1, n)) : 0;
     const out = { fx: w.fx, boardDirt, hands: [null, null], ov: new Map(), sprites: [], rings: [], stream: null, knob: null, O: w.O, yaw: Math.atan2(w.N.x, w.N.z), real: !!this.workReal(w, st), cam: this.workCam(w, st), boxes: [] };
+    // (into the oven: the tray's set down on the oven's worktop while the gloves go on and the door comes down –
+    // then slid in from there)
+    if (def && def.do === 'bakeIn' && def.vessel && st.c && st.ph < st.c.phases.findIndex((q) => q.g === 'drag') && this.k3.fx[w.fx] && this.k3.fx[w.fx].parts.drop) out.ov.set(`v:${def.vessel}`, { pos: this.ovenRest(w), yaw: Math.atan2(w.N.x, w.N.z) });
     // (where my body is, working: right up against it, leaning over – the knob, the tap's lever: as I stand)
     const realW = out.real && this.workReal(w, st).w, inside = INTO[w.kind];
     const doorW = g.kind === 'door' && this.handleWorld(w.fx);
@@ -1913,7 +2012,7 @@ export class Scene3D {
     // the tool, as the close-up has it
     let tool = ph.tool || { chop: 'knife', peel: 'peeler', circle: 'spoon', paint: 'spoon' }[g.kind] || 'hand';
     if (['drag', 'scoop', 'dip', 'crack', 'knob', 'tap', 'pour', 'fill', 'place', 'flick', 'door'].includes(g.kind) || (g.kind === 'wrap' && g.stage === 0)) {
-      if (!['tongs', 'ladle', 'spoon', 'pizzaPeel', 'spatula'].includes(tool) && !(BOARD_TOOLS.includes(tool) && g.kind === 'tap')) tool = 'hand';
+      if (!['tongs', 'ladle', 'spoon', 'teaspoon', 'pizzaPeel', 'spatula'].includes(tool) && !(BOARD_TOOLS.includes(tool) && g.kind === 'tap')) tool = 'hand';
     }
     if (tool === 'grab') tool = 'hand';
     // (the hand already holding what's carried does it; else the free one)
@@ -1927,6 +2026,7 @@ export class Scene3D {
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
+    const pinch = (P, curl = 0.6, i = wi) => hand(i, P.clone().addScaledVector(w.N, 0.08).addScaledVector(UP, 0.03), 'hand', { curl });
     // a tool's working end where I point: the knife's edge (the blade forward over the food), a spoon's bowl …
     const into = w.N.clone().negate();
     const toolHand = (pos) => {
@@ -1936,9 +2036,12 @@ export class Scene3D {
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         return hand(wi, K.fist, 'knife', { dir: K.xA });
       }
-      const grip = pos.clone().addScaledVector(UP, len).addScaledVector(w.N, len * 0.25);
-      out.tool = { kind: tool, grip, dir: grip.clone().sub(pos).normalize(), hand: wi };
-      return hand(wi, grip, 'tool');
+      // (leaning back toward me as a spoon's held to stir or spread – not upright, seen end on from above –
+      // the fist round the handle, along it)
+      const dir = UP.clone().multiplyScalar(0.74).addScaledVector(w.N, 0.67).normalize();
+      const grip = pos.clone().addScaledVector(dir, len);
+      out.tool = { kind: tool, grip, dir, hand: wi };
+      return hand(wi, grip, 'tool', { dir });
     };
     const vKey = (q) => (q && q.type === 'vessel' && q.id ? `v:${q.id}` : q && q.type === 'item' && q.id ? `i:${q.id}` : null);
     const ring = (q, r = 60) => { if (q) out.rings.push({ w: at(q), r: (q.r || r) * w.S }); };
@@ -2052,6 +2155,22 @@ export class Scene3D {
           ring(g.target);
           break;
         }
+        if (g.source && g.source.type === 'lid') {
+          // A lid – a tea towel under it, for a paella – lifted off by its knob and set down beside the pot, or
+          // brought from beside it and put on: the pot's own lid in my hand (not on the pot meanwhile)
+          const vid = g.subject && g.subject.id, vr = vid && this.vessels.get(vid);
+          if (vr) {
+            const top = this.lidTop(vr), onPot = vr.group.position.clone().addScaledVector(UP, vr.h);
+            let base = g.source.on && !g.drag ? onPot : at(g.pos).addScaledVector(UP, -top);
+            if (g.drag || !g.source.on) base.y = Math.max(base.y, Math.min(onPot.y, COUNTER_H));
+            out.lid = { vid, base, towel: !!(g.source.towel || (g.source.on && D.vessels[vid] && D.vessels[vid].towel)), off: !!g.source.on };
+            const knob = base.clone().addScaledVector(UP, top);
+            hand(wi, knob.clone().addScaledVector(UP, 0.012), 'tool', { dir: UP.clone().addScaledVector(w.N, 0.3).normalize(), curl: g.drag ? 0.8 : 0.5 });
+            if (!g.drag) out.rings.push({ w: knob, r: 0.04 });
+          }
+          ring(g.target);
+          break;
+        }
         const pos = at(g.pos);
         // (a thing in its container: carried over in it)
         if (k) out.ov.set(k, { pos: this.firstPerson ? pos.clone().addScaledVector(UP, ph.tip ? -TIP_LOW : 0) : k[0] === 'v' ? pos.clone().addScaledVector(UP, -0.03) : pos.clone().addScaledVector(UP, -0.05), size: 0.22, yaw: Math.atan2(w.N.x, w.N.z), box: k[0] === 'i' ? {} : null });
@@ -2070,15 +2189,19 @@ export class Scene3D {
       }
       case 'crack': {
         const tex = this.spriteFor('egg', { qty: 1 });
+        // (the egg in my fingertips, my hand behind it – the camera's above: under my palm it wouldn't be seen; then
+        // a thumb in the crack each side, pulling the shell apart)
         if (g.stage === 0) {
-          out.sprites.push({ tex, kind: 'egg', st: { qty: 1 }, pos: at(g.egg).addScaledVector(UP, -0.03), size: 0.12 });
-          hand(wi, at(g.egg).addScaledVector(UP, 0.02), 'hand', { curl: 0.7 });
+          const E = at(g.egg).addScaledVector(UP, -0.01);
+          out.sprites.push({ tex, kind: 'egg', st: { qty: 1 }, pos: E, size: 0.12 });
+          hand(wi, E.clone().addScaledVector(w.N, 0.045).addScaledVector(UP, 0.04), 'grab', { curl: 0.55, dir: w.N.clone().negate().addScaledVector(UP, -0.5).normalize() });
           ring(st.rimPoint(), 40);
         } else {
           const sp = (g.spread || 0) * 0.5;
-          out.sprites.push({ tex, kind: 'egg', st: { qty: 1 }, pos: at({ x: g.egg.x - sp, y: g.egg.y }).addScaledVector(UP, -0.03), size: 0.11 });
-          hand(wi, at({ x: g.egg.x + 30 + sp, y: g.egg.y }), 'hand', { curl: 0.8 });
-          hand(oi, at({ x: g.egg.x - 30 - sp, y: g.egg.y }), 'hand', { curl: 0.8 });
+          const E = at({ x: g.egg.x - sp, y: g.egg.y }).addScaledVector(UP, -0.01);
+          out.sprites.push({ tex, kind: 'egg', st: { qty: 1 }, pos: E, size: 0.11 });
+          hand(wi, at({ x: g.egg.x + 30 + sp, y: g.egg.y }).addScaledVector(w.N, 0.03).addScaledVector(UP, 0.02), 'grab', { curl: 0.6 });
+          hand(oi, at({ x: g.egg.x - 30 - sp, y: g.egg.y }).addScaledVector(w.N, 0.03).addScaledVector(UP, 0.02), 'grab', { curl: 0.6 });
         }
         break;
       }
@@ -2187,10 +2310,24 @@ export class Scene3D {
         break;
       }
       case 'scoop': {
-        toolHand(at(g.drag && g.pos ? g.pos : pt));
-        if (g.drag && g.pos) out.sprites.push({ tex: this.blobTex(st.scoopColor()), kind: { type: 'blob', c1: st.scoopColor() }, st: {}, pos: at(g.pos).addScaledVector(UP, -0.02), size: 0.06 });
+        // (the pot it's scooped from in my other hand, if I hold it – by its handle, just left of the work)
+        const fk = def && def.from && `v:${def.from}`, fr = fk && this.vessels.get(def.from);
+        if (fr && this.fpSlots.includes(fk) && this.fpGripAt) {
+          const mouth = this.scoopHeldAt(w, def.from), base = mouth.clone().addScaledVector(UP, -fr.h * 0.9), yaw = Math.atan2(w.N.x, w.N.z) + Math.PI / 2;
+          out.ov.set(fk, { pos: base, yaw });
+          const gp = this.fpGripAt(fk, oi, base, yaw);
+          if (gp) hand(oi, gp.world, 'handle', { curl: 1, dir: gp.aimAt ? gp.aimAt.clone().negate() : null });
+        }
+        // (the spoon where the pointer has it on the screen, just over the pots' mouths – not on the work's plane)
+        const sw = st.c && this.scoopWorld(w, def, g.n || 2, this.fpSlots.includes(fk));
+        const onPots = (q) => { if (!sw) return at(q); const sc = this.screenOf(at(q)), ray = this.rayAt(sc.x, sc.y), y = Math.max(sw.from.y, ...sw.to.map((t) => t.y)) + 0.02; const t = (y - ray.origin.y) / (ray.direction.y || -1e-6); return t > 0 ? ray.at(t, new THREE.Vector3()) : at(q); };
+        const S0 = onPots(g.drag && g.pos ? g.pos : pt);
+        toolHand(S0);
+        if (g.drag && g.pos) out.sprites.push({ tex: this.blobTex(st.scoopColor()), kind: { type: 'blob', c1: st.scoopColor() }, st: {}, pos: S0.clone().addScaledVector(UP, -0.02), size: 0.06 });
+        else if (sw) out.rings.push({ w: sw.from, r: 0.05 });
         else ring(st.scoopSource(), 60);
-        for (const q of st.scoopTargets()) ring(q, 45);
+        if (sw) for (const q of sw.to) out.rings.push({ w: q, r: 0.035 });
+        else for (const q of st.scoopTargets()) ring(q, 45);
         break;
       }
       case 'chop': {
@@ -2247,11 +2384,46 @@ export class Scene3D {
         break;
       }
       case 'place': {
-        toolHand(at(pt));
-        if (ph.piece) out.sprites.push({ tex: this.spriteFor(ph.piece, null, 'slice'), kind: ph.piece, st: { cut: 'slice', k: 1, n: 1 }, pos: at(pt).addScaledVector(UP, -0.03), size: 0.08 });
+        // a piece of the topping / the garnish – as it's been cut – between my fingertips, put down where I tap
+        const P = at(pt).addScaledVector(UP, 0.012);
+        if (ph.piece) out.sprites.push({ tex: this.spriteFor(ph.piece, null, 'slice'), kind: ph.piece, st: { cut: pieceCut(ph.piece, D && D.items[ph.piece]), k: 1, n: 1, bits: 0.01 }, pos: P, size: 0.08 });
+        pinch(P, p.down ? 0.75 : 0.6);
         break;
       }
       default: {
+        // The salt shaker / the oil bottle upside down over it, the lemon half in my fist, a garlic clove in my
+        // fingertips – the thing itself, taken from where it stood (not a stand-in, it left lying there)
+        const use = this.useInHand(def, D);
+        if (use) {
+          const T = at(pt), it = D.items[use.id];
+          if (use.how === 'shake' || use.how === 'pour') {
+            const H = this.foodHeight(it.kind, it), tilt = use.how === 'shake' ? Math.PI * 0.85 : 2.0;
+            const q = new THREE.Quaternion().setFromAxisAngle(w.R, -tilt);
+            const mouth = T.clone().addScaledVector(UP, use.how === 'shake' ? 0.05 : 0.07);
+            const base = mouth.clone().sub(new THREE.Vector3(0, H, 0).applyQuaternion(q));
+            out.ov.set(`i:${use.id}`, { pos: base, q, yaw: 0, size: 0.1 });
+            const along = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
+            hand(wi, base.clone().addScaledVector(along, -H * 0.5), 'tool', { dir: along, curl: 0.95 });
+            if (p.down && Math.random() < 0.6) this.puff(mouth, 'grain', use.how === 'shake' ? use.col : null);
+            if (p.down && use.how === 'pour') out.stream = { from: mouth, to: T.clone(), color: use.col ? `rgb(${use.col.map((c) => Math.round(c * 255)).join(',')})` : '#d8b84a' };
+          } else if (use.how === 'squeeze') {
+            // (cut side down, my fist closing round it as I squeeze – the juice dripping)
+            const L = T.clone().addScaledVector(UP, 0.07);
+            out.ov.set(`i:${use.id}`, { pos: L, q: new THREE.Quaternion().setFromAxisAngle(w.R, Math.PI), st: { cut: 'halves', k: 1, n: 1, bits: 0.5 }, size: 0.08 });
+            hand(wi, L.clone().addScaledVector(UP, 0.03).addScaledVector(w.N, 0.012), 'grab', { curl: p.down ? 1 : 0.65 });
+            if (p.down && Math.random() < 0.5) this.puff(L.clone().addScaledVector(UP, -0.03), 'grain', [0.98, 0.93, 0.55]);
+          } else if (use.how === 'sprinkle') {
+            // (a pinch from the sack, rubbed between my fingertips over it)
+            pinch(T.clone().addScaledVector(UP, 0.06), 0.75);
+            if (p.down && Math.random() < 0.6) this.puff(T.clone().addScaledVector(UP, 0.055), 'grain', use.col);
+          } else {
+            // (a piece pinched, rubbed over it – a garlic clove on the toast)
+            const P = T.clone().addScaledVector(UP, 0.012);
+            out.sprites.push({ tex: null, kind: it.kind, st: { cut: pieceCut(it.kind, it), k: 1, n: 1, bits: 0.01 }, pos: P, size: 0.06 });
+            pinch(P, 0.7);
+          }
+          break;
+        }
         // Grating: the box grater stands on the board, left of the food, my left hand on its
         // handle; my right hand rubs the food up and down its face as high as the pointer – smaller
         // with each stroke – and the shreds pile up at its foot.
@@ -2467,6 +2639,32 @@ export class Scene3D {
       } else fx.tool.quaternion.setFromUnitVectors(UP, T.dir); // (hanging from the fist, leaning toward me)
       }
     }
+    // a lid in my hand (a towel under it), and lids lying aside where they were put down
+    fx.lids = fx.lids || new Map();
+    const lidsNow = new Map();
+    if (W && W.lid) lidsNow.set('hand', W.lid);
+    const D = this.lastD;
+    for (const [vid, pk] of this.lidsAside || []) {
+      const v = D && D.vessels[vid];
+      if (!v || v.lid || !this.vessels.has(vid)) { this.lidsAside.delete(vid); continue; }
+      if (!(W && W.lid && W.lid.vid === vid)) lidsNow.set(vid, { vid, base: pk.base, towel: false });
+    }
+    for (const [key, L] of lidsNow) {
+      const vr = this.vessels.get(L.vid);
+      if (!vr) continue;
+      let m = fx.lids.get(key);
+      if (!m || m.vid !== L.vid) {
+        if (m) { this.scene.remove(m.lid); this.scene.remove(m.towel); }
+        m = { vid: L.vid, lid: vr.lid.clone(), towel: vr.towel.clone() };
+        this.scene.add(m.lid, m.towel);
+        fx.lids.set(key, m);
+      }
+      m.lid.visible = true;
+      m.lid.position.copy(L.base);
+      m.towel.visible = !!L.towel;
+      m.towel.position.copy(L.base).addScaledVector(UP, -0.004);
+    }
+    for (const [key, m] of fx.lids) if (!lidsNow.has(key)) { m.lid.visible = false; m.towel.visible = false; }
     const S = W && W.stream;
     fx.stream.visible = !!S;
     if (S) {
@@ -2764,12 +2962,14 @@ export class Scene3D {
     return { points, n, list: [] };
   }
 
-  puff(p, kind) {
+  puff(p, kind, col = null) {
     const S = this.steam;
     if (S.list.length >= S.n) return;
     const r = Math.random;
-    const e = { x: p.x + (r() - 0.5) * 0.08, y: p.y, z: p.z + (r() - 0.5) * 0.08, vx: (r() - 0.5) * 0.05, vy: 0.25 + r() * 0.2, vz: (r() - 0.5) * 0.05, life: 0, max: 1.6 + r(), kind };
+    const e = { x: p.x + (r() - 0.5) * 0.08, y: p.y, z: p.z + (r() - 0.5) * 0.08, vx: (r() - 0.5) * 0.05, vy: 0.25 + r() * 0.2, vz: (r() - 0.5) * 0.05, life: 0, max: 1.6 + r(), kind, col };
     if (kind === 'drop') { e.vy = -0.6; e.max = 0.35; }
+    // (salt through a shaker's holes, a pinch of spice, lemon juice: a few small bits falling straight down)
+    if (kind === 'grain') { e.x = p.x + (r() - 0.5) * 0.015; e.z = p.z + (r() - 0.5) * 0.015; e.vx *= 0.3; e.vz *= 0.3; e.vy = -0.2 - r() * 0.2; e.max = 0.5; }
     if (kind === 'sizzle') { e.vy = 0.5 + r() * 0.5; e.vx *= 6; e.vz *= 6; e.max = 0.35; }
     if (kind === 'fly') { e.max = 2; e.vy = 0.05; e.y += 0.15; }
     S.list.push(e);
@@ -2786,11 +2986,11 @@ export class Scene3D {
       const k = e.life / e.max;
       if (e.kind === 'fly') { e.x += Math.cos(this.t * 7 + i) * dt * 0.3; e.z += Math.sin(this.t * 6 + i) * dt * 0.3; }
       else { e.x += e.vx * dt; e.y += e.vy * dt; e.z += e.vz * dt; }
-      if (e.kind === 'sizzle' || e.kind === 'drop') e.vy -= 3 * dt;
+      if (e.kind === 'sizzle' || e.kind === 'drop' || e.kind === 'grain') e.vy -= 3 * dt;
       pos[i * 3] = e.x; pos[i * 3 + 1] = e.y; pos[i * 3 + 2] = e.z;
-      const c = e.kind === 'steam' ? [1, 1, 1] : e.kind === 'drop' ? [0.6, 0.82, 0.98] : e.kind === 'fly' ? [0.1, 0.1, 0.12] : [1, 0.9, 0.5];
+      const c = e.col || (e.kind === 'steam' ? [1, 1, 1] : e.kind === 'drop' ? [0.6, 0.82, 0.98] : e.kind === 'fly' ? [0.1, 0.1, 0.12] : [1, 0.9, 0.5]);
       col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
-      size[i] = e.kind === 'steam' ? 0.05 + k * 0.1 : e.kind === 'fly' ? 0.012 : 0.012;
+      size[i] = e.kind === 'steam' ? 0.05 + k * 0.1 : e.kind === 'grain' ? 0.006 : 0.012;
       if (e.kind === 'steam' && k > 0.8) size[i] *= (1 - k) * 5;
     }
     S.points.geometry.attributes.position.needsUpdate = true;
@@ -2885,7 +3085,9 @@ export function buildVessel(kind) {
   lid.visible = false;
   g.add(lid);
   rec.lid = lid;
-  const towel = box(rec.r * 2.3, 0.01, rec.r * 2.3, mat('#f8f4ec', { rough: 0.95 }), 0, rec.h - 0.005, 0);
+  // a cotton tea towel laid over it (under the lid): flat across the top, hanging down past the rim all round
+  const towel = new THREE.Mesh(drapedTowel(rec.r), towelMat());
+  towel.position.y = rec.h - 0.004;
   towel.visible = false;
   g.add(towel);
   rec.towel = towel;
@@ -2895,7 +3097,41 @@ export function buildVessel(kind) {
   return rec;
 }
 
+// (the cloth: flat over a pot of radius r, then falling away past its rim in soft folds)
+function drapedTowel(r) {
+  const s = r * 2.6, geo = new THREE.PlaneGeometry(s, s, 24, 24);
+  geo.rotateX(-Math.PI / 2);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i), d = Math.hypot(x, z), over = Math.max(0, d - r * 0.98);
+    const k = over > 0 ? r * 0.98 / d + (1 - r * 0.98 / d) * 0.35 : 1; // (pulled in a little as it falls)
+    p.setXYZ(i, x * k, -over * 0.85 + Math.sin(Math.atan2(z, x) * 7) * over * 0.08, z * k);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+let TOWEL_MAT = null;
+function towelMat() {
+  if (TOWEL_MAT) return TOWEL_MAT;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = '#f6f1e6'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#c8402e'; for (const y of [6, 12, 52, 58]) x.fillRect(0, y, 64, 3); // (a striped linen tea towel)
+  x.fillStyle = 'rgba(0,0,0,0.04)'; for (let i = 0; i < 64; i += 2) x.fillRect(i, 0, 1, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  TOWEL_MAT = new THREE.MeshStandardMaterial({ map: t, roughness: 0.95, side: THREE.DoubleSide });
+  return TOWEL_MAT;
+}
+
 const CONTENT_COL = { water: '#8fc8ea' };
+// a brew: water with tea or coffee steeped in it is that colour – Turkish tea's deep red ("tavşan kanı"), coffee's
+// near black – and paler with milk in it
+function brewColor(v) {
+  const ks = new Set((v.contents || []).map((c) => c.kind));
+  const base = ks.has('coffee') ? '#3b2416' : ks.has('tea') ? '#a63d18' : null;
+  if (!base) return null;
+  return ks.has('milk') ? '#' + new THREE.Color(base).lerp(new THREE.Color('#efe2d0'), 0.5).getHexString() : base;
+}
 // (solid: first person, where what's in it is drawn in 3D – only what's runny is the surface)
 function updateVessel(rec, v, t, solid = false) {
   const r = rec.r;
@@ -2906,9 +3142,10 @@ function updateVessel(rec, v, t, solid = false) {
   rec.liquid.visible = show && !v.lid;
   if (show) {
     rec.liquid.position.y = 0.008 + (level > 0.02 ? level : solid ? 0.03 : 0.25) * rec.h * 0.9;
-    const col = v.liquid || (level > 0.02 ? CONTENT_COL.water : wet.length ? bitColor(wet[0].kind) : mainColor(v));
+    const brew = !v.liquid && level > 0.02 && brewColor(v);
+    const col = v.liquid || brew || (level > 0.02 ? CONTENT_COL.water : wet.length ? bitColor(wet[0].kind) : mainColor(v));
     rec.liquid.material.color.set(col);
-    rec.liquid.material.opacity = level > 0.02 && !v.liquid ? 0.72 : solid && !v.liquid ? 0.55 : 0.96;
+    rec.liquid.material.opacity = brew ? 0.9 : level > 0.02 && !v.liquid ? 0.72 : solid && !v.liquid ? 0.55 : 0.96;
     if (v.cook) rec.liquid.material.color.lerp(new THREE.Color('#8a4a1a'), Math.min(0.5, v.cook * 0.4));
   }
   rec.lid.visible = !!v.lid || !!rec.stowed;

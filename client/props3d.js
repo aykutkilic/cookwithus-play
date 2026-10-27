@@ -1080,10 +1080,79 @@ function hangingKnife() {
 }
 // A tool of the kitchen by its kind (shared/ingredients.js TOOLS): a copy of its model. userData: under
 // (how far below the origin it reaches lying on its face), foot (standing / hanging: how far below)
+// ------------------------------------------------------------------ oven gloves
+// Le Creuset's cotton oven mitt: 35 × 18 cm, about 2 cm thick, quilted cotton twill (a nylon barrier inside),
+// a hanging loop at the cuff – in cerise. A pair lying on the oven's worktop; on my hands, mittPieces().
+let MITT_MAT = null;
+export function mittMaterial() {
+  if (MITT_MAT) return MITT_MAT;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#b3172e'; x.fillRect(0, 0, 128, 128);
+  // (the twill's fine diagonal, then the quilting – a diamond of stitched lines, puffed between)
+  for (let i = -128; i < 256; i += 4) { x.strokeStyle = i % 8 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.05)'; x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 128, 128); x.stroke(); }
+  const g = x.createRadialGradient(64, 64, 4, 64, 64, 60); g.addColorStop(0, 'rgba(255,255,255,0.10)'); g.addColorStop(1, 'rgba(0,0,0,0.16)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = 'rgba(70,0,10,0.55)'; x.lineWidth = 2; x.setLineDash([5, 3]);
+  for (const [a, b2] of [[[0, 0], [128, 128]], [[128, 0], [0, 128]], [[-64, 64], [64, -64]], [[64, 192], [192, 64]], [[-64, 64], [64, 192]], [[64, -64], [192, 64]]]) { x.beginPath(); x.moveTo(...a); x.lineTo(...b2); x.stroke(); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  MITT_MAT = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
+  return MITT_MAT;
+}
+// its outline lying flat (cm; the cuff at y 0, the fingers' end at 35.5, the thumb out on the left)
+function mittShape(flip = 1) {
+  const P = [[-7, 0], [7, 0], [7.4, 8], [7.8, 16], [8, 24], [7.4, 30], [5.4, 33.8], [2.2, 35.4], [-1.6, 35.3], [-5, 33.6], [-6.8, 30], [-6.6, 24.5], [-7.4, 22.6],
+    [-9.4, 25.6], [-10.9, 25], [-11.3, 22], [-10.4, 17.5], [-8.6, 13.5], [-7.4, 9], [-7, 0]];
+  const sh = new THREE.Shape();
+  sh.moveTo(P[0][0] * flip, P[0][1]);
+  sh.splineThru(P.slice(1).map(([px, py]) => new THREE.Vector2(px * flip, py)));
+  return sh;
+}
+function mittLying(flip) {
+  const geo = new THREE.ExtrudeGeometry(mittShape(flip), { depth: 0.6, bevelEnabled: true, bevelThickness: 0.7, bevelSize: 0.8, bevelSegments: 3, curveSegments: 10 });
+  // (the quilting's diamonds about 4 cm across)
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 4, uv.getY(i) / 4);
+  geo.scale(CM, CM, CM);
+  geo.rotateX(-Math.PI / 2); // (lying: its fingers toward the back)
+  const m = new THREE.Mesh(geo, mittMaterial());
+  // the loop it hangs by, at the cuff
+  const loop = new THREE.Mesh(new THREE.TorusGeometry(1.4 * CM, 0.25 * CM, 6, 16), mittMaterial());
+  loop.position.set(-5.5 * CM * flip, 1.2 * CM, 0.6 * CM);
+  loop.rotation.x = -Math.PI / 2;
+  const g = new THREE.Group();
+  g.add(m, loop);
+  return g;
+}
+function ovenGlovesMesh() {
+  const g = new THREE.Group();
+  const a = mittLying(1), b = mittLying(-1);
+  a.position.set(-0.03, 0, 0.02); a.rotation.y = 0.12;
+  b.position.set(0.035, 0.011, 0); b.rotation.y = -0.18; // (the second laid half over the first)
+  g.add(a, b);
+  return finish(g);
+}
+// On a hand (hand space, metres – fparms3d.js: fingers along −z, the thumb +y, the palm −x): the padded
+// palm, the fingers' pocket (hinged at the knuckles), the thumb's, and the cuff over the wrist.
+export function mittPieces() {
+  const rb = (w, h, d, r) => { const geo = new THREE.BoxGeometry(w, h, d, 4, 4, 4); const p = geo.attributes.position, v = new THREE.Vector3();
+    // (a soft, padded box: its corners rounded off toward a sphere)
+    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const c = new THREE.Vector3(Math.max(-w / 2 + r, Math.min(w / 2 - r, v.x)), Math.max(-h / 2 + r, Math.min(h / 2 - r, v.y)), Math.max(-d / 2 + r, Math.min(d / 2 - r, v.z))); const o = v.clone().sub(c); if (o.lengthSq() > 1e-12) v.copy(c).addScaledVector(o.normalize(), r); p.setXYZ(i, v.x, v.y, v.z); }
+    geo.computeVertexNormals(); return geo; };
+  const palm = rb(0.058, 0.104, 0.112, 0.024); palm.translate(-0.006, -0.002, -0.046);
+  const fingers = rb(0.05, 0.098, 0.1, 0.024); fingers.translate(0, 0, -0.046); // (from its hinge, out along −z)
+  const thumb = rb(0.034, 0.032, 0.074, 0.015); thumb.translate(0, 0, -0.03);
+  const cuff = new THREE.CylinderGeometry(0.056, 0.05, 0.13, 20, 1, true); cuff.rotateX(Math.PI / 2); cuff.translate(-0.004, 0, 0.055);
+  return { palm, fingers, thumb, cuff, mat: mittMaterial() };
+}
+
 const MAKERS = {
   fork: forkMesh, spoon: spoonDinnerMesh, teaspoon: teaspoonMesh, tableKnife: tableKnifeMesh, ladle: ladleMesh, whisk: whiskMesh,
   spatula: turnerMesh, woodSpoon: woodSpoonMesh, tongs: tongsMesh, masher: masherMesh, rollingPin: rollingPinMesh, scissors: scissorsMesh,
   chefKnife: hangingKnife, peeler: peelerMesh, grater: graterMesh, oilBottle: oilBottleMesh, vinegarBottle: vinegarBottleMesh, sugarJar: sugarJarMesh,
+  ovenGloves: ovenGlovesMesh,
 };
 const MADE = new Map();
 export function utensilMesh(kind) {

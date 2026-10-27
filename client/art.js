@@ -3590,7 +3590,7 @@ function toolLocal(c, tool, pressed) {
       vHandle(c, 0, -170 * sq, -72 * sq, 22, '#f2b33a', shade(STEEL, -0.1));
       return;
     }
-    case 'spoon': {
+    case 'spoon': case 'teaspoon': {
       vHandle(c, 0, -176, -20, 13, WOOD);
       paint(c, (q) => E(q, 0, 0, 22, 30), WOOD, { dx: 3, dy: 4, hl: [-8, -10, 6, 10, 0.2] });
       c.beginPath(); E(c, 1, 2, 14, 21); fs(c, shade(WOOD, -0.12), LW * 0.6);

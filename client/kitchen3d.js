@@ -559,6 +559,7 @@ function oven(g, ctx, d) {
   worktop(g, ctx, 1);
   void T;
   d.anchors.inside = v3(0, ry + 0.004, 0.06);
+  d.anchors.gloves = [v3(-0.27, COUNTER_H, -0.16)]; // (the oven gloves lie on its worktop, back left)
   d.anchors.top = v3(0, COUNTER_H, 0);
   d.anchors.scraps = v3(0.36, COUNTER_H, 0.36);
 }

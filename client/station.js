@@ -146,6 +146,8 @@ export class Station {
         const toMain = ph.to !== 'aside';
         const start = toMain ? { ...SIDE } : { ...MAIN };
         if (obj === 'lidOff') { start.x = MAIN.x; start.y = MAIN.y - 150; }
+        // (first person: the lid's real knob on its pot – or where it lies beside it)
+        if (obj === 'lidOff' || obj === 'lid' || obj === 'towelLid') { const lk = this.targetHook && this.targetHook(obj === 'lidOff' ? 'lidKnob' : 'lidAt', vId); if (lk) { start.x = lk.x; start.y = lk.y; } }
         if (obj === 'scraps' && ph.to === 'hands') { start.x = MAIN.x; start.y = MAIN.y - 40; }
         if (obj === 'scraps' && ph.to === 'bin') { start.x = 500; start.y = 540; }
         if (obj === 'bag') { start.x = 500; start.y = 280; }
@@ -154,7 +156,9 @@ export class Station {
         if (obj === 'pieces' && ph.pile) { const pa = this.targetFor('pile'); start.x = pa.x; start.y = pa.y; }
         if (obj === 'newBox') { const sa = this.targetFor('stack'); start.x = sa.x; start.y = sa.y; }
         if (obj === 'oneOver') { const pf = this.targetFor('portionFrom'); start.x = pf.x; start.y = pf.y; }
-        if (obj === 'fromBox') { start.x = BOX_AT.x; start.y = BOX_AT.y - 10; }
+        // (into the oven: from where it was set down on its worktop while the gloves went on)
+        if (obj === 'vessel' && ph.to === 'ovenRack') { const r = this.targetHook && this.targetHook('ovenRest'); if (r) { start.x = r.x; start.y = r.y; } }
+        if (obj === 'fromBox') { const bx = this.targetFor('box'); start.x = bx.x; start.y = bx.y - 10; } // (first person: the real container)
         g.from = start; g.pos = { ...start };
         g.target = this.targetFor(ph.to);
         // (cut from a bunch with more in it than the recipe takes: into an empty container from the stack)
@@ -256,7 +260,7 @@ export class Station {
     const names = this.c.x.names || {};
     const into = names[this.c.def.into || this.c.def.vessel] || 'pot';
     this.hooks.progress({
-      title: this.c.def.name, hint: this.tip && performance.now() < this.tip.until ? this.tip.msg : ph ? ph.hint.replace('{into}', into) : 'Done!', ph: this.ph, phases: this.c.phases.length,
+      title: this.c.def.name, hint: this.tip && performance.now() < this.tip.until ? this.tip.msg : ph ? ph.hint.replace('{into}', into).replace('{from}', names[this.c.def.from] || 'pot') : 'Done!', ph: this.ph, phases: this.c.phases.length,
       k: this.k, n: ph ? phaseTarget(ph) : 0, value: ph && ['pour', 'fill', 'paint'].includes(ph.g) ? this.g && this.g.v : null,
       band: ph && ph.band, cover: ph && ph.cover, done: this.done,
     });
@@ -812,9 +816,12 @@ export class Station {
 
   rimPoint() { return this.geo ? { x: this.geo.mouthX, y: this.geo.mouthY - this.geo.mouthRy } : { x: MAIN.x, y: MAIN.y - 140 }; }
 
-  scoopSource() { return { x: 200, y: 400 }; }
+  // (first person: the real pot it's scooped from, the real plates / cups / pockets it goes into)
+  scoopSource() { return (this.targetHook && this.targetHook('scoopFrom')) || { x: 200, y: 400 }; }
   scoopTargets() {
     const n = this.g.n || 2;
+    const real = this.targetHook && this.targetHook('scoopTo', n);
+    if (real) return real;
     const out = [];
     for (let i = 0; i < n; i++) out.push({ x: 420 + (n === 1 ? 160 : i * Math.min(220, 440 / Math.max(1, n - 1))), y: 470 });
     return out;
@@ -958,6 +965,7 @@ export class Station {
       case 'bell': return BELL;
       case 'pedal': return { x: 500, y: 590, r: 60 };
       case 'soap': return SOAP;
+      case 'gloves': return { x: 280, y: 300, r: 70 }; // (the oven gloves, beside it – first person: the real ones)
       case 'dwStart': return DW_BTN;
       // (the board's own knife, peeler or grater – first person: where it really lies)
       case 'pick': case 'rest': return (this.targetHook && this.targetHook(`tool:${g.ph.takes}`)) || TOOL_AT[g.ph.takes];
@@ -2415,7 +2423,14 @@ export class Station {
     const t = (this.t % 1.6) / 1.6;
     ctx.save();
     switch (g.kind) {
-      case 'tap': { const h = this.hotspot(); this.ghostRing(ctx, h.x, h.y, h.r + 10 + Math.sin(this.t * 6) * 4); if (show) this.ghostHand(ctx, h.x + 10, h.y + 10, 1 - t); break; }
+      case 'tap': {
+        const h = this.hotspot();
+        // (the oven gloves, lying there to be put on)
+        if (g.ph.hot === 'gloves' && !this.headless) { ctx.font = '96px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🧤', h.x, h.y); }
+        this.ghostRing(ctx, h.x, h.y, h.r + 10 + Math.sin(this.t * 6) * 4);
+        if (show) this.ghostHand(ctx, h.x + 10, h.y + 10, 1 - t);
+        break;
+      }
       case 'drag': case 'dip': {
         const tg = g.kind === 'dip' ? { x: MAIN.x, y: MAIN.y - 90, r: 120 } : g.target;
         if (tg && this.k === 0) this.ghostRing(ctx, tg.x, tg.y, Math.min(tg.r, 130));

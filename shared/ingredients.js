@@ -193,6 +193,8 @@ export const TOOLS = {
   oilBottle:  { name: 'Bottle of olive oil', emoji: '🫒', upright: true },
   vinegarBottle: { name: 'Bottle of vinegar', emoji: '🍶', upright: true },
   sugarJar:   { name: 'Jar of sugar', emoji: '🫙', upright: true },
+  // (put on, not held: hot trays and dishes without a handle go in and out of the oven in them)
+  ovenGloves: { name: 'Oven gloves', emoji: '🧤', worn: true },
 };
 
 export const ING_KINDS = Object.keys(INGREDIENTS);

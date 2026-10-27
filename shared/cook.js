@@ -924,6 +924,8 @@ export function openStep(C, x, K, sid, place, memberId) {
   st.by = memberId;
   st.fx = pl.fx;
   st.slot = pl.slot;
+  // (the oven gloves already on – or none to be had: nothing to put on)
+  { const ps = phasesOf(s, bakeKind(fixtureById(K, pl.fx))); while (st.k === 0 && ps[st.ph] && ps[st.ph].hot === 'gloves' && (glovesOn(C, memberId) || !glovesNear(C, pl.fx))) st.ph++; }
   { const f0 = fixtureById(K, pl.fx); const ph0 = phasesOf(s, bakeKind(f0))[st.ph]; if (ph0 && ph0.g === 'door' && st.k === 0) st.v = fxState(C, pl.fx).door ? 1 : 0; }
   if (!s.chore) {
     // what you brought goes down here (a pot you'll put on the burner / in the
@@ -1016,8 +1018,32 @@ function pinThings(C, s, st) {
 
 function fxState(C, id) { return (C.fx[id] = C.fx[id] || { tap: 0, door: 0 }); }
 
+// ------------------------------------------------------------- the oven gloves
+// Put on (worn: not in a hand – you still carry the tray in them), and hung back beside the oven after.
+const gloveIds = (C) => Object.keys(C.tools || {}).filter((id) => TOOLS[C.tools[id].kind] && TOOLS[C.tools[id].kind].worn);
+export function glovesOn(C, memberId) { return gloveIds(C).some((id) => C.tools[id].worn === memberId); }
+// (a pair lying by this oven – or any not worn)
+function glovesNear(C, fx) {
+  const free = gloveIds(C).filter((id) => C.tools[id].worn == null && C.tools[id].held == null);
+  return free.find((id) => C.tools[id].at && C.tools[id].at.startsWith(`${fx}/`)) || free[0] || null;
+}
+export function wearGloves(C, memberId, fx) {
+  if (glovesOn(C, memberId)) return '';
+  const id = glovesNear(C, fx);
+  if (!id) return 'No oven gloves here';
+  Object.assign(C.tools[id], { worn: memberId, at: null });
+  return '';
+}
+export function hangGloves(C, memberId) {
+  const id = gloveIds(C).find((i) => C.tools[i].worn === memberId);
+  if (!id) return 'You have no oven gloves on';
+  Object.assign(C.tools[id], { worn: null, at: C.tools[id].home });
+  return '';
+}
+
 function completePhase(C, x, K, s, st, ph, v, f, ev) {
   if (ph.eff) ph.eff(C, s, v, fxState(C, st.fx), ph, st.extra);
+  if (ph.g === 'tap' && ph.hot === 'gloves') wearGloves(C, st.by, st.fx);
   const a = ACTIONS[s.do];
   // a pot dragged onto a burner / under the tap is there from now on
   if (a.moves && ph.g === 'drag') moveVessel(C, s, st);
@@ -1151,6 +1177,8 @@ export function dropMember(C, x, memberId, K, pos) {
     if (spot) putDown(C, x, K, memberId, spot.id);
   }
   for (const k of heldBy(C, memberId)) { const t = thingOf(C, k); t.held = null; if (k[0] === 'i') t.at = storeFx(K || { fixtures: [] }, storeOf(t.kind) || 'shelf'); if (k[0] === 'u') { t.at = t.home; t.spot = freeSpot(C, K || {}, t.home, null, k) || t.spot; } }
+  // (the oven gloves they had on: back beside the oven)
+  if (glovesOn(C, memberId)) hangGloves(C, memberId);
 }
 
 // ------------------------------------------------------------------ timers
