@@ -1777,6 +1777,7 @@ export class Scene3D {
       const i = want >= 0 && holds[want] == null ? want : holds[1] == null ? 1 : holds[0] == null ? 0 : -1;
       if (i >= 0) holds[i] = { kind: 'grab', at: handAt(view.fpGrab.w, i ? 1 : -1) };
     }
+    this.armHolds = holds; // (for test/arms.html: what my hands were asked to do)
     this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t, hideAway: (this.workCamK || 0) > 0.02 });
     this.workMoved = new Set(this.work && !this.work.idle ? this.work.ov.keys() : []);
   }
@@ -2487,7 +2488,8 @@ export class Scene3D {
         if (hold != null) {
           hold = Math.min(ck.x - CLAW_GAP, Math.max(C.xL - 0.03, hold));
           const H = ov.pos.clone().addScaledVector(ax, hold).setY(ov.pos.y + C.top + 0.013);
-          hand(oi, H, 'claw', { dir: ax.clone().addScaledVector(UP, -0.35).normalize(), curl: 0.9 });
+          // (its fingers toward the blade – a little away, the forearm coming in at a slant from my left, not square across)
+          hand(oi, H, 'claw', { dir: ax.clone().addScaledVector(blade, 0.55).addScaledVector(UP, -0.35).normalize(), curl: 0.9 });
         }
         break;
       }
@@ -2559,7 +2561,7 @@ export class Scene3D {
         if (pOv && !pOv.hide) {
           const pst = pOv.st ? { ...pIt, ...pOv.st } : pIt, leaves = def && def.do === 'separate';
           const C = pOv.pos.clone(), h = this.foodHeight(pIt.kind, pst), rad = Math.min(0.07, Math.max(0.022, h * 0.62));
-          hand(oi, C.clone().addScaledVector(w.R, -(rad + 0.006)).addScaledVector(UP, h * 0.5), 'grab', { curl: 0.5, dir: w.R.clone().addScaledVector(UP, -0.35).normalize() });
+          hand(oi, C.clone().addScaledVector(w.R, -(rad + 0.006)).addScaledVector(UP, h * 0.5), 'side', { curl: 0.55 });
           const skin = PEEL_COL[pIt.kind] || (INGREDIENTS[pIt.kind] && INGREDIENTS[pIt.kind].art.c1) || '#c98a3c';
           if (p.down && g.start) {
             const pull = at(pt).sub(at(g.start)).setY(0);

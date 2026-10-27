@@ -94,10 +94,20 @@ const UPPER = 0.17, FORE = 0.155, SLIDE = 0.3; // arm bones; how far the (unseen
 const REACH = (UPPER + FORE) * 0.985 + SLIDE;  // further than that, the hand stops (and the thing comes to it)
 const LEAN = 0.16; // how far you lean in toward something out of reach
 export const APART = 0.9; // how far apart my arms are (1: as they were first made – a little wide)
-export const SHOULDER = new THREE.Vector3(0.12 * APART, -0.24, 0.05); // (the right one, from my eyes)
-const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // the right elbow points down, out and back
-const WRIST = 0.75; // how far a hand bends from its forearm (rad) before the forearm follows it round
-const WRIST_REST = 1.2; // (resting flat on a worktop, the arm coming down to it: further back)
+// (the right one, from my eyes: high enough that a forearm comes down onto the worktop – the elbow hanging at my
+// side, not out level with the work)
+export const SHOULDER = new THREE.Vector3(0.12 * APART, -0.18, 0.05);
+const POLE = new THREE.Vector3(0.55, -0.8, 0.25).normalize(); // (a hold turned toward where the elbow hangs: down, out, back)
+// How a person holds their arm (for the elbow's choice, and how far a wrist will bend before the hand gives):
+// - the elbow hangs down by the side, a little out and back – not lifted out sideways ("chicken wing") nor up
+//   toward the shoulder (RULA, McAtamney & Corlett 1993: an abducted or raised upper arm scores worse)
+// - the wrist: comfortable within about ±15–20°; daily tasks need at most 54° flexion, 60° extension, 17° radial
+//   and 40° ulnar deviation (Ryu et al. 1991) – past about 70° / 60° / 20° / 30° it can't go
+// - the forearm turns about 80–90° either way from thumb-up; comfortable in the middle of that
+const WRIST_EASY = { flex: 0.35, ext: 0.44, rad: 0.17, uln: 0.26 };  // (rad)
+const WRIST_MOST = { flex: 1.2, ext: 1.0, rad: 0.35, uln: 0.52 };
+const TWIST_EASY = 1.0, TWIST_MOST = 1.6;
+const SWIVEL_EASY = 0.6; // (how far the elbow is swung round from hanging down before it's an effort)
 // a reach: out to the thing and back – taking, the hand closes on it; putting
 // down, it comes in from a little above, lowers it, rests a moment and lets go
 export const BRISK = 1.5; // how quick my movements are (1: as they were first made – a little slow)
@@ -113,6 +123,9 @@ export const PALM = v(-0.026, 0, -0.058); // the middle of the palm's face
 const ON_PALM = v(-0.034, 0, -0.06);     // where something sits on it
 const UNDER_PALM = v(-0.03, 0.004, -0.06); // (lying flat: where the palm meets the worktop)
 export const IN_FIST = v(0, 0.87, -0.5); // a handle through the fist (a hammer grip: tilted toward the fingers)
+// (a chef's grip: the handle diagonal across the palm, from its heel to the index's knuckle – the blade going on
+// forward from the forearm's line, not across it)
+const KNIFE_IN = v(-0.1, 0.3, -0.95).normalize();
 const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
 const FINGERS = [[0.029, 0.044, 0.026, 0.02], [0.01, 0.048, 0.028, 0.022], [-0.009, 0.045, 0.026, 0.02], [-0.028, 0.036, 0.02, 0.016]];
@@ -124,7 +137,7 @@ const THUMB = { base: v(-0.006, 0.036, -0.012), open: [v(-0.02, 0.058, -0.05), v
 // way of pref; how far the fingers close. The left hand is the mirror image.
 // (toBody: turned round what it holds – dir – so the forearm runs back toward the shoulder, the wrist
 // hardly bent)
-const HOLDS = {
+export const HOLDS = {
   handle: { at: v(0.12, -0.16, -0.25), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1, toBody: true },
   palm: { at: v(0.1, -0.13, -0.26), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
   // a food container on the palm, carried out in front at the waist
@@ -135,9 +148,9 @@ const HOLDS = {
   tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
   // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
   // the handle, the back of the hand to the outside and a little up, the palm in – back: c → that)
-  knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
+  knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: KNIFE_IN, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
   // (the same, turned palm down – the knife on its side, its edge away: crushing)
-  knifeFlat: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-1, -0.1, -0.4), c: v(1, 0, 0), pref: v(0, 1, 0), curl: 1, top: true },
+  knifeFlat: { at: v(0.1, -0.1, -0.4), grip: FIST, a: KNIFE_IN, b: v(-1, -0.1, -0.4), c: v(1, 0, 0), pref: v(0, 1, 0), curl: 1, top: true },
   // (a pinch: between the thumb's and the index's tips – a basil leaf, a pinch of salt, a garlic clove)
   pinch: { at: v(0.1, -0.1, -0.4), grip: PINCH, a: v(0, 0, -1), b: v(0, -0.8, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.6 },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
@@ -190,6 +203,7 @@ export class FpArms {
     this.lookKey = key;
     for (const h of this.hands) if (h.limb) this.group.remove(h.limb.root);
     const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 }), cuff = mat('#f6f2ea', { rough: 0.8 });
+    const cuffIn = cuff.clone(); cuffIn.side = THREE.DoubleSide; // (open: its inside seen round the wrist)
     const sleeve = fading(shirt);
     // (the rigged hand's skin: a soft warm sheen at its edges, as skin has)
     const skinRig = new THREE.MeshPhysicalMaterial({ color: look.skin, roughness: 0.55, sheen: 0.6, sheenColor: new THREE.Color('#ff9a8a'), sheenRoughness: 0.5 });
@@ -199,7 +213,7 @@ export class FpArms {
       const root = new THREE.Group();
       const upper = new THREE.Mesh(tube, sleeve), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
       upper.userData.noAO = true; // (see-through toward the shoulder: kept out of the ambient occlusion)
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 12), cuff);
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 18, 1, true), cuffIn);
       const hand = new THREE.Group();
       hand.scale.set(h.s * HS, HS, HS);
       const palm = new THREE.Mesh(ball, skin);
@@ -226,7 +240,7 @@ export class FpArms {
       hand.add(mitt);
       // the rigged hand, when it's loaded (the jointed one stays, hidden – the way back if it isn't)
       const rig = makeRig(skinRig);
-      if (rig) { hand.add(rig.root); for (const m of [palm, ...bones.flat(), ...thumb]) m.visible = false; }
+      if (rig) { hand.add(rig.root); for (const m of [palm, ...bones.flat(), ...thumb, wrist]) m.visible = false; }
       root.add(upper, fore, elbow, band, hand, wrist);
       root.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; } });
       this.group.add(root);
@@ -243,7 +257,7 @@ export class FpArms {
       const L = h.limb;
       if (!L) continue;
       L.mitt.visible = on;
-      L.wrist.visible = !on;
+      L.wrist.visible = !on && !L.rig;
       if (L.rig) L.rig.root.visible = !on;
       else for (const m of [L.palm, ...L.bones.flat(), ...L.thumb]) m.visible = !on;
     }
@@ -316,6 +330,9 @@ export class FpArms {
   // (hideAway: a camera that isn't my eyes – at work – would see a hand hanging at my side: once it's got there, it's not drawn)
   update(dt, holds, { visible = true, walk = 0, t = 0, hideAway = false } = {}) {
     this.group.visible = visible;
+    // (the world's up, my back and my right in my eyes' space – which way an elbow hangs)
+    const up = this.upLocal(), back = v(0, 0, 1).addScaledVector(up, -up.z);
+    this.frame = { up, back: back.lengthSq() > 1e-6 ? back.normalize() : v(0, 0, 1), out: v(1, 0, 0).addScaledVector(up, -up.x).normalize() };
     const k = 1 - Math.exp(-dt * 12 * BRISK);
     for (let i = 0; i < 2; i++) {
       const h = this.hands[i];
@@ -430,34 +447,80 @@ export class FpArms {
     }
     d = Math.max(d, Math.abs(UPPER - FORE) + 0.02);
     const u = w.clone().sub(sh).normalize();
-    const pole = mirrorV(POLE, s);
-    pole.sub(u.clone().multiplyScalar(pole.dot(u))).normalize();
     const cosA = Math.max(-1, Math.min(1, (UPPER * UPPER + d * d - FORE * FORE) / (2 * UPPER * d)));
-    let e = sh.clone().add(u.clone().multiplyScalar(UPPER * cosA)).add(pole.multiplyScalar(UPPER * Math.sqrt(1 - cosA * cosA)));
-    // the wrist bends only so far: past that the forearm turns with the hand
-    const back = Z.clone().applyQuaternion(h.q);
+    // The elbow is somewhere on a circle round the line from the shoulder to the wrist: where a person would
+    // have it – hanging down, a little out and back – unless swinging it round spares the wrist a hard bend or
+    // the forearm a hard twist (see WRIST_EASY …); never up toward the shoulder's height.
+    const F = this.frame || { up: v(0, 1, 0), back: v(0, 0, 1), out: v(1, 0, 0) };
+    const C0 = sh.clone().addScaledVector(u, UPPER * cosA), rr = UPPER * Math.sqrt(1 - cosA * cosA);
+    const hang = F.up.clone().multiplyScalar(-0.85).addScaledVector(F.out, 0.3 * s).addScaledVector(F.back, 0.3);
+    const b1 = hang.clone().addScaledVector(u, -hang.dot(u));
+    if (b1.lengthSq() < 1e-6) b1.copy(F.out).multiplyScalar(s);
+    b1.normalize();
+    const b2 = new THREE.Vector3().crossVectors(u, b1);
+    const elbowAt = (a) => C0.clone().addScaledVector(b1, rr * Math.cos(a)).addScaledVector(b2, rr * Math.sin(a));
+    const axes = (q) => ({ z: Z.clone().applyQuaternion(q), palm: v(-s, 0, 0).applyQuaternion(q), thumb: v(0, 1, 0).applyQuaternion(q) });
+    // (the wrist's bend for a forearm f – flexion toward the palm, deviation toward the thumb – and the forearm's twist)
+    const bendOf = (A, f) => { const fz = f.dot(A.z); return { flex: Math.atan2(f.dot(A.palm), fz), dev: Math.atan2(f.dot(A.thumb), fz) }; };
+    const twistOf = (A, f, e) => {
+      const n = sh.clone().sub(e), t = A.thumb.clone();
+      n.addScaledVector(f, -n.dot(f)); t.addScaledVector(f, -t.dot(f));
+      if (n.lengthSq() < 1e-8 || t.lengthSq() < 1e-8) return 0;
+      return Math.atan2(new THREE.Vector3().crossVectors(n, t).dot(f), n.dot(t));
+    };
+    const over = (x, most) => (x > most ? (x - most) * (x - most) * 40 : 0);
+    let A = axes(h.q);
+    const cost = (a) => {
+      const e = elbowAt(a), f = e.clone().sub(w).normalize(), B = bendOf(A, f), tw = twistOf(A, f, e);
+      const fl = B.flex >= 0 ? B.flex / WRIST_EASY.flex : -B.flex / WRIST_EASY.ext, dv = B.dev >= 0 ? B.dev / WRIST_EASY.rad : -B.dev / WRIST_EASY.uln;
+      const lift = e.clone().sub(sh).dot(F.up) + 0.04; // (the elbow up toward the shoulder's height)
+      const parts = [fl * fl + dv * dv + over(B.flex, WRIST_MOST.flex) + over(-B.flex, WRIST_MOST.ext) + over(B.dev, WRIST_MOST.rad) + over(-B.dev, WRIST_MOST.uln),
+        0.6 * (tw / TWIST_EASY) ** 2 + over(Math.abs(tw), TWIST_MOST), (a / SWIVEL_EASY) ** 2 + (lift > 0 ? (lift / 0.03) ** 2 * 4 : 0),
+        h.swivel != null ? 0.3 * ((a - h.swivel) / 0.5) ** 2 : 0];
+      if (this.debug) (this.debug[s] ||= []).push([+a.toFixed(2), ...parts.map((x) => +x.toFixed(2)), +B.flex.toFixed(2), +B.dev.toFixed(2), +tw.toFixed(2)]);
+      return parts[0] + parts[1] + parts[2] + parts[3];
+    };
+    let best = 0, bc = Infinity;
+    for (let a = -1.75; a <= 1.75; a += 0.175) { const c = cost(a); if (c < bc) { bc = c; best = a; } }
+    for (let a = best - 0.15; a <= best + 0.15; a += 0.05) { const c = cost(a); if (c < bc) { bc = c; best = a; } }
+    h.swivel = h.swivel == null ? best : h.swivel + (best - h.swivel) * 0.35;
+    const e = elbowAt(h.swivel);
     let f = e.clone().sub(w).normalize();
-    const ang = f.angleTo(back);
-    const most = h.hold === 'rest' ? WRIST_REST : WRIST;
-    if (ang > most) {
-      const q = new THREE.Quaternion().setFromUnitVectors(back, f);
-      f = back.clone().applyQuaternion(new THREE.Quaternion().slerp(q, most / ang));
-      e = w.clone().add(f.clone().multiplyScalar(FORE));
+    // (still bent past what a wrist can do: the hand gives – turned toward the forearm, round what it's holding)
+    const B = bendOf(A, f);
+    const cf = Math.max(-WRIST_MOST.ext, Math.min(WRIST_MOST.flex, B.flex)), cd = Math.max(-WRIST_MOST.uln, Math.min(WRIST_MOST.rad, B.dev));
+    if (cf !== B.flex || cd !== B.dev) {
+      const want = A.z.clone().addScaledVector(A.palm, Math.tan(cf)).addScaledVector(A.thumb, Math.tan(cd)).normalize();
+      const R = new THREE.Quaternion().setFromUnitVectors(want, f);
+      const H = HOLDS[h.hold] || HOLDS.palm, g = v(s * H.grip.x * HS, H.grip.y * HS, H.grip.z * HS).applyQuaternion(h.q).add(w);
+      w.copy(g).sub(g.clone().sub(w).applyQuaternion(R));
+      h.q.premultiply(R);
+      A = axes(h.q);
+      f = e.clone().sub(w).normalize();
     }
     h.fore = w.clone().sub(e);
+    if (this.debug) { const B2 = bendOf(A, f); h.bend = `flex ${Math.round(B2.flex * 57)} dev ${Math.round(B2.dev * 57)} tw ${Math.round(twistOf(A, f, e) * 57)} elbow ${Math.round(180 - sh.clone().sub(e).angleTo(w.clone().sub(e)) * 57)}`; }
     const up = sh.clone().sub(e).normalize();
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
-    // (a shirt sleeve over a forearm, its cuff close round the wrist – slimmer with the rigged hand, which is life size)
-    const k = L.rig ? 0.82 : 1;
-    tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024 * k);
-    tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021 * k);
-    L.elbow.position.copy(e);
-    L.elbow.scale.setScalar(0.0232 * k); // (round over both sleeves' ends)
-    tube(L.band, w.clone().add(f.clone().multiplyScalar(0.022)), w.clone().add(f.clone().multiplyScalar(0.008)), 0.019 * (L.rig ? 0.78 : 1));
+    // (a shirt sleeve over the forearm, its cuff loose round the wrist, open: the rigged hand – life size – comes out
+    // of it at the wrist, whichever way it's bent)
+    if (L.rig) {
+      tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.0235);
+      tube(L.fore, e, w.clone().addScaledVector(f, 0.016), 0.021);
+      L.elbow.position.copy(e);
+      L.elbow.scale.setScalar(0.0226); // (round over both sleeves' ends)
+      tube(L.band, w.clone().addScaledVector(f, 0.02), w.clone().addScaledVector(f, -0.003), 0.0188);
+    } else {
+      tube(L.upper, e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0))), e, 0.024);
+      tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021);
+      L.elbow.position.copy(e);
+      L.elbow.scale.setScalar(0.0232);
+      tube(L.band, w.clone().add(f.clone().multiplyScalar(0.022)), w.clone().add(f.clone().multiplyScalar(0.008)), 0.019);
+    }
     L.hand.position.copy(w);
     L.hand.quaternion.copy(h.q);
-    // (the wrist halfway between the hand's line and the forearm's)
-    const wd = back.clone().add(f).normalize();
+    // (the old jointed hand's wrist: halfway between the hand's line and the forearm's)
+    const back = Z.clone().applyQuaternion(h.q), wd = back.clone().add(f).normalize();
     L.wrist.position.copy(w).addScaledVector(wd, 0.02 * HS);
     L.wrist.quaternion.setFromUnitVectors(v(0, 1, 0), wd);
     // the fingers close as far as curl says
