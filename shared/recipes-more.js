@@ -794,7 +794,7 @@ export const MORE_RECIPES = [
       { id: 'washT', do: 'wash', item: 'tomato', n: 4 },
       { id: 'diceT', do: 'dice', item: 'tomato', n: 4, after: ['washT'] },
       { id: 'washC', do: 'wash', item: 'cucumber', n: 3 },
-      { id: 'peelC', do: 'peel', item: 'cucumber', n: 4, after: ['washC'], title: 'Peel the cucumber in stripes' },
+      { id: 'peelC', do: 'peel', item: 'cucumber', n: 4, stripes: true, after: ['washC'], title: 'Peel the cucumber in stripes' },
       { id: 'diceC', do: 'dice', item: 'cucumber', n: 4, after: ['peelC'] },
       { id: 'washP', do: 'wash', item: 'greenPepper', n: 3 },
       { id: 'diceP', do: 'dice', item: 'greenPepper', n: 4, after: ['washP'] },

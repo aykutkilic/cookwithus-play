@@ -79,7 +79,7 @@ function rbox(w, h, d, r) {
   return geo;
 }
 // a tube along a centre line with a radius at each point (long vegetables, sausages, rolls…)
-function tubeGeo(pts, radii, flat = 1, seg = 12) {
+function tubeGeo(pts, radii, flat = 1, seg = 12, a0 = 0, a1 = TAU) { // (a0 … a1: only that much of the way round)
   const n = pts.length;
   const pos = [], idx = [];
   for (let i = 0; i < n; i++) {
@@ -88,7 +88,7 @@ function tubeGeo(pts, radii, flat = 1, seg = 12) {
     const nrm = Math.abs(t.y) > 0.9 ? v(1, 0, 0) : v(0, 1, 0);
     const b1 = new THREE.Vector3().crossVectors(t, nrm).normalize(), b2 = new THREE.Vector3().crossVectors(b1, t).normalize();
     for (let j = 0; j <= seg; j++) {
-      const a = (j / seg) * TAU;
+      const a = a0 + (j / seg) * (a1 - a0);
       const q = p.clone().addScaledVector(b1, Math.cos(a) * radii[i] * flat).addScaledVector(b2, Math.sin(a) * radii[i]);
       pos.push(q.x, q.y, q.z);
     }
@@ -109,7 +109,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -420,18 +420,28 @@ function whole(g, a, P, st, seed, wet) {
       }
       const T = tubeOf(a);
       const bunch = a.bunch || 1;
+      // (being peeled – or peeled in stripes: the skin, with a strip of the flesh showing for each pull of the
+      // peeler, from the top round – side by side, or with a strip of skin left between)
+      const pf = clamp(num(st.peeled, 0), 0, 1), striped = !!st.peelStripes, strips = pf > 0 && (pf < 1 || striped) ? Math.round(pf * (striped ? 4 : 8)) : 0;
       for (let b = 0; b < bunch; b++) {
         const dz = bunch > 1 ? (b - (bunch - 1) / 2) * T.T * 2.1 * K : 0;
         const pts = T.x.map((x, i) => v(x * K, -T.y[i] * K, dz));
         const rad = T.r.map((q) => q * K);
-        const m = fm(skin, { rough: a.stripes ? rough * 0.9 : rough });
+        const m = fm(strips || striped ? P.c1 : skin, { rough: a.stripes ? rough * 0.9 : rough });
         const tm = new THREE.Mesh(tubeGeo(pts, rad, 0.95), m);
         tm.castShadow = true;
         g.add(tm);
+        if (strips) {
+          const fl = fm(mixHex(P.c2, P.c1, 0.15), { rough }), sw = TAU / 8, rr = rad.map((q) => q * 1.012);
+          for (let i = 0; i < strips; i++) {
+            const c = Math.PI / 2 + (striped ? 2 * i : i % 2 ? (i + 1) / 2 : -i / 2) * sw; // (side by side: either side of the first in turn)
+            g.add(new THREE.Mesh(tubeGeo(pts.slice(1, -1), rr.slice(1, -1), 0.95, 4, c - sw * (striped ? 0.42 : 0.52), c + sw * (striped ? 0.42 : 0.52)), fl));
+          }
+        }
         part(g, GEO.sphere, m, pts[0].x, pts[0].y, dz, rad[0], rad[0], rad[0] * 0.95);
         part(g, GEO.sphere, m, pts[T.N].x, pts[T.N].y, dz, rad[T.N], rad[T.N], rad[T.N] * 0.95);
         // the stem / top at the thick end
-        if (!st.peeled && a.c3 && b === 0) {
+        if ((pf < 1 || striped) && a.c3 && b === 0) {
           const end = (a.taper || 0) >= 0 ? 0 : T.N;
           const dir = end === 0 ? -1 : 1;
           const sm = fm(a.c3);
@@ -500,17 +510,24 @@ function whole(g, a, P, st, seed, wet) {
       break;
     }
     case 'pile': {
+      // (crushed – crush 0 … 1: pressed flatter and wider, the pods split open, their dark seeds spilling)
+      const cr = clamp(num(st.crush, 0), 0, 1);
       const S = sizeArt(a);
-      const w = S.w * K * 0.5, h = S.h * K * 0.8;
+      const w = S.w * K * 0.5 * (1 + 0.3 * cr), h = S.h * K * 0.8 * (1 - 0.55 * cr);
       part(g, GEO.hemi, fm(P.c2, { rough: 0.9 }), 0, 0, 0, w, h, w * 0.8);
       const r2 = rng(seed);
       const gs = a.grain === 'bean' || a.grain === 'pea' ? 0.0055 : a.grain === 'rice' ? 0.0035 : 0.0042;
-      const cols = [fm(P.c1, { rough: 0.7 }), fm(P.c3, { rough: 0.7 })];
+      const cols = [fm(P.c1, { rough: 0.7 }), fm(P.c3, { rough: 0.7 })], seedM = fm('#2e261e', { rough: 0.6 });
       for (let i = 0; i < 46; i++) {
         const an = r2() * TAU, d = Math.sqrt(r2());
         const x = Math.cos(an) * d * w, z = Math.sin(an) * d * w * 0.8;
         const y = h * Math.sqrt(Math.max(0, 1 - d * d)) + gs * 0.3;
-        part(g, GEO.sphereLo, cols[i % 5 ? 0 : 1], x, y, z, a.grain === 'rice' ? gs * 1.8 : gs, gs * 0.75, gs, 0, r2() * TAU, 0);
+        const rot = r2() * TAU;
+        if (cr > 0 && (i * 0.61803) % 1 < cr) {
+          // split: the husk pressed flat, a few seeds beside it
+          part(g, GEO.sphereLo, cols[i % 5 ? 0 : 1], x, y * 0.8, z, gs * 1.25, gs * 0.3, gs * 0.9, 0, rot, 0);
+          for (let j = 0; j < 2; j++) part(g, GEO.sphereLo, seedM, x + Math.cos(rot + j * 2.4) * gs * 1.1, y * 0.8 + gs * 0.25, z + Math.sin(rot + j * 2.4) * gs * 1.1, gs * 0.45, gs * 0.35, gs * 0.45, 0, 0, 0);
+        } else part(g, GEO.sphereLo, cols[i % 5 ? 0 : 1], x, y, z, a.grain === 'rice' ? gs * 1.8 : gs, gs * 0.75, gs, 0, rot, 0);
       }
       break;
     }
@@ -769,6 +786,8 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   const n = num(st.n, 0), k = num(st.k, n);
   const done = !(n > 0 && k < n);
   if (!['round', 'long', 'bulb', 'egg', 'mushroom', 'head', 'leaf', 'herb', 'block', 'dough'].includes(a.type)) {
+    // (a heap of pods, seeds … crushed stays a heap: pressed flatter, the pods split – as far as it's got)
+    if (a.type === 'pile' && cut === 'crushed') return whole(g, a, P, { ...st, crush: done ? 1 : clamp(k / n, 0, 1) }, seed, wet);
     if (a.type === 'pile' || a.type === 'bundle') return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
     return whole(g, a, P, st, seed, wet);
   }

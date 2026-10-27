@@ -63,6 +63,8 @@ const HOLDS = {
   // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
   // the handle, the back of the hand to the outside and a little up, the palm in – back: c → that)
   knife: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-0.45, -0.12, -1), c: v(1, 0, 0), pref: v(1, 0.35, 0), curl: 1, back: true },
+  // (the same, turned palm down – the knife on its side, its edge away: crushing)
+  knifeFlat: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(-1, -0.1, -0.4), c: v(1, 0, 0), pref: v(0, 1, 0), curl: 1, top: true },
   hand: { at: v(0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0, -0.45, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.25 },
   claw: { at: v(-0.1, -0.1, -0.4), grip: PALM, a: v(0, 0, -1), b: v(0.2, -0.6, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.55 },
   // resting on the worktop near its edge: the palm flat on it, the fingers straight on from the forearm
@@ -153,7 +155,7 @@ export class FpArms {
       const up = this.upLocal();
       if (s < 0) up.x = -up.x; // (in the right hand's space)
       const body = H.toBody && sh.clone().sub(grip).normalize().multiplyScalar(0.6).addScaledVector(POLE, 0.4); // (toward where the elbow hangs)
-      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.flat ? up.negate() : body || H.pref);
+      base = aim(H.a, dir, H.c, H.back ? new THREE.Vector3().crossVectors(dir, up).normalize().addScaledVector(up, 0.35) : H.flat ? up.negate() : H.top ? up : body || H.pref);
     }
     // (no further than an arm reaches)
     const toG = grip.clone().sub(sh), gl = H.grip.clone().multiplyScalar(HS).length();

@@ -214,8 +214,10 @@ export const ACTIONS = {
   peel: {
     cap: 'board', verb: 'Peel', tool: 'peeler', icon: '🥔',
     phases: (s) => onBoard(s, [
+      // (in stripes – an eggplant for imam bayıldı: a strip of skin left between each strip taken off)
       { g: 'peel', n: s.n || 6, tool: 'peeler', hint: 'Pull the peeler down along it',
-        prog: (D, st, k, v, ph) => { item(D, st).peeled = k / ph.n; }, eff: (S, st) => { item(S, st).peeled = 1; } },
+        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { peeled: k / ph.n }, s.stripes ? { peelStripes: 1 } : {}); },
+        eff: (S, st) => { Object.assign(item(S, st), { peeled: 1 }, s.stripes ? { peelStripes: 1 } : {}); } },
     ]),
   },
   skin: {

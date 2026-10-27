@@ -1010,6 +1010,9 @@ export class Scene3D {
         else if (A.inside) stand = null; // shut in the oven
         else if (A.basin && F.f.type === 'sink') stand = (A.spout || A.basin).clone().setY(A.basin.y + 0.02); // (right under the spout)
         else if (F.f.type === 'fridge') stand = A.shelf; // chilling (behind the door)
+        // (what a step here is working in – the tea glasses being stirred, the cups the foam goes into – stands on
+        // the board, under my hands)
+        else if (A.board && view.activeVessels && view.activeVessels.get(v.at.fx) === id) stand = A.board;
         else if (A.spots) {
           const n = spotUse.get(v.at.fx) || 0; spotUse.set(v.at.fx, n + 1); stand = A.spots[Math.min(n, A.spots.length - 1)];
           // (a bowl / plate on the board – unless something's being worked on there)
@@ -2097,6 +2100,23 @@ export class Scene3D {
         const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
         const C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty);
         if (!ov || !C) { toolHand(at(pt)); break; }
+        if (ph.flat) {
+          // Crushing (cardamom pods, a garlic clove): the knife on its side over the food, its edge away from
+          // me and the tip to the left, my hand on its handle palm down; the heel of the other hand flat on
+          // the blade right over the food, pressing it down – as high as the pointer over the board
+          const b = st.subjectBox(), lift = p.seen ? Math.max(0, Math.min(1, (b.y1 - 8 - p.y) / (b.y1 - 8 - (b.y0 - 18)))) : 1;
+          const xA = w.R.clone().negate().addScaledVector(into, 0.45).normalize();
+          const yA = new THREE.Vector3().crossVectors(UP, xA).normalize().multiplyScalar(wi ? 1 : -1); // (the spine toward me)
+          // (the blade a little toward me of the pods – they show past its edge)
+          const mid = ov.pos.clone().addScaledVector(yA, 0.022).setY(ov.pos.y + C.top * (1 - 0.5 * st.k / Math.max(1, phaseTarget(ph))) + 0.0015 + 0.03 * lift);
+          const E = mid.clone().addScaledVector(xA, 0.01).addScaledVector(yA, -KNIFE_EDGE * 0.55); // (the edge, where it'd cut)
+          const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, KNIFE_EDGE);
+          const fist = K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006).addScaledVector(UP, 0.006);
+          out.tool = { kind: 'knife', grip: fist, dir: xA, up: yA, hand: wi, off: K0.clone().sub(fist) };
+          hand(wi, fist, 'knifeFlat', { dir: xA });
+          hand(oi, mid.clone().addScaledVector(UP, 0.004).addScaledVector(yA, 0.012), 'rest', { curl: 0.12 });
+          break;
+        }
         ov.yaw = out.yaw + CUT_TURN;
         const ax = new THREE.Vector3(Math.cos(ov.yaw), 0, -Math.sin(ov.yaw)); // (its length, to the right)
         const blade = new THREE.Vector3().crossVectors(UP, ax).normalize(); // (across it, away from me)
@@ -2336,8 +2356,9 @@ export class Scene3D {
       fx.tool.position.copy(this.fpArms.group.visible ? this.fpArms.fist(T.hand) : T.grip);
       if (T.off) fx.tool.position.add(T.off);
       if (T.kind === 'knife') {
-        // blade along x, its edge down
-        const xA = T.dir.clone().normalize(), zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
+        // blade along x, its edge down (or, given the spine's way – up – on its side)
+        const xA = T.dir.clone().normalize();
+        const zA = T.up ? new THREE.Vector3().crossVectors(xA, T.up).normalize() : new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
         fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
       } else fx.tool.quaternion.setFromUnitVectors(UP, T.dir); // (hanging from the fist, leaning toward me)
       }

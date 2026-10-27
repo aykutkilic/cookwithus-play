@@ -1978,7 +1978,7 @@ function buildView(now, dt) {
   // what glows: the equipment and the things for what's next
   const guide = guideNow();
   const busy = new Map();
-  const activeAt = new Map(), activeItems = new Map();
+  const activeAt = new Map(), activeItems = new Map(), activeVessels = new Map(); // (fx → the vessel a step there works in)
   const inHand = new Map(); // a board's own tools in someone's hand just now: fx → Set of 'knife', 'peeler', 'grater'
   if (C && x) {
     for (const [sid, st] of Object.entries(C.steps)) {
@@ -1987,6 +1987,7 @@ function buildView(now, dt) {
       if (m) busy.set(st.fx, m.color);
       const d = stepDef(x, sid);
       if (d && d.item) { activeAt.set(st.fx, d.item); activeItems.set(d.item, st.fx); }
+      if (d && (d.into || d.vessel)) activeVessels.set(st.fx, d.into || d.vessel);
       // (mine: as far as I've got with it)
       const phi = S.working && S.working.sid === sid && station.on && station.mode === 'step' ? station.ph : st.ph;
       const ph = d && ACTIONS[d.do] && phasesOf(d, bakeKind(fixtureById(K, st.fx)))[phi];
@@ -2035,7 +2036,7 @@ function buildView(now, dt) {
     const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
     station.geo = scene.workGeo(wf, subj);
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:

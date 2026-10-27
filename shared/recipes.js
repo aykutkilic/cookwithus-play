@@ -461,7 +461,7 @@ export const RECIPES = [
     dish: { base: 'plate', main: 'stuffedEggplant', color: '#c8321e', bits: ['parsley'], garnish: 'parsley' },
     steps: [
       { id: 'wash', do: 'wash', item: 'eggplant', n: 4 },
-      { id: 'peel', do: 'peel', item: 'eggplant', n: 4, after: ['wash'], title: 'Peel in stripes – like pyjamas' },
+      { id: 'peel', do: 'peel', item: 'eggplant', n: 4, stripes: true, after: ['wash'], title: 'Peel in stripes – like pyjamas' },
       { id: 'heat', do: 'heat', vessel: 'pan', level: 3 },
       { id: 'oil', do: 'pour', item: 'oliveOil', into: 'pan', adds: 0.2, band: [0.45, 0.75], after: ['heat'] },
       { id: 'add', do: 'add', item: 'eggplant', into: 'pan', after: ['oil', 'peel'] },
