@@ -46,7 +46,7 @@ function addContent(v, kind, cut) {
   if (!v) return;
   if (!v.contents.some((c) => c.kind === kind)) v.contents.push({ kind, cut: cut || null });
 }
-function useItem(S, id, into) {
+export function useItem(S, id, into) {
   const it = S.items[id];
   if (!it) return;
   const prev = it.in && S.vessels[it.in];

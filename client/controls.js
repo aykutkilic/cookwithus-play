@@ -10,8 +10,9 @@
 // kitchen directions.
 
 export class Controls {
-  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep }) {
+  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep, onPour }) {
     this.onUse = onUse;
+    this.onPour = onPour;   // first person: T held (down?) – tipping what I hold into the pot / pan I aim at
     this.onHand = onHand;   // first person: (hand – 1 right, 0 left, down?)
     this.onStep = onStep;   // a move key just pressed
     this.onMore = onMore;
@@ -37,11 +38,13 @@ export class Controls {
       if ((k === 'e' || k === ' ' || k === 'enter') && !e.repeat) { e.preventDefault(); this.first(); this.onUse(); }
       if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
       if (k === 'f2' && !e.repeat && this.onView) { e.preventDefault(); this.first(); this.onView(); }
+      if (this.fp && k === 't' && !e.repeat && this.onPour) { e.preventDefault(); this.first(); this.onPour(true); }
     });
     addEventListener('keyup', (e) => {
       const k = e.key.toLowerCase();
       this.keys.delete(k === ' ' ? 'space' : k);
       if (this.onHand && (k === 'e' || k === 'q')) this.onHand(k === 'e' ? 1 : 0, false);
+      if (k === 't' && this.onPour) this.onPour(false);
     });
     addEventListener('blur', () => { this.keys.clear(); if (this.onHand) { this.onHand(1, false); this.onHand(0, false); } });
 

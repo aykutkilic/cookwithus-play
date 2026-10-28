@@ -652,6 +652,22 @@ export class Scene3D {
     return { kind: 'bay', fx: bay.place, open: bay.o > 0.5, w: hw };
   }
 
+  // A pot, a pan, a bowl standing in reach under this point of the screen – to tip something into: {kind: 'vessel', id, w}
+  vesselPick(cx, cy, me) {
+    if (!this.firstPerson || !me || !this.D) return null;
+    let best = null;
+    for (const [id, v] of Object.entries(this.D.vessels)) {
+      const rec = this.vessels.get(id), F = v.at && this.k3.fx[v.at.fx];
+      if (!rec || !rec.group.visible || !F || v.held != null) continue;
+      const f = F.f;
+      if (Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) > 1.05) continue;
+      const w = rec.group.position.clone().setY(rec.group.position.y + rec.h * 0.5), s = this.screenOf(w);
+      const d = s.on ? Math.hypot(s.x - cx, s.y - cy) : Infinity;
+      if (d < Math.max(30, this.pxOf(w, rec.r * 1.3)) && (!best || d < best.d)) best = { d, pick: { kind: 'vessel', id, w } };
+    }
+    return best && best.pick;
+  }
+
   // A stove's knob under this point of the screen, in reach: {kind: 'knob', fx, slot, w, level} (its burner's level now)
   knobPick(cx, cy, me) {
     if (!this.firstPerson || !me || !this.k3) return null;

@@ -84,6 +84,31 @@ const station = new Station($('stCanvas'), {
 
 function send(obj) { if (S.net) S.net.send(obj); }
 const KNOB_NAMES = ['off', 'low', 'medium', 'high'];
+// T: tipping into the pot / pan I aim at – what one of my hands holds (the main one first: food, all of it, once T's
+// held a moment – eggs cracked in one at a time), or, empty-handed, the staple the recipe wants in it (salt, pepper
+// flakes …: a shake each half second – as much as I hold it for)
+function pourTarget() {
+  const C = S.M.cook;
+  if (!S.fp || S.working || !C) return null;
+  const c = scene.viewCenter(), v = scene.vesselPick(c.x, c.y, S.me);
+  if (!v) return null;
+  const into = thingName(C, S.x, `v:${v.id}`), sl = scene.fpSlots, M = S.mainHand;
+  const k = [sl[M], sl[1 - M]].find((q) => q && q[0] === 'i');
+  if (k) { const it = C.items[k.slice(2)]; return { what: k, into: v.id, w: v.w, hand: sl.indexOf(k), every: it && it.kind === 'egg' ? 0.6 : 0.7, label: `${thingEmoji(C, k)} ${it && it.kind === 'egg' ? 'Crack the eggs' : `Tip the ${thingName(C, S.x, k)}`} into the ${into}` }; }
+  const s = S.x && S.x.steps.find((q) => q.do === 'season' && q.into === v.id && C.steps[q.id].s !== 'done');
+  if (s) return { what: `staple:${s.itemKind}`, into: v.id, w: v.w, every: 0.5, label: `🧂 Season it – ${ingName(s.itemKind, 1).toLowerCase()} (a shake each moment)` };
+  return null;
+}
+function pourFrame(dt) {
+  const P = S.pour, t = P && pourTarget();
+  if (!t) return;
+  // (one press, one thing: the peppers tipped in, it doesn't go on into the salt)
+  if (P.what && P.what !== t.what) return;
+  P.what = t.what;
+  if (!P.reached && t.hand >= 0) { P.reached = true; scene.fpArms.reach(t.hand, { key: null, take: false, hold: 'palm', world: t.w.clone().setY(t.w.y + 0.08) }); }
+  P.t += dt;
+  if (P.t >= t.every) { P.t = 0; send({ t: 'pour', what: t.what, into: t.into, n: 1 }); sfx.play(t.what.startsWith('staple:') ? 'click' : 'pop', 0.45); }
+}
 // which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
 function boardKind(k) { const t = k && k[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
 // At work, the board's tool picked up off the board (its tap): really in my hand now – the hand that works with it,
@@ -819,7 +844,8 @@ function fpPointed(hand = S.mainHand) {
   const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
   if (k && onTop) {
     const sp = scene.surfacePick(c.x, c.y, S.me);
-    if (sp) return { ...sp, key: k };
+    // (food goes on a worktop, a table, in the sink – not on a bare burner)
+    if (sp && !(k[0] === 'i' && sp.slot != null)) return { ...sp, key: k };
   }
   return res;
 }
@@ -1364,6 +1390,7 @@ const controls = new Controls({
   // first person at work: walking off steps away from it
   onStep: () => { if (S.working && S.working.fp && $('modal').hidden) closeStation(); },
   onView: () => toggleView(),
+  onPour: (down) => { S.pour = down ? { t: 0 } : null; },
   onFirst: () => sfx.unlock(),
   onMenuMove: (d) => {
     const bs = [...$('menu').querySelectorAll('button:not([disabled])')];
@@ -2094,6 +2121,7 @@ function frame(now) {
     const t0 = performance.now();
     moveMe(dt);
     handsFrame(dt);
+    pourFrame(dt);
     S.target = S.working ? null : fpLookTarget() || findTarget();
     tickTimers(dt);
     sendPos(now);
@@ -2262,11 +2290,19 @@ function drawTags(view) {
   // (first person: what I'm pointing at, among the cupboards and drawers and what's in them)
   const pt = $('menu').hidden && $('modal').hidden ? fpPointed() : null;
   const ptLabel = pt && fpPointLabel(pt);
-  if (ptLabel) {
+  const pour = $('menu').hidden && $('modal').hidden && !touchUI ? pourTarget() : null;
+  const pourHtml = pour ? `<span class="more"><kbd>T</kbd> ${esc(pour.label)}</span>` : '';
+  if (!ptLabel && pour) {
+    const p = scene.screenOf(pour.w);
+    pr.hidden = false;
+    pr.style.transform = `translate(${p.x}px, ${p.y - 40}px)`;
+    if (pr.dataset.h !== pourHtml) { pr.innerHTML = pourHtml; pr.dataset.h = pourHtml; }
+    pr.classList.toggle('dim', false);
+  } else if (ptLabel) {
     const p = scene.screenOf(pt.w || scene.rayPoint(scene.viewCenter().x, scene.viewCenter().y, 0.6));
     pr.hidden = false;
     pr.style.transform = `translate(${p.x}px, ${p.y - 40}px)`;
-    const html = `${touchUI ? '' : '<kbd>E</kbd> '}${esc(ptLabel)}`;
+    const html = `${touchUI ? '' : '<kbd>E</kbd> '}${esc(ptLabel)}${pourHtml}`;
     if (pr.dataset.h !== html) { pr.innerHTML = html; pr.dataset.h = html; }
     pr.classList.toggle('dim', false);
     controls.setUseLabel(ptLabel.split(' ')[0] === 'Open' || ptLabel.split(' ')[0] === 'Shut' ? ptLabel.split(' ')[0] : '✋ Do it', true);

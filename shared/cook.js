@@ -19,8 +19,8 @@
 // work is. A step starts only when what it needs is there (or in your hands –
 // you put it down as you start). Nothing walks by itself.
 
-import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool } from './actions.js';
-import { simTick, simDone, simVerdict, IN_ORDER } from './sim.js';
+import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool, useItem } from './actions.js';
+import { simTick, simDone, simVerdict, IN_ORDER, simSeason } from './sim.js';
 import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
 import { stockKitchen, freeSpot, thingsIn } from './stock.js';
@@ -376,6 +376,28 @@ export function swingDoor(C, K, m, fx, v, done) {
 export function doorOpen(C, fx) { return !!(C.fx[fx] && C.fx[fx].door); }
 
 // A drawer or a cupboard door, opened or shut by a cook's free hand (place: '<fixture>/<bay>').
+// Tipped in by hand (T), any time: what cook m holds – food: all of it into the pot or pan (eggs: one cracked in each
+// time) – or a staple's shake (what: 'staple:salt' …, n shakes) into vessel into. ('' = done)
+export function pourInto(C, x, K, m, what, into, n = 1) {
+  const v = C.vessels[into];
+  if (!v || !v.at) return 'Tip it into a pot or a pan';
+  if (what.startsWith('staple:')) {
+    const kind = what.slice(7);
+    if (!INGREDIENTS[kind]) return 'Nothing like that';
+    simSeason(v, kind, Math.max(0, Math.min(3, Number(n) || 1)));
+    return '';
+  }
+  if (what[0] !== 'i' || !heldBy(C, m).includes(what)) return 'You aren’t holding that';
+  const id = what.slice(2), it = C.items[id];
+  if (it.kind === 'egg' && (it.qty || 1) > 1) {
+    it.cracked = (it.cracked || 0) + 1;
+    if (!v.contents.some((c) => c.kind === 'egg')) v.contents.push({ kind: 'egg', cut: 'cracked' });
+    if (it.cracked < it.qty) return '';
+  }
+  useItem(C, id, into);
+  return '';
+}
+
 // A stove's knob turned by hand, any time: burner slot to level (0 off … 3 high) – the pan on it heats so, or (none on
 // it) the empty burner burns so. ('' = done)
 export function turnKnob(C, K, m, fx, slot, level) {
