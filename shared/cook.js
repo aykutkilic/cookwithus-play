@@ -638,7 +638,8 @@ export function canPut(C, x, K, m, fx) {
 
 // Put down everything in your hands here (or just `only`, one of them; into
 // the fridge / pantry at `spot` {r, x} if you put it somewhere particular).
-export function putDown(C, x, K, m, fx, only = null, spot = null) {
+// (lay: put down by hand just there on a worktop – {x, y, z}, the world point; slot: the burner it's put on)
+export function putDown(C, x, K, m, fx, only = null, spot = null, lay = null, slot = null) {
   const [fid] = splitPlace(fx);
   const f = fixtureById(K, fid);
   const B = bayOf(K, fx);
@@ -648,10 +649,14 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
   const why = putBlocked(C, x, K, held, f, fx);
   if (why) return why;
   const surface = f.caps.includes('board') || f.caps.includes('plate') || f.caps.includes('sink');
+  // (a point on this fixture's top – what's handed in from the client, kept only if it's plausibly there)
+  const at = lay && !B && held.length === 1 && [lay.x, lay.y, lay.z].every(Number.isFinite) && lay.x > f.x - 0.1 && lay.x < f.x + f.w + 0.1 && lay.z > f.y - 0.1 && lay.z < f.y + f.h + 0.1 && lay.y > 0.2 && lay.y < 1.4
+    ? { fx: fid, x: Math.round(lay.x * 1000) / 1000, y: Math.round(lay.y * 1000) / 1000, z: Math.round(lay.z * 1000) / 1000 } : null;
   for (const k of held) {
     const t = thingOf(C, k);
     t.held = null;
     delete t.spot;
+    delete t.lay;
     if (B) {
       // into a drawer, a cupboard …: in the spot it was put (or the nearest free one)
       t.spot = freeSpot(C, K, fx, B.bay === 'board' ? { r: 0, x: BOARD_X[TOOLS[t.kind].board] } : spot, k);
@@ -660,15 +665,19 @@ export function putDown(C, x, K, m, fx, only = null, spot = null) {
     }
     if (isStore(f) && spot) t.spot = spotOf(spot.r, spot.x);
     if (k[0] === 'u') {
-      // the board's own knife, peeler or grater: back in its place on the board if that's free
+      // put down just there by hand: there; else the board's own knife, peeler or grater back in its place on the
+      // board if that's free
       const bp = `${fid}/board`, bt = TOOLS[t.kind] && TOOLS[t.kind].board;
-      if (bt && bayOf(K, bp) && !thingsIn(C, bp).some(([, o]) => o.kind === t.kind)) { t.at = bp; t.spot = { r: 0, x: BOARD_X[bt] }; } else t.at = fx;
+      if (at) { t.at = fx; t.lay = at; } else if (bt && bayOf(K, bp) && !thingsIn(C, bp).some(([, o]) => o.kind === t.kind)) { t.at = bp; t.spot = { r: 0, x: BOARD_X[bt] }; } else t.at = fx;
       continue;
     }
-    if (k[0] === 'i') { t.at = fx; t.stored = isStore(f) ? 1 : 0; continue; }
+    if (k[0] === 'i') { t.at = fx; t.stored = isStore(f) ? 1 : 0; if (at && !isStore(f)) t.lay = at; continue; }
     if (isStore(f)) { t.at = null; t.home = fx; continue; }
     const onHob = !surface && f.caps.includes('hob');
-    t.at = { fx, slot: onHob ? freeSlot(C, x, f) : 0 };
+    // (on a stove: the burner it was put on, if that's free)
+    const want = onHob && Number.isInteger(slot) && slot >= 0 && slot < f.slots && !slotTaken(C, x, f.id, slot, null) ? slot : null;
+    t.at = { fx, slot: onHob ? want ?? freeSlot(C, x, f) : 0 };
+    if (at && !onHob) t.lay = at;
     // a dirty one put down at the dishwasher goes in it (if it may – and it isn't running)
     if (f.caps.includes('dishwasher') && dishwasherSafe(t.kind) && needsWash(C, x, k.slice(2)) && !dwRunning(C, fx)) t.inDw = 1;
     t.onHob = onHob ? 1 : 0;

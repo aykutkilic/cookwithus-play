@@ -230,6 +230,7 @@ input[type=text].bad { border-color: var(--tomato); background: #fff0ec; }
 .pick button.sw { width: 28px; height: 28px; padding: 0; border-radius: 50%; }
 .pick button.sw.on { outline: 3px solid var(--sun); outline-offset: 2px; background-color: inherit; }
 .lab { font-weight: 600; font-size: 13px; color: var(--muted); }
+.lab .hint { font-weight: 400; }
 .stars { font-size: 44px; letter-spacing: 4px; }
 .credits { list-style: none; padding: 0; margin: 6px 0; }
 .credits li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }

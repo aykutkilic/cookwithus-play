@@ -45,6 +45,7 @@ const RADIUS = 0.26; // how wide a cook is
 
 const S = {
   profile: sanitizeProfile(store.get('profile', null) || randomProfile()),
+  mainHand: store.get('mainHand', 1) === 0 ? 0 : 1, // the hand I do most with (E, the left button): 1 the right, 0 the left
   firstVisit: !store.get('profile', null),
   net: null, host: null, M: newMirror(), myId: -1,
   K: null, x: null,
@@ -67,6 +68,7 @@ const S = {
 store.set('profile', S.profile);
 
 const scene = new Scene3D($('world'));
+scene.mainHand = S.mainHand;
 const sfx = new Sfx();
 const station = new Station($('stCanvas'), {
   act: (m) => send(m),
@@ -604,13 +606,14 @@ function findTarget() {
   return best;
 }
 
-// E / Space / the Use button (first person: E the right hand, Q the left)
+// E / Space / the Use button (first person: E my main hand, Q the other)
 function useNow(hand = -1) {
   sfx.unlock();
   if (!$('menu').hidden) { const bs = [...$('menu').querySelectorAll('button:not([disabled])')]; const b = bs[S.menuSel] || bs[0]; if (b) b.click(); return; }
   if (S.working || !$('modal').hidden) return;
-  // (first person: what I'm pointing at – a drawer, a cupboard, a thing in one, a tool lying about)
-  const pt = fpPointed();
+  // (first person: what I'm pointing at – a drawer, a cupboard, a thing in one, a tool lying about, a worktop to
+  // put down on)
+  const pt = fpPointed(hand >= 0 ? hand : S.mainHand);
   if (pt) { fpPointAct(pt, hand); return; }
   const f = S.target;
   const pick = f && bestJob(f);
@@ -620,7 +623,7 @@ function useNow(hand = -1) {
 }
 function touchThere(f, hand) {
   const sl = scene.fpSlots;
-  const i = hand >= 0 && sl[hand] == null ? hand : sl[1] == null ? 1 : sl[0] == null ? 0 : -1;
+  const i = hand >= 0 && sl[hand] == null ? hand : sl[S.mainHand] == null ? S.mainHand : sl[1 - S.mainHand] == null ? 1 - S.mainHand : -1;
   const w = i >= 0 && scene.touchPoint(f && f.id);
   if (w) scene.fpArms.reach(i, { key: null, take: false, hold: 'hand', world: w });
 }
@@ -719,8 +722,8 @@ function zoomFrom(f) {
 // shelves to arrange them.
 function myHeld() { return S.M.cook ? heldBy(S.M.cook, S.myId) : []; }
 // a free hand (the one asked for – 1 right, 0 left – if it is free; -1: none)
-function freeHandSlot(want = -1) { const sl = scene.fpSlots; return want >= 0 && sl[want] == null ? want : sl[1] == null ? 1 : sl[0] == null ? 0 : -1; }
-// what's taken goes into the hand that took it (E the right, Q the left)
+function freeHandSlot(want = -1) { const sl = scene.fpSlots, M = S.mainHand; return want >= 0 && sl[want] == null ? want : sl[M] == null ? M : sl[1 - M] == null ? 1 - M : -1; }
+// what's taken goes into the hand that took it (E my main hand, Q the other)
 function wantHand(keys, hand) {
   if (hand < 0) return;
   [keys].flat().forEach((k, n) => scene.fpWant.set(k, n ? 1 - hand : hand));
@@ -781,9 +784,21 @@ function fpLookTarget() {
 }
 // First person: what's pointed at among the cupboards, drawers and the things kept in them or lying
 // about (scene3d.bayPick) – with what E would do there – or null.
-function fpPointed() {
+// (hand: whose – a hand holding something, aimed at a worktop, puts it down just there)
+function fpPointed(hand = S.mainHand) {
   if (!S.fp || S.working || !S.M.cook) return null;
   const c = scene.viewCenter();
+  const res = fpPointedAt(c);
+  const k = hand >= 0 ? scene.fpSlots[hand] : null;
+  // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
+  const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
+  if (k && onTop) {
+    const sp = scene.surfacePick(c.x, c.y, S.me);
+    if (sp) return { ...sp, key: k };
+  }
+  return res;
+}
+function fpPointedAt(c) {
   // (the oven gloves on: at where they lie beside the oven – to hang them back)
   if (glovesOn(S.M.cook, S.myId)) { const g = scene.glovesSpotAt(c.x, c.y); if (g) return { kind: 'hangGloves', fx: g.fx, w: g.w }; }
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }); // (past what's in my hands)
@@ -800,6 +815,7 @@ function placeName(id) { const B = S.K.bays && S.K.bays[id]; return B ? B.name :
 const isGloves = (key) => { const t = key && key[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[key.slice(2)]; return !!(t && TOOLS[t.kind] && TOOLS[t.kind].worn); };
 function fpPointLabel(pt) {
   const C = S.M.cook;
+  if (pt.kind === 'surface') return `${thingEmoji(C, pt.key)} Put the ${thingName(C, S.x, pt.key)} ${pt.sink ? 'in the sink' : pt.slot != null ? 'on this burner' : 'here'}`;
   if (pt.kind === 'hangGloves') return '🧤 Hang up the oven gloves';
   if (pt.kind === 'thing' && isGloves(pt.key)) return '🧤 Put on the oven gloves';
   if (pt.kind === 'bay') return `${pt.open ? 'Shut' : 'Open'} the ${placeName(pt.fx)}`;
@@ -808,8 +824,8 @@ function fpPointLabel(pt) {
 }
 // what goes in when I put something away (the hand asked for – 1 right, 0 left – if it holds something)
 function fpPutWhat(hand) {
-  const sl = scene.fpSlots, held = myHeld();
-  return (hand >= 0 && (sl[hand] || sl[1 - hand])) || sl[1] || sl[0] || held[0] || null;
+  const sl = scene.fpSlots, held = myHeld(), M = S.mainHand;
+  return (hand >= 0 && (sl[hand] || sl[1 - hand])) || sl[M] || sl[1 - M] || held[0] || null;
 }
 // do it: open / shut it (a free hand on its handle), put what I hold in it, take the thing
 function fpPointAct(pt, hand = -1) {
@@ -838,6 +854,12 @@ function fpPointAct(pt, hand = -1) {
     sfx.play('clunk', 0.4);
     return;
   }
+  if (pt.kind === 'surface') {
+    // (just there – on the board, a burner, a spot on the worktop; in the sink, into it)
+    send({ t: 'put', what: pt.key, fx: pt.fx, ...(pt.sink ? {} : { lay: { x: pt.w.x, y: pt.w.y, z: pt.w.z } }), ...(pt.slot != null ? { slot: pt.slot } : {}) });
+    sfx.play('clunk', 0.45);
+    return;
+  }
   if (pt.kind === 'thing') { wantHand(pt.key, hand); send({ t: 'take', what: pt.key, fx: pt.fx }); sfx.play('grab', 0.5); }
 }
 // E at a store in first person: what's in the middle of the view (done
@@ -850,8 +872,7 @@ function fpStoreLook(f, hand = -1) {
   if (pick && pick.kind === 'thing') return { label: `${thingEmoji(C, pick.key)} Take the ${thingName(C, S.x, pick.key)}`, run: () => { wantHand(pick.key, hand); send({ t: 'take', what: pick.key, fx: pick.fx }); } };
   const held = myHeld();
   if (pick && pick.kind === 'shelf' && held.length) {
-    const sl = scene.fpSlots;
-    const k = (hand >= 0 && (sl[hand] || sl[1 - hand])) || sl[1] || sl[0] || held[0];
+    const k = fpPutWhat(hand) || held[0];
     return { label: `${thingEmoji(C, k)} Put the ${thingName(C, S.x, k)} here`, run: () => { send({ t: 'put', what: k, fx: pick.fx, r: pick.r, x: pick.x }); sfx.play('clunk', 0.5); } };
   }
   return {
@@ -1158,8 +1179,8 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene.zoomBy(e.del
 
 // First person with a mouse, as in a shooter: click the kitchen and the mouse
 // is captured – it looks round, and the dot in the middle is what you aim
-// at. E (or the left button) is your right hand, Q (or the right button) your
-// left: press one on a thing and that hand takes hold of it (the door's
+// at. E (or the left button) is your main hand – the right, unless you've said you're left-handed –, Q (or
+// the right button) the other: press one on a thing and that hand takes hold of it (the door's
 // handle, a thing on a shelf, the food on the board …) and while you hold
 // the key the mouse moves that hand instead of the view; let go and it lets
 // go. Esc frees the mouse.
@@ -1168,7 +1189,7 @@ const LOOK = 0.004; // (radians a pixel of mouse)
 const HAND_ID = ['kq', 'ke']; // (the left, the right hand: their pointer ids)
 const hands = [{ down: false, ox: 0, oy: 0, act: null }, { down: false, ox: 0, oy: 0, act: null }];
 let moving = -1; // the hand the mouse moves (-1: the view)
-let hover = 1;   // the hand last used (it hovers where I look)
+let hover = S.mainHand; // the hand last used (it hovers where I look)
 let lockFails = 0;
 function lockMouse() {
   if (!canvas.requestPointerLock) { lockFails = 2; return; }
@@ -1231,8 +1252,8 @@ function handDown(i) {
   // the fridge / the pantry: a hand takes hold of the door's handle, a thing on a shelf
   const c = scene.viewCenter();
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
-  const pt = fpPointed();
-  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn')) { hover = i; fpPointAct(pt, i); return; }
+  const pt = fpPointed(i);
+  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn' || pt.kind === 'surface')) { hover = i; fpPointAct(pt, i); return; }
   if (pick && (pick.kind === 'door' || pick.kind === 'thing') && !S.fpDrag) {
     fpGrab({ clientX: c.x, clientY: c.y, pointerId: HAND_ID[i] }, i);
     if (S.fpDrag) { Object.assign(h, { down: true, ox: 0, oy: 0, act: 'grab' }); moving = i; hover = i; return; }
@@ -1277,18 +1298,19 @@ function handsFrame(dt) {
 canvas.addEventListener('mousedown', (e) => {
   if (!locked()) return;
   e.preventDefault();
-  if (e.button === 0) handDown(1); else if (e.button === 2) handDown(0);
+  if (e.button === 0) handDown(S.mainHand); else if (e.button === 2) handDown(1 - S.mainHand);
 });
 canvas.addEventListener('mouseup', (e) => {
   if (!locked()) return;
-  if (e.button === 0) handUp(1); else if (e.button === 2) handUp(0);
+  if (e.button === 0) handUp(S.mainHand); else if (e.button === 2) handUp(1 - S.mainHand);
 });
 canvas.addEventListener('contextmenu', (e) => { if (S.fp) e.preventDefault(); });
 
 const controls = new Controls({
   onUse: () => useNow(),
   onMore: () => moreNow(),
-  onHand: (i, down) => (down ? handDown(i) : handUp(i)),
+  // (E my main hand, Q the other)
+  onHand: (i, down) => { const h = i ? S.mainHand : 1 - S.mainHand; return down ? handDown(h) : handUp(h); },
   // first person at work: walking off steps away from it
   onStep: () => { if (S.working && S.working.fp && $('modal').hidden) closeStation(); },
   onView: () => toggleView(),
@@ -1312,7 +1334,7 @@ function toggleView() {
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
   if (!touchUI) { if (S.fp) lockMouse(); else unlockMouse(); }
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E your right hand, Q your left (hold to hold on), Tab every option, Ctrl crouch, Space up on your toes, F full screen'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E or left click your main hand, Q or right click the other (hold to hold on), Tab every option, Ctrl crouch, Space up on your toes, F full screen'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
@@ -1717,6 +1739,7 @@ function setProfile(p) {
 
 function openProfile() {
   const draft = JSON.parse(JSON.stringify(S.profile));
+  let hand = S.mainHand; // (kept on this device: which of my hands E and the left button are)
   const sw = (key, cols) => `<div class="pick">${cols.map((c, i) => `<button class="sw ${draft.avatar[key] === i ? 'on' : ''}" data-k="${key}" data-v="${i}" style="background:${c}"></button>`).join('')}</div>`;
   const tx = (key, names) => `<div class="pick">${names.map((n, i) => `<button class="${draft.avatar[key] === i ? 'on' : ''}" data-k="${key}" data-v="${i}">${esc(n)}</button>`).join('')}</div>`;
   const render = () => {
@@ -1735,6 +1758,7 @@ function openProfile() {
           <div class="lab">Apron</div>${sw('apron', APRONS)}
           <div class="lab">Shirt</div>${sw('shirt', SHIRTS)}
           <div class="lab">Face</div>${tx('facial', FACIAL)}${tx('extra', EXTRAS)}
+          <div class="lab">Main hand <span class="hint">(E · left click)</span></div><div class="pick">${['Left', 'Right'].map((n, i) => `<button class="${hand === i ? 'on' : ''}" data-hand="${i}">${n}</button>`).join('')}</div>
         </div>
       </div>
       <div class="end"><button class="btn" data-close>Cancel</button><button class="btn sun" id="pSave">Save</button></div>`);
@@ -1748,12 +1772,14 @@ function openProfile() {
       $('pName').classList.toggle('bad', isProfane(draft.name));
     };
     $('modalCard').querySelectorAll('[data-k]').forEach((b) => { b.onclick = () => { draft.avatar[b.dataset.k] = Number(b.dataset.v); render(); }; });
+    $('modalCard').querySelectorAll('[data-hand]').forEach((b) => { b.onclick = () => { hand = Number(b.dataset.hand); render(); }; });
     $('pRand').onclick = () => { const r = randomProfile(); draft.avatar = r.avatar; render(); };
     $('pSave').onclick = () => {
       const n = cleanName(draft.name);
       if (!n) { $('pErr').textContent = 'Your cook needs a name!'; return; }
       if (isProfane(n)) { $('pErr').textContent = 'Let’s keep the kitchen friendly – pick another name 🙂'; return; }
       setProfile({ ...draft, name: n });
+      if (hand !== S.mainHand) { S.mainHand = scene.mainHand = hand; store.set('mainHand', hand); }
       closeModal();
       toast('Looking sharp, chef! 👩‍🍳');
     };

@@ -175,7 +175,8 @@ export class Room {
         const fx = String(msg.fx || '');
         const what = msg.what ? String(msg.what) : null;
         const spot = msg.r != null ? { r: msg.r, x: msg.x } : null;
-        const err = msg.t === 'take' ? takeThing(C, x, K, m.id, what || '', fx) : putDown(C, x, K, m.id, fx, what, spot);
+        const lay = msg.lay && typeof msg.lay === 'object' ? { x: Number(msg.lay.x), y: Number(msg.lay.y), z: Number(msg.lay.z) } : null;
+        const err = msg.t === 'take' ? takeThing(C, x, K, m.id, what || '', fx) : putDown(C, x, K, m.id, fx, what, spot, lay, Number.isInteger(msg.slot) ? msg.slot : null);
         client.sendText(JSON.stringify({ t: 'handled', what: msg.t, key: what, fx, err }));
         if (!err) this.flush(true);
         break;

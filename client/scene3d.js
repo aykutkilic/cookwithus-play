@@ -163,6 +163,7 @@ export class Scene3D {
     this.scene.add(this.eye);
     this.fpArms = new FpArms(this.eye);
     this.fpSlots = [null, null]; // what my left and right hands hold (first person)
+    this.mainHand = 1;           // the hand I do most with: 1 the right, 0 the left (main.js: the player's choice)
     this.fpWant = new Map();     // (a thing being taken → the hand taking it)
     this.fpHold = new Map();     // thing -> how it's held ('handle', 'palm', 'side')
     this.camTarget = new THREE.Vector3();
@@ -564,8 +565,7 @@ export class Scene3D {
   // own knife …), a tool or a spare thing lying on a worktop – to take: {kind: 'thing', key, fx: its
   // place}; a drawer's or a door's front – to open or shut: {kind: 'bay', fx: place, open, w: its
   // handle}; with something in my hands, the inside of an open one (or the crock) – to put it there:
-  // {kind: 'bayIn', fx: place, spot}. (The recipe's own food and pots on a worktop aren't here: E there
-  // does what's next with them.)
+  // {kind: 'bayIn', fx: place, spot}.
   bayPick(cx, cy, me, held = []) {
     const ray = this.rayAt(cx, cy);
     const reach = (f) => Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) < 1.05;
@@ -586,7 +586,7 @@ export class Scene3D {
       w.y += vr ? vr.h * 0.4 : k[0] === 'u' ? (TOOLS[(this.toolsNow[k.slice(2)] || {}).kind] || {}).upright ? 0.06 : e.lie === 'crock' ? 0.05 : 0.01 : 0.04;
       consider(k, e.place, w, vr ? vr.r * 1.5 : k[0] === 'u' ? 0.08 : 0.13);
     }
-    // lying on a worktop: the tools, and the spare food and pots and pans put down there
+    // lying on a worktop: the tools, and the food and pots and pans put down there
     for (const [id, rec] of this.tools) {
       const t = this.toolsNow[id];
       if (!rec.g.visible || !t || t.held != null || !t.at || t.at.includes('/') || !this.k3.fx[t.at] || !reach(this.k3.fx[t.at].f)) continue;
@@ -595,12 +595,12 @@ export class Scene3D {
     if (D) {
       for (const [id, v] of Object.entries(D.vessels)) {
         const rec = this.vessels.get(id);
-        if (!v.spare || !v.at || v.held != null || !rec || !rec.group.visible || !this.k3.fx[v.at.fx] || !reach(this.k3.fx[v.at.fx].f)) continue;
+        if (!v.at || v.held != null || !rec || !rec.group.visible || !this.k3.fx[v.at.fx] || this.k3.fx[v.at.fx].parts.leaf || !reach(this.k3.fx[v.at.fx].f)) continue;
         consider(`v:${id}`, v.at.fx, rec.group.position.clone().setY(rec.group.position.y + rec.h * 0.5), rec.r * 1.5);
       }
       for (const [id, it] of Object.entries(D.items)) {
         const f = this.foods.get(`item:${id}`);
-        if (!it.spare || !it.at || it.at.includes('/') || it.held != null || !f || !f.g.visible || !this.k3.fx[it.at] || this.k3.fx[it.at].anchors.shelfL || !reach(this.k3.fx[it.at].f)) continue;
+        if (!it.at || it.at.includes('/') || it.held != null || it.stored || !f || !f.g.visible || !this.k3.fx[it.at] || this.k3.fx[it.at].anchors.shelfL || !reach(this.k3.fx[it.at].f)) continue;
         consider(`i:${id}`, it.at, f.g.position.clone().setY(f.g.position.y + 0.04), 0.13);
       }
     }
@@ -650,6 +650,36 @@ export class Scene3D {
       return { kind: 'bayIn', fx: bay.place, spot: best ? { r: best.r, x: P.spec.slots > 1 ? best.i / (P.spec.slots - 1) : 0.5 } : null, w: best ? best.w : hw };
     }
     return { kind: 'bay', fx: bay.place, open: bay.o > 0.5, w: hw };
+  }
+
+  // Where my line of sight meets a worktop in reach – a counter's top or the board lying on it, a table, a
+  // stove (the burner nearest), the sink – to put down what I hold just there: {kind: 'surface', fx, w: the
+  // point, slot: the burner, sink}, or null.
+  surfacePick(cx, cy, me) {
+    if (!this.firstPerson || !me || !this.k3) return null;
+    const ray = this.rayAt(cx, cy), p = new THREE.Vector3();
+    let best = null;
+    for (const [fx, F] of Object.entries(this.k3.fx)) {
+      const A = F.anchors, f = F.f;
+      if (!A.top || F.parts.leaf || A.inside || A.mouth || !(A.spots || A.burners || A.basin || f.type === 'table')) continue;
+      if (Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) > 1.05) continue;
+      // (the board's top, where it lies – not stood up at the back; else the worktop's)
+      const B = F.parts.board, tops = [];
+      if (A.board && B && !(B.userData.posed > 0.5)) tops.push({ y: A.board.y, board: B });
+      tops.push({ y: A.top.y });
+      for (const t of tops) {
+        if (!ray.intersectPlane(new THREE.Plane(UP, -t.y), p)) continue;
+        if (p.x < f.x + 0.02 || p.x > f.x + f.w - 0.02 || p.z < f.y + 0.02 || p.z > f.y + f.h - 0.02) continue;
+        if (t.board) { const l = t.board.worldToLocal(p.clone()); if (Math.abs(l.x) > 0.25 || Math.abs(l.z) > 0.17) continue; }
+        const d = ray.origin.distanceTo(p);
+        if (best && d >= best.d) break;
+        let slot = null;
+        if (A.burners) { let bd = Infinity; A.burners.forEach((b, i) => { const e = Math.hypot(b.x - p.x, b.z - p.z); if (e < bd) { bd = e; slot = i; } }); }
+        best = { d, pick: { kind: 'surface', fx, w: p.clone(), slot, sink: !!A.basin } };
+        break;
+      }
+    }
+    return best && best.pick;
   }
 
   // the screen-space directions of the grid axes (for moving with keys / stick)
@@ -1092,6 +1122,11 @@ export class Scene3D {
         else if (kept.fp) q = this.tools.has(id) ? this.tools.get(id).g.quaternion.clone() : new THREE.Quaternion(); // (lying there still, till my hand closes on it)
         else if (kept.held) q = new THREE.Quaternion().setFromAxisAngle(UP, kept.yaw || 0);
         else q = this.lieQuat(kept.lie, kept.out, up, kept.lie === 'flat' && kept.place && kept.place.endsWith('/dr') ? 1 : kept.slot || 0);
+      } else if (t.at && this.k3.fx[t.at] && t.lay && t.lay.fx === t.at) {
+        // (put down just there by hand: lies there)
+        const F = this.k3.fx[t.at];
+        pos = this.glide(k, `l:${t.at}:${t.lay.x},${t.lay.z}`, new THREE.Vector3(t.lay.x, t.lay.y, t.lay.z));
+        q = this.lieQuat('flat', F.front, up, 0);
       } else if (t.at && this.k3.fx[t.at]) {
         const F = this.k3.fx[t.at], n = perFx.get(t.at) || 0;
         perFx.set(t.at, n + 1);
@@ -1186,6 +1221,8 @@ export class Scene3D {
         // (what a step here is working in – the tea glasses being stirred, the cups the foam goes into – stands on
         // the board, under my hands)
         else if (A.board && view.activeVessels && view.activeVessels.get(v.at.fx) === id) stand = A.board;
+        // (put down just there by hand: stands there)
+        else if (v.lay && v.lay.fx === v.at.fx && !A.burners && !A.basin) stand = new THREE.Vector3(v.lay.x, v.lay.y, v.lay.z);
         else if (A.spots) {
           const n = spotUse.get(v.at.fx) || 0; spotUse.set(v.at.fx, n + 1); stand = A.spots[Math.min(n, A.spots.length - 1)];
           // (a bowl / plate on the board – unless something's being worked on there)
@@ -1394,6 +1431,9 @@ export class Scene3D {
         const F = fxId && this.k3.fx[fxId];
         if (!F || F.anchors.shelfL) return null;
         if (bx && bx.fx === fxId) return { pos: bx.pos, fxId, active: false };
+        const active0 = view.activeAt && view.activeAt.get(fxId) === id;
+        // (put down just there by hand: lies there)
+        if (it.lay && it.lay.fx === fxId && !(active0 && F.anchors.board)) return { pos: new THREE.Vector3(it.lay.x, it.lay.y, it.lay.z), fxId, active: active0 };
         const n = perFx.get(fxId) || 0;
         perFx.set(fxId, n + 1);
         const A = F.anchors;
@@ -1710,7 +1750,8 @@ export class Scene3D {
       this.fpHold.set(k, h);
       const want = this.fpWant.get(k);
       this.fpWant.delete(k);
-      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = want != null && slots[want] == null ? want : slots[1] == null ? 1 : 0; slots[i] = k; came.push([i, k]); }
+      const M = this.mainHand;
+      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = want != null && slots[want] == null ? want : slots[M] == null ? M : 1 - M; slots[i] = k; came.push([i, k]); }
     }
     if (!on) { this.restLean = false; this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
     this.fpArms.setLook(lookOf(me.avatar));
@@ -2200,8 +2241,10 @@ export class Scene3D {
     // (the knife held at rest in my right hand meanwhile: the left does it)
     // (the food out of its container onto the board: the left – the right's for the knife, the peeler …)
     // (only when my right's busy: the container's on my right – reaching it with my left would be across my chest)
-    const leftTakes = g.kind === 'drag' && g.source && g.source.fromBox && this.fpSlots[0] == null && this.fpSlots[1] != null;
-    const wi = ph.held || leftTakes ? 0 : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[1] || p.id === 'kq') && this.fpSlots[0] == null ? 0 : 1, oi = 1 - wi;
+    // (for a left-handed cook, the other way about: M the main hand, O the other)
+    const M = this.mainHand, O = 1 - M;
+    const leftTakes = g.kind === 'drag' && g.source && g.source.fromBox && this.fpSlots[O] == null && this.fpSlots[M] != null;
+    const wi = ph.held || leftTakes ? O : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[M] || p.id === ['kq', 'ke'][O]) && this.fpSlots[O] == null ? O : M, oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
