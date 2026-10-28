@@ -20,6 +20,7 @@
 // you put it down as you start). Nothing walks by itself.
 
 import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool } from './actions.js';
+import { simTick, simDone, simVerdict, IN_ORDER } from './sim.js';
 import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
 import { stockKitchen, freeSpot, thingsIn } from './stock.js';
@@ -858,8 +859,8 @@ export function refresh(C, x) {
     if (s.do === 'wait' && !inOrder(C, s)) continue;
     // (serving: once everything else is done – and the kitchen is clean)
     if (s.do === 'serve' && (!x.steps.every((o) => o.id === s.id || ['done', 'ready'].includes(C.steps[o.id].s)) || cleanup(C, x).length)) continue;
-    // a step after a timer opens when the timer is ready
-    st.s = s.do === 'wait' ? 'running' : 'open';
+    // a step after a timer opens when the timer is ready (a simulated recipe's "wait" is no timer: the pan says)
+    st.s = s.do === 'wait' && !x.sim ? 'running' : 'open';
     st.t = 0;
     changed = true;
   }
@@ -1134,7 +1135,13 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
     refresh(C, x); // (the kitchen may be clean now: serving opens)
     return;
   }
-  // step complete
+  finishStep(C, x, K, s, st, f, ev);
+}
+
+// A step done – by its gestures, or (a simulated recipe) because the kitchen's got to be as it says: its scraps, what
+// it used dirty, what it makes, the credit to who did it.
+function finishStep(C, x, K, s, st, f, ev) {
+  const a = ACTIONS[s.do];
   const sc = scrapsOf(s, C.items);
   if (sc) addScraps(C, st.fx, sc);
   // what it used is dirty now: its pots and pans, the board
@@ -1205,7 +1212,9 @@ function credit(C, id, what) {
 function finish(C, x, ev) {
   for (const s of x.steps) { const st = C.steps[s.id]; if (st.s !== 'done') { st.s = 'done'; if (s.do !== 'wait' && s.do !== 'serve') { st.q = Math.min(st.q, MISSED_Q); st.missed = 1; } } }
   const qs = x.steps.map((s) => C.steps[s.id].q);
-  const q = qs.reduce((a, b) => a + b, 0) / Math.max(1, qs.length);
+  let q = qs.reduce((a, b) => a + b, 0) / Math.max(1, qs.length);
+  // (a simulated recipe: how it came out counts too – burnt, too salty, set hard)
+  if (x.sim) { C.verdict = simVerdict(C, x); for (const v of C.verdict) q *= v.q; }
   C.stars = q >= 0.95 ? 5 : q >= 0.85 ? 4 : q >= 0.7 ? 3 : q >= 0.5 ? 2 : 1;
   C.finished = 1;
   ev.push({ k: 'finish', stars: C.stars });
@@ -1272,6 +1281,19 @@ export function tickCook(C, x, K, dt) {
   if (!C.started || C.finished) return ev;
   C.elapsed += dt;
   const sp = C.speed;
+  // a simulated recipe: the kitchen moves on (in its time), and what it now shows is done
+  if (x.sim) {
+    simTick(C, dt * sp);
+    for (const s of x.steps) {
+      const st = C.steps[s.id];
+      if (st.s === 'done' || st.s === 'active' || s.do === 'serve' || (IN_ORDER.has(s.do) && !inOrder(C, s))) continue;
+      if (!simDone(C, x, s)) continue;
+      // (where it happened: the thing's place, the pan's)
+      const it = s.item && C.items[s.item], v = C.vessels[s.vessel || s.into];
+      st.fx = st.fx || (it && typeof it.at === 'string' ? splitPlace(it.at)[0] : null) || (v && v.at && v.at.fx) || null;
+      finishStep(C, x, K, s, st, st.fx && fixtureById(K, st.fx), ev);
+    }
+  }
   for (const s of x.steps) {
     const st = C.steps[s.id];
     if (st.s === 'running') {

@@ -20,6 +20,7 @@ import {
   handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR, glovesOn,
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS, BOARD_TOOLS, stepTool } from '../shared/actions.js';
+import { simProgress } from '../shared/sim.js';
 import { ingName, TOOLS } from '../shared/ingredients.js';
 import { foodWidth } from './food3d.js';
 import {
@@ -1512,6 +1513,12 @@ function renderTimers() {
   let popOk = false;
   for (const s of x.steps) {
     const st = C.steps[s.id];
+    // (a simulated recipe: what's cooking in a pan, as far as it's got)
+    const sp = x.sim && st.s !== 'done' ? simProgress(C, x, s) : null;
+    if (sp != null) {
+      dials.push(`<button class="dial" data-tsid="${s.id}" title="${esc(s.name)} – ${Math.round(sp * 100)}%">${dialSvg(1 - sp)}<small>${Math.round(sp * 100)}%</small></button>`);
+      continue;
+    }
     if (st.s !== 'running' && st.s !== 'ready') continue;
     const dur = stepDuration(C, x, S.K, s);
     const left = Math.max(0, dur - st.t);
@@ -1529,7 +1536,11 @@ function renderTimers() {
   // the little card for the dial I tapped
   const pop = $('timerPop');
   if (!popOk) S.timerPop = null;
-  if (S.timerPop) {
+  if (S.timerPop && x.sim && simProgress(C, x, stepDef(x, S.timerPop)) != null) {
+    const s = stepDef(x, S.timerPop), card = `<b>${esc(s.name)}</b><span>${Math.round(simProgress(C, x, s) * 100)}% – ⏩ to hurry it</span>`;
+    if (pop.dataset.h !== card) { pop.innerHTML = card; pop.dataset.h = card; }
+    pop.hidden = false;
+  } else if (S.timerPop) {
     const s = stepDef(x, S.timerPop), st = C.steps[S.timerPop];
     const left = Math.max(0, stepDuration(C, x, S.K, s) - st.t);
     const card = `<b>${esc(s.name)}</b><span>${st.s === 'ready' ? 'ready!' : `${fmtTime(left)} left`}</span>${st.s === 'running' ? `<button class="btn small" data-skip="${s.id}">⏭ Skip</button>` : ''}`;

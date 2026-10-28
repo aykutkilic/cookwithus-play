@@ -134,7 +134,8 @@ export const RECIPES = [
 
   // ================================================================== level 2
   {
-    id: 'menemen', name: 'Menemen', cuisine: 'turkish', level: 2, serves: 2,
+    id: 'menemen',
+    sim: true, // (simulated: done as the kitchen gets to be so – shared/sim.js) name: 'Menemen', cuisine: 'turkish', level: 2, serves: 2,
     blurb: 'Soft eggs scrambled into peppers and tomatoes. Onions? That is a whole other argument.',
     ing: { greenPepper: 2, tomato: 3, egg: 3, butter: 1, salt: 1, pulBiber: 1 },
     ves: { pan: 'pan', plates: 'plate' },
