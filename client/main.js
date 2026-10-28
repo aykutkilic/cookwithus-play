@@ -868,7 +868,10 @@ function fpPointed(hand = S.mainHand) {
   const k = hand >= 0 ? scene.fpSlots[hand] : null;
   // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
   const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
-  if (k && onTop) {
+  // (not at the fridge, the pantry – its door, its shelves, what's on them: that's taking from it, putting in it)
+  const raw = k && onTop ? scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }) : null;
+  const atStore = raw && (raw.kind === 'door' || raw.kind === 'shelf' || raw.kind === 'store' || (raw.kind === 'thing' && raw.fx && isStore(fixtureById(S.K, splitPlace(raw.fx)[0]))));
+  if (k && onTop && !atStore) {
     const sp = scene.surfacePick(c.x, c.y, S.me);
     // (food goes on a worktop, a table, in the sink – not on a bare burner)
     if (sp && !(k[0] === 'i' && sp.slot != null)) return { ...sp, key: k };
