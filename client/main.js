@@ -1592,7 +1592,15 @@ function renderTimers() {
     // (a simulated recipe: what's cooking in a pan, as far as it's got)
     const sp = x.sim && st.s !== 'done' ? simProgress(C, x, s) : null;
     if (sp != null) {
-      dials.push(`<button class="dial" data-tsid="${s.id}" title="${esc(s.name)} – ${Math.round(sp * 100)}%">${dialSvg(1 - sp)}<small>${Math.round(sp * 100)}%</small></button>`);
+      if (S.timerPop === s.id) popOk = true;
+      dials.push(`<button class="dial ${S.timerPop === s.id ? 'on' : ''}" data-tsid="${s.id}" title="${esc(s.name)} – ${Math.round(sp * 100)}%">${dialSvg(1 - sp)}<small>${Math.round(sp * 100)}%</small></button>`);
+      continue;
+    }
+    // (a simulated wait counting its time – a boil, a bake, a chill, a rise – while the kitchen's as it needs)
+    if (x.sim && s.do === 'wait' && st.s !== 'done' && st.t > 0) {
+      const dur = stepDuration(C, x, S.K, s), left = Math.max(0, dur - st.t);
+      if (S.timerPop === s.id) popOk = true;
+      dials.push(`<button class="dial ${S.timerPop === s.id ? 'on' : ''}" data-tsid="${s.id}" title="${esc(s.name)} – ${fmtTime(left)} left">${dialSvg(Math.min(1, left / Math.max(1, dur)))}<small>${fmtTime(left)}</small></button>`);
       continue;
     }
     if (st.s !== 'running' && st.s !== 'ready') continue;
@@ -1612,8 +1620,13 @@ function renderTimers() {
   // the little card for the dial I tapped
   const pop = $('timerPop');
   if (!popOk) S.timerPop = null;
-  if (S.timerPop && x.sim && simProgress(C, x, stepDef(x, S.timerPop)) != null) {
-    const s = stepDef(x, S.timerPop), card = `<b>${esc(s.name)}</b><span>${Math.round(simProgress(C, x, s) * 100)}% – ⏩ to hurry it</span>`;
+  if (S.timerPop && x.sim && C.steps[S.timerPop] && C.steps[S.timerPop].s === 'open' && simProgress(C, x, stepDef(x, S.timerPop)) == null) {
+    const s = stepDef(x, S.timerPop), left = Math.max(0, stepDuration(C, x, S.K, s) - C.steps[S.timerPop].t);
+    const card = `<b>${esc(s.name)}</b><span>${fmtTime(left)} left</span><button class="btn small" data-skip="${s.id}">⏭ Skip</button>`;
+    if (pop.dataset.h !== card) { pop.innerHTML = card; pop.dataset.h = card; }
+    pop.hidden = false;
+  } else if (S.timerPop && x.sim && simProgress(C, x, stepDef(x, S.timerPop)) != null) {
+    const s = stepDef(x, S.timerPop), card = `<b>${esc(s.name)}</b><span>${Math.round(simProgress(C, x, s) * 100)}%</span><button class="btn small" data-skip="${s.id}">⏭ Skip</button>`;
     if (pop.dataset.h !== card) { pop.innerHTML = card; pop.dataset.h = card; }
     pop.hidden = false;
   } else if (S.timerPop) {

@@ -35,13 +35,15 @@ export function simTick(C, dt) {
     v.temp = r5(t0 + (want - t0) * Math.min(1, dt / (want > t0 ? WARM_S : COOL_S)));
     if (!v.contents || !v.contents.length || v.temp < COOK_FROM) continue;
     const k = (v.temp - COOK_FROM) / (TEMP[2] - COOK_FROM); // (1 at a medium heat)
-    const dry = !((v.water || 0) > 0.05);
+    // (wet: water in it – or what gives up its juice, the tomatoes, the eggs: what's in with them stews, doesn't catch)
+    const dry = !((v.water || 0) > 0.05) && !v.contents.some((c) => JUICY.has(c.kind));
     const idle = C.simT - (v.stirT ?? C.simT);
     let sum = 0, n = 0;
     for (const c of v.contents) {
       if (MELT_S[c.kind]) { c.melt = r5(Math.min(1, (c.melt || 0) + (dt * k) / MELT_S[c.kind])); continue; }
       if (KEEPS.has(c.kind)) continue;
       c.cook = r5((c.cook || 0) + (dt * k) / (COOK_S[c.kind] || COOK_S.default));
+      if (dry) c.fried = r5((c.fried || 0) + (dt * k) / (COOK_S[c.kind] || COOK_S.default)); // (in a dry pan – not boiled)
       const catching = dry && (k > 1.2 ? idle > CATCH_AFTER : k > 0.95 && !JUICY.has(c.kind) && idle > CATCH_AFTER * 4);
       if (catching) c.burn = r5(Math.min(1, (c.burn || 0) + (dt * k) / 120));
       sum += Math.min(1, c.cook); n++;
@@ -90,7 +92,10 @@ export function simDone(C, x, s) {
     case 'heat': return !!(v && v.at && v.onHob && v.heat === (s.level ?? 3));
     case 'add': case 'crack': return !!(it && it.in === s.into);
     case 'wait': {
+      // (what's frying in a pan on the hob shows how far it's got; a boil, a bake, a chill, a rise – its time does,
+      // counted while the kitchen's as it needs to be: null, see shared/cook.js waitRate)
       const kind = subjectOf(x, s), c = contentOf(v, kind);
+      if (!kind || !v || (v.water || 0) > 0.05 || !x.steps.some((q) => q.do === 'heat' && q.vessel === s.vessel) || (!c && !v.onHob)) return null;
       if (!c) return false;
       return MELT_S[kind] ? (c.melt || 0) >= 1 : (c.cook || 0) >= (s.dur || 60) / (COOK_S[kind] || COOK_S.default);
     }
@@ -120,7 +125,7 @@ export function simVerdict(C, x) {
   const out = [];
   for (const v of Object.values(C.vessels)) for (const c of v.contents || []) {
     if ((c.burn || 0) > 0.25) out.push({ what: c.kind, note: (c.burn || 0) > 0.6 ? 'burnt' : 'catching on the pan', q: 1 - Math.min(0.7, c.burn) });
-    else if (c.kind === 'egg' && (c.cook || 0) > 1.15) out.push({ what: c.kind, note: 'set hard – rubbery', q: 0.75 });
+    else if (c.kind === 'egg' && (c.fried || 0) > 1.15) out.push({ what: c.kind, note: 'set hard – rubbery', q: 0.75 });
   }
   for (const s of x.steps) {
     if (s.do !== 'season') continue;

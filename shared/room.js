@@ -412,7 +412,7 @@ function stepKey(st) { return JSON.stringify(st, (k, v) => (k === 't' || k === '
 function vesselKey(v) { return JSON.stringify(v, (k, val) => (k === 'boil' || k === 'hot' ? undefined : val)); }
 function metaOf(C) {
   const sk = C.sakir;
-  return { speed: C.speed, started: C.started, finished: C.finished, stars: C.stars, credits: C.credits, bagsOut: C.bagsOut, sakir: sk ? { id: sk.id, fx: sk.fx, n: sk.n, hit: sk.hit, miss: sk.miss || 0 } : null };
+  return { speed: C.speed, started: C.started, finished: C.finished, stars: C.stars, verdict: C.verdict, credits: C.credits, bagsOut: C.bagsOut, sakir: sk ? { id: sk.id, fx: sk.fx, n: sk.n, hit: sk.hit, miss: sk.miss || 0 } : null };
 }
 function freshSent() { return { steps: {}, items: {}, vessels: {}, tools: {}, fx: {}, scraps: {}, bins: {}, carry: {}, dw: {}, meta: '' }; }
 function metaKey(C) { return JSON.stringify(metaOf(C)); }

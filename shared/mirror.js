@@ -41,7 +41,7 @@ export function applyMsg(M, msg, nowMs = 0) {
         C.vessels[id] = { ...v, boil: v.boil ?? (old ? old.boil : 0) };
       }
       for (const k of ['fx', 'scraps', 'bins', 'carry', 'dw', 'tools']) if (msg[k]) C[k] = Object.assign(C[k] || {}, msg[k]);
-      for (const k of ['speed', 'started', 'finished', 'stars', 'credits', 'bagsOut', 'sakir']) if (k in msg) C[k] = msg[k];
+      for (const k of ['speed', 'started', 'finished', 'stars', 'verdict', 'credits', 'bagsOut', 'sakir']) if (k in msg) C[k] = msg[k];
       return msg.ev || [];
     }
     case 'clock': {

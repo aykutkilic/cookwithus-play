@@ -20,7 +20,7 @@
 // you put it down as you start). Nothing walks by itself.
 
 import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool, useItem } from './actions.js';
-import { simTick, simDone, simVerdict, IN_ORDER, simSeason, simStir } from './sim.js';
+import { simTick, simDone, simVerdict, IN_ORDER, simSeason, simStir, TEMP } from './sim.js';
 import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
 import { stockKitchen, freeSpot, thingsIn } from './stock.js';
@@ -85,7 +85,8 @@ export function expandRecipe(r, cap = 1) {
     if (s.item && ing[s.item]) { s.itemKind = ing[s.item].kind; s.itemQty = ing[s.item].qty || 1; }
     if (s.items) s.itemKinds = Object.fromEntries(s.items.filter((id) => ing[id]).map((id) => [id, ing[id].kind]));
   }
-  return { ...r, ing, ves, names, steps };
+  // (every recipe a simulated kitchen now – unless it says otherwise)
+  return { ...r, sim: r.sim ?? true, ing, ves, names, steps };
 }
 
 // What a recipe needs from a kitchen.
@@ -1186,14 +1187,15 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
 
 // A step done – by its gestures, or (a simulated recipe) because the kitchen's got to be as it says: its scraps, what
 // it used dirty, what it makes, the credit to who did it.
-function finishStep(C, x, K, s, st, f, ev) {
+// (sim: done because the kitchen's as it says – what's there stays where it is: nothing moved to the step's place)
+function finishStep(C, x, K, s, st, f, ev, sim = false) {
   const a = ACTIONS[s.do];
   const sc = scrapsOf(s, C.items);
   if (sc) addScraps(C, st.fx, sc);
   // what it used is dirty now: its pots and pans, the board
   for (const id of [s.vessel, s.into, s.from]) if (id && C.vessels[id]) C.vessels[id].dirty = 1;
   if (a.cap === 'board' && f && f.caps.includes('board')) fxState(C, st.fx).dirty = 1;
-  if (a.moves) moveVessel(C, s, st);
+  if (a.moves && !sim) moveVessel(C, s, st);
   if (s.makes && C.items[s.makes]) {
     const it = C.items[s.makes];
     it.hidden = 0;
@@ -1322,6 +1324,36 @@ function finishWait(C, x, sid) {
 
 // Advance the kitchen by dt real seconds. Returns events ('ding' when a timer
 // runs out). Pots on the heat with water in them come to the boil by themselves.
+// How fast a simulated recipe's wait counts now (1: as the recipe says): a bake only in a lit oven, a chill only in the
+// fridge, what cooks on the hob by its heat (none off it), a rise, a rest, a cooling – just time.
+const COOKING = new Set(['heat', 'add', 'adjust', 'pour', 'stir', 'flip', 'saute', 'crack', 'season']);
+// the heat the recipe has a pot on for a wait: the level its last heat / adjust step before it sets (medium if none)
+function recipeLevel(x, s) {
+  const seen = new Set(), todo = [...s.after];
+  while (todo.length) {
+    const q = x.steps.find((o) => o.id === todo.shift());
+    if (!q || seen.has(q.id)) continue;
+    seen.add(q.id);
+    if ((q.do === 'heat' || q.do === 'adjust') && q.vessel === s.vessel) return Math.max(1, Math.min(3, q.level ?? (q.do === 'heat' ? 3 : 1)));
+    todo.push(...q.after);
+  }
+  return 2;
+}
+export function waitRate(C, x, K, s) {
+  const v = C.vessels[s.vessel], prev = s.after.map((a) => (x.steps.find((q) => q.id === a) || {}).do);
+  const f = v && v.at && fixtureById(K, v.at.fx);
+  if (prev.includes('chillIn')) return f && f.caps.includes('chill') ? 1 : 0;
+  if (prev.includes('bakeIn') || prev.includes('turn')) return f && f.caps.includes('bake') && v.heat > 0 ? 1 : 0;
+  if (v && v.onHob && v.heat > 0) {
+    // (as quick as the recipe says at the heat it says – the level it last set for this pot – quicker hotter)
+    const k = (t) => Math.max(0.02, t - 0.3), want = TEMP[recipeLevel(x, s)];
+    return Math.max(0.35, Math.min(2, k(v.temp || 0) / k(want)));
+  }
+  // (cooking stopped: a pot that goes on the hob, off it now – not a rest, a cooling, a rise)
+  if (v && x.steps.some((q) => q.do === 'heat' && q.vessel === s.vessel) && prev.every((d) => COOKING.has(d))) return 0;
+  return 1;
+}
+
 export function tickCook(C, x, K, dt) {
   const ev = [];
   if (!C.started || C.finished) return ev;
@@ -1333,11 +1365,18 @@ export function tickCook(C, x, K, dt) {
     for (const s of x.steps) {
       const st = C.steps[s.id];
       if (st.s === 'done' || st.s === 'active' || s.do === 'serve' || (IN_ORDER.has(s.do) && !inOrder(C, s))) continue;
-      if (!simDone(C, x, s)) continue;
+      const shows = simDone(C, x, s);
+      if (shows == null && s.do === 'wait') {
+        // (a wait its pan doesn't show: its time, counted while the kitchen's as it needs to be)
+        if (!inOrder(C, s)) continue;
+        st.t += dt * sp * waitRate(C, x, K, s);
+        if (st.t < waitDur(C, x, K, s)) continue;
+        st.t = waitDur(C, x, K, s);
+      } else if (!shows) continue;
       // (where it happened: the thing's place, the pan's)
       const it = s.item && C.items[s.item], v = C.vessels[s.vessel || s.into];
       st.fx = st.fx || (it && typeof it.at === 'string' ? splitPlace(it.at)[0] : null) || (v && v.at && v.at.fx) || null;
-      finishStep(C, x, K, s, st, st.fx && fixtureById(K, st.fx), ev);
+      finishStep(C, x, K, s, st, st.fx && fixtureById(K, st.fx), ev, true);
     }
   }
   for (const s of x.steps) {
@@ -1463,6 +1502,12 @@ export function setSpeed(C, s) {
 export function skipWait(C, x, K, sid) {
   const s = stepDef(x, sid);
   const st = C.steps[sid];
+  // (a simulated recipe: the kitchen's time goes on till it's done – everything in it carrying on as it would)
+  if (x.sim && s && st && s.do === 'wait' && st.s !== 'done' && inOrder(C, s)) {
+    const sp = Math.max(1, C.speed), lim = waitDur(C, x, K, s) * 4 + 600; // (not forever: a pot off the heat doesn't get there)
+    for (let t = 0; t < lim && st.s !== 'done'; t += 10) tickCook(C, x, K, 10 / sp);
+    return st.s === 'done';
+  }
   if (!s || !st || st.s !== 'running') return false;
   st.t = waitDur(C, x, K, s) - 0.001;
   // pots that were coming to the boil get there too
