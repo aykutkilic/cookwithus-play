@@ -2057,6 +2057,7 @@ function openResults() {
       <div>
         <h3 style="margin-top:0">${esc(r.name)}</h3>
         <div class="stars">${'⭐'.repeat(C.stars)}<span style="opacity:.25">${'⭐'.repeat(5 - C.stars)}</span></div>
+        ${C.verdict ? `<div class="verdict">${C.verdict.length ? C.verdict.map((v) => `<div>${v.note.includes('burnt') || v.note.includes('catching') ? '🔥' : v.what === 'egg' ? '🍳' : '🧂'} ${esc(ingName(v.what, 2))}: ${esc(v.note)}</div>`).join('') : '<div>✨ Cooked just right</div>'}</div>` : ''}
         <div class="muted">Cooked in ${fmtTime(C.elapsed)} · ${S.x.steps.length} steps${C.bagsOut ? ` · ${C.bagsOut} bag${C.bagsOut > 1 ? 's' : ''} of trash out` : ''}</div>
         <ul class="credits">${cooks.map(({ m, c }) => `<li><i style="background:${m.color}"></i><b>${esc(m.name)}</b> <span class="muted">${c.steps} step${c.steps === 1 ? '' : 's'}${c.chores ? ` · ${c.chores} trash run${c.chores === 1 ? '' : 's'}` : ''}</span></li>`).join('')}</ul>
       </div>
