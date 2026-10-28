@@ -83,6 +83,7 @@ const station = new Station($('stCanvas'), {
 });
 
 function send(obj) { if (S.net) S.net.send(obj); }
+const KNOB_NAMES = ['off', 'low', 'medium', 'high'];
 // which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
 function boardKind(k) { const t = k && k[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
 // At work, the board's tool picked up off the board (its tap): really in my hand now – the hand that works with it,
@@ -823,6 +824,9 @@ function fpPointed(hand = S.mainHand) {
   return res;
 }
 function fpPointedAt(c) {
+  // (a stove's knob: to turn)
+  const kn = scene.knobPick(c.x, c.y, S.me);
+  if (kn) return kn;
   // (the oven gloves on: at where they lie beside the oven – to hang them back)
   if (glovesOn(S.M.cook, S.myId)) { const g = scene.glovesSpotAt(c.x, c.y); if (g) return { kind: 'hangGloves', fx: g.fx, w: g.w }; }
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }); // (past what's in my hands)
@@ -840,6 +844,7 @@ const isGloves = (key) => { const t = key && key[0] === 'u' && S.M.cook && (S.M.
 function fpPointLabel(pt) {
   const C = S.M.cook;
   if (pt.kind === 'work') return pt.label;
+  if (pt.kind === 'knob') return `🔥 Turn the knob – ${KNOB_NAMES[pt.level]} (hold and move the mouse)`;
   if (pt.kind === 'surface') return `${thingEmoji(C, pt.key)} Put the ${thingName(C, S.x, pt.key)} ${pt.sink ? 'in the sink' : pt.slot != null ? 'on this burner' : 'here'}`;
   if (pt.kind === 'hangGloves') return '🧤 Hang up the oven gloves';
   if (pt.kind === 'thing' && isGloves(pt.key)) return '🧤 Put on the oven gloves';
@@ -1254,6 +1259,13 @@ function mouseMoved(mx, my) {
     const p = handAt(i);
     if (atWork) workPtr('move', p);
     else if (h.act === 'grab' && S.fpDrag && S.fpDrag.pid === p.pointerId) fpDragTo(p.clientX, p.clientY);
+    else if (h.act === 'knob' && S.knobDrag) {
+      // (turned clockwise – the mouse to the right – up, a setting each 70 px or so)
+      const K = S.knobDrag;
+      K.acc += mx;
+      const lv = Math.max(0, Math.min(3, K.level0 + Math.round(K.acc / 70)));
+      if (lv !== K.level) { K.level = lv; send({ t: 'knob', fx: K.fx, slot: K.slot, level: lv }); sfx.play(lv ? 'click' : 'clunk', 0.4); }
+    }
     return;
   }
   // else it looks round
@@ -1281,6 +1293,15 @@ function handDown(i) {
   const c = scene.viewCenter();
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
   const pt = fpPointed(i);
+  if (pt && pt.kind === 'knob') {
+    // (a hand on the stove's knob: moving the mouse turns it, a setting at a time – the burner follows)
+    if (scene.fpSlots[i] != null) { toast('That hand’s full – turn the knob with the other one'); return; }
+    S.knobDrag = { fx: pt.fx, slot: pt.slot, level0: pt.level, level: pt.level, acc: 0 };
+    Object.assign(h, { down: true, ox: 0, oy: 0, act: 'knob' }); moving = i; hover = i;
+    scene.fpArms.reach(i, { key: null, take: false, hold: 'grab', world: pt.w });
+    sfx.play('click', 0.4);
+    return;
+  }
   if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn' || pt.kind === 'surface' || pt.kind === 'work')) { hover = i; fpPointAct(pt, i); return; }
   if (pick && (pick.kind === 'door' || pick.kind === 'thing') && !S.fpDrag) {
     fpGrab({ clientX: c.x, clientY: c.y, pointerId: HAND_ID[i] }, i);
@@ -1307,6 +1328,7 @@ function handUp(i) {
       if (f) fpStoreLook(f, i).run();
     } else fpLetGo(p.clientX, p.clientY);
   }
+  if (h.act === 'knob') S.knobDrag = null;
   h.act = null;
 }
 // each frame: a hand let go drifts back to the dot (at work it stays where the mouse left it, and hovers there)

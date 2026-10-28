@@ -376,6 +376,20 @@ export function swingDoor(C, K, m, fx, v, done) {
 export function doorOpen(C, fx) { return !!(C.fx[fx] && C.fx[fx].door); }
 
 // A drawer or a cupboard door, opened or shut by a cook's free hand (place: '<fixture>/<bay>').
+// A stove's knob turned by hand, any time: burner slot to level (0 off … 3 high) – the pan on it heats so, or (none on
+// it) the empty burner burns so. ('' = done)
+export function turnKnob(C, K, m, fx, slot, level) {
+  const f = fixtureById(K, fx);
+  if (!f || !f.caps.includes('hob') || !Number.isInteger(slot) || slot < 0 || slot >= (f.slots || 1)) return 'No such knob';
+  if (!Number.isInteger(level) || level < 0 || level > 3) return 'No such setting';
+  const v = Object.values(C.vessels).find((q) => q.at && q.at.fx === fx && q.at.slot === slot && q.onHob);
+  if (v) { v.heat = level; return ''; }
+  const s = fxState(C, fx);
+  s.lit = { ...(s.lit || {}) };
+  if (level) s.lit[slot] = level; else delete s.lit[slot];
+  return '';
+}
+
 export function openBay(C, K, m, place, v) {
   const B = bayOf(K, place);
   if (!B || !B.door) return 'There’s nothing to open there';

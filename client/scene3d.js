@@ -652,6 +652,28 @@ export class Scene3D {
     return { kind: 'bay', fx: bay.place, open: bay.o > 0.5, w: hw };
   }
 
+  // A stove's knob under this point of the screen, in reach: {kind: 'knob', fx, slot, w, level} (its burner's level now)
+  knobPick(cx, cy, me) {
+    if (!this.firstPerson || !me || !this.k3) return null;
+    let best = null;
+    for (const [fx, F] of Object.entries(this.k3.fx)) {
+      const f = F.f;
+      if (!F.parts.knobs || !F.anchors.burners || Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) > 1.05) continue;
+      F.parts.knobs.forEach((kn, slot) => {
+        const w = kn.getWorldPosition(new THREE.Vector3()), s = this.screenOf(w);
+        if (!s.on) return;
+        const d = Math.hypot(s.x - cx, s.y - cy);
+        if (d < Math.max(20, this.pxOf(w, 0.045)) && (!best || d < best.d)) best = { d, pick: { kind: 'knob', fx, slot, w, level: this.burnerLevel(fx, slot) } };
+      });
+    }
+    return best && best.pick;
+  }
+  // how high a stove's burner is on (0 off … 3): the pan on it's, or the empty burner's
+  burnerLevel(fx, slot) {
+    const D = this.D, F = this.k3.fx[fx], v = D && F && vesselAtSlot(D, fx, slot, F.f.type), fxs = (this.lastC && this.lastC.fx) || {};
+    return v ? v.heat || 0 : (fxs[fx] && fxs[fx].lit && fxs[fx].lit[slot]) || 0;
+  }
+
   // Where my line of sight meets a worktop in reach – a counter's top or the board lying on it, a table, a
   // stove (the burner nearest), the sink – to put down what I hold just there: {kind: 'surface', fx, w: the
   // point, slot: the burner, sink}, or null.
@@ -699,6 +721,7 @@ export class Scene3D {
     this.workScene(view);
     this.updateFixtures(view);
     this.toolsNow = (view.C && view.C.tools) || {};
+    this.lastC = view.C;
     this.D = view.D;
     // the boards' own knives, peelers and graters: lying there when they're there (not taken away),
     // and not while they're in someone's hand at work there
