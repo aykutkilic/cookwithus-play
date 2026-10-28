@@ -41,6 +41,7 @@ const CROUCH = -0.3, TIPTOE = 0.1;  // first person: eye lower crouching (about 
 const BEND = -0.22; // (and bending down to look into a low cupboard)
 const ACCEL = 12, BRAKE = 15; // how quickly the cook gets up to speed / stops
 const RADIUS = 0.26; // how wide a cook is
+const FIX_R = 0.15;  // how close a cook comes to a counter, a stove …: up to it, a hand's breadth or so off (15–20 cm)
 
 // ------------------------------------------------------------------ state
 
@@ -598,12 +599,12 @@ function yawTo(f) {
 
 // A cook is a circle; fixtures fill whole squares.
 function blocked(K, x, y) {
-  if (x < RADIUS || y < RADIUS || x > K.w - RADIUS || y > K.h - RADIUS) return true;
-  for (let ty = Math.floor(y - RADIUS); ty <= Math.floor(y + RADIUS); ty++) {
-    for (let tx = Math.floor(x - RADIUS); tx <= Math.floor(x + RADIUS); tx++) {
+  if (x < FIX_R || y < FIX_R || x > K.w - FIX_R || y > K.h - FIX_R) return true;
+  for (let ty = Math.floor(y - FIX_R); ty <= Math.floor(y + FIX_R); ty++) {
+    for (let tx = Math.floor(x - FIX_R); tx <= Math.floor(x + FIX_R); tx++) {
       if (tx < 0 || ty < 0 || tx >= K.w || ty >= K.h || !K.solid[ty][tx]) continue;
       const cx = Math.max(tx, Math.min(tx + 1, x)), cy = Math.max(ty, Math.min(ty + 1, y));
-      if ((x - cx) ** 2 + (y - cy) ** 2 < RADIUS * RADIUS) return true;
+      if ((x - cx) ** 2 + (y - cy) ** 2 < FIX_R * FIX_R) return true;
     }
   }
   return false;
@@ -669,8 +670,10 @@ function moveMe(dt) {
   v.x += (wx - v.x) * k; v.y += (wy - v.y) * k;
   if (!(wx || wy) && Math.hypot(v.x, v.y) < 0.05) v.x = v.y = 0;
   const K = S.K;
-  if (v.x) { if (blocked(K, me.x + v.x * dt, me.y)) v.x = 0; else me.x += v.x * dt; }
-  if (v.y) { if (blocked(K, me.x, me.y + v.y * dt)) v.y = 0; else me.y += v.y * dt; }
+  // (blocked: as far as it goes – up to the counter, not a whole step short of it)
+  const upTo = (dx, dy) => { let k = 1; for (let i = 0; i < 6 && blocked(K, me.x + dx * k, me.y + dy * k); i++) k /= 2; return blocked(K, me.x + dx * k, me.y + dy * k) ? 0 : k; };
+  if (v.x) { const k = upTo(v.x * dt, 0); me.x += v.x * dt * k; if (k < 1) v.x = 0; }
+  if (v.y) { const k = upTo(0, v.y * dt); me.y += v.y * dt * k; if (k < 1) v.y = 0; }
   me.walk = v.x || v.y ? 0 : -1;
 }
 
@@ -1170,10 +1173,10 @@ function openWork(sid, fx) {
   const w = workFrame();
   if (w) {
     let gx = S.me.x, gy = S.me.y;
-    if (Math.abs(w.N.z) > 0.5) { gy = f.y + (w.N.z > 0 ? f.h + RADIUS + 0.03 : -RADIUS - 0.03); gx = Math.max(f.x + 0.25, Math.min(f.x + f.w - 0.25, w.O.x)); } else { gx = f.x + (w.N.x > 0 ? f.w + RADIUS + 0.03 : -RADIUS - 0.03); gy = Math.max(f.y + 0.25, Math.min(f.y + f.h - 0.25, w.O.z)); }
+    if (Math.abs(w.N.z) > 0.5) { gy = f.y + (w.N.z > 0 ? f.h + FIX_R + 0.03 : -FIX_R - 0.03); gx = Math.max(f.x + 0.25, Math.min(f.x + f.w - 0.25, w.O.x)); } else { gx = f.x + (w.N.x > 0 ? f.w + FIX_R + 0.03 : -FIX_R - 0.03); gy = Math.max(f.y + 0.25, Math.min(f.y + f.h - 0.25, w.O.z)); }
     if (!blocked(K, gx, gy) && Math.hypot(gx - S.me.x, gy - S.me.y) < 1.2) S.workGo = { x: gx, y: gy };
     S.me.yaw = Math.atan2(w.O.x - gx, w.O.z - gy);
-    const ex = gx - Math.sin(S.me.yaw) * (0.14 - 0.18), ez = gy - Math.cos(S.me.yaw) * (0.14 - 0.18);
+    const ex = gx - Math.sin(S.me.yaw) * (0.04 - 0.18), ez = gy - Math.cos(S.me.yaw) * (0.04 - 0.18);
     S.pitch = Math.max(-1.1, Math.atan2(w.O.y + 0.06 - 0.84, Math.hypot(w.O.x - ex, w.O.z - ez)));
   }
   sfx.play('whoosh', 0.4);

@@ -287,9 +287,9 @@ export class Scene3D {
 
   zoomBy(f) { if (!this.firstPerson) this.zoom = Math.max(0.45, Math.min(1.6, this.zoom / f)); }
   // first person: my eyes, standing at (x, y) facing yaw, leaning in by lean
-  // (a little above the chibi head and a step back)
+  // (a little above the chibi head, just behind its eyes)
   eyeAt(x, y, yaw, eyeOff = 0, lean = 0) {
-    return new THREE.Vector3(x - Math.sin(yaw) * (0.14 - lean), EYE_H + eyeOff - lean * 0.35, y - Math.cos(yaw) * (0.14 - lean));
+    return new THREE.Vector3(x - Math.sin(yaw) * (0.04 - lean), EYE_H + eyeOff - lean * 0.35, y - Math.cos(yaw) * (0.04 - lean));
   }
   // how far I lean in over work at O (further for the back burner, the middle of the sink;
   // hardly at all for the knob on the stove's front, the tap's lever – real: the pan stays in view too)
@@ -798,7 +798,7 @@ export class Scene3D {
       F.pitch += ((view.pitch ?? -0.18) - F.pitch) * k;
       F.x = me.x; F.y = me.y;
       const pitch = F.pitch, yaw = F.yaw;
-      // eyes a little above the chibi head and a step back, so a counter right in front doesn't fill the view
+      // eyes a little above the chibi head, just behind its eyes – up to the counter, a hand's breadth off it
       // (leaning in a little while reaching for something)
       // (and a little closer while working at something)
       // (further in for something at the back – the back burner, the middle of the sink)
@@ -1104,9 +1104,6 @@ export class Scene3D {
         if (!k || (out.has(k) && !putting)) continue;
         // (being put away: the hand reaches to its spot on the shelf)
         if (putting && out.has(k) && k[0] === 'i') r.world = out.get(k).pos.clone().addScaledVector(UP, 0.01);
-        // (put down: out of the hand from the start, it goes straight to its spot – the hand reaching with it – not
-        // carried round the arm's way and dropped short)
-        if (putting) continue;
         // (where it lay till the hand closes on it; then, if the hand only got
         // within arm's length of it, it comes the rest of the way)
         if (r && r.key === k && r.take && !r.grabbed) { out.set(k, { pos: r.src, yaw: r.srcYaw, sig: 'fp:lying', fp: true, size: 0.24 }); continue; }

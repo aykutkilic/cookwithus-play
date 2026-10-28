@@ -354,7 +354,8 @@ export class FpArms {
     // shoulder – no leaning over for it, the posture changing on the way; what's put slides on from there to its spot)
     const sh = r.take ? SHOULDER.clone() : h.sh.clone(), toT = right.clone().sub(sh);
     const grip0 = (HOLDS[r.hold] || HOLDS.palm).grip.clone().multiplyScalar(HS).length();
-    const reach = r.take ? REACH : (UPPER + FORE) * 0.9, R = reach - grip0;
+    // (putting down: the arm's reach and a little leaning in over the worktop – enough to get down to it)
+    const reach = r.take ? REACH : (UPPER + FORE) * 0.985 + 0.08, R = reach - grip0;
     if (toT.length() > R) {
       // (putting down: at its spot's height, as near it as the arm goes – set down level, not lowered from above)
       const up = mirrorV(this.upLocal(), h.s), vy = toT.dot(up), hor = toT.clone().addScaledVector(up, -vy);
@@ -362,7 +363,13 @@ export class FpArms {
       else right.copy(sh).add(toT.setLength(R));
     }
     let q;
-    if (r.hold === 'palm' || r.hold === 'tub') {
+    const onPalm = !r.take && (r.hold === 'palm' || r.hold === 'tub');
+    if (onPalm) {
+      // (putting down what sits on my palm: carried as it's carried – the palm up under it – and lowered onto its spot,
+      // not turned over on the way)
+      const H = HOLDS[r.hold];
+      q = aim(H.a, H.b, H.c, H.pref);
+    } else if (r.hold === 'palm' || r.hold === 'tub') {
       // food, a plate: from above, the fingers toward it, palm down
       const from = SHOULDER.clone();
       q = aim(v(0, 0, -1), right.clone().sub(from), v(-1, 0, 0), v(0, -1, -0.2));
@@ -370,7 +377,7 @@ export class FpArms {
       const d = this.camera.worldToLocal(r.world.clone().add(r.aimAt)).sub(tc);
       q = aim(IN_FIST, mirrorV(d, h.s), Z, HOLDS.handle.pref);
     } else q = aim(HOLDS[r.hold].a, HOLDS[r.hold].b, HOLDS[r.hold].c, HOLDS[r.hold].pref);
-    const grip = (HOLDS[r.hold] || HOLDS.palm).grip;
+    const grip = onPalm ? ON_PALM : (HOLDS[r.hold] || HOLDS.palm).grip; // (where it sits on the palm goes onto the spot)
     const wrist = right.clone().sub(grip.clone().multiplyScalar(HS).applyQuaternion(q));
     return { wrist: mirrorV(wrist, h.s), q: h.s < 0 ? mirrorQ(q) : q, curl: r.take ? 0.08 : HOLDS[r.hold].curl };
   }
