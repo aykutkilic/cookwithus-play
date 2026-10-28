@@ -1765,6 +1765,9 @@ export class Scene3D {
       const h = this.fpHold.get(k) || 'palm';
       // carried over to a shelf with the pointer
       if (view.fpGrab && view.fpGrab.key === k && h !== 'side') return { kind: h, at: handAt(view.fpGrab.w, i ? 1 : -1) };
+      // (a knife: carried lowered at my side, point down – not held up before me)
+      const tk = k[0] === 'u' && view.C && view.C.tools && view.C.tools[k.slice(2)];
+      if (h === 'tool' && tk && tk.kind === 'chefKnife') return { kind: 'knifeCarry' };
       if (h !== 'side') return { kind: h };
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
       return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.21, -0.25 - r) }; // (held before me, elbows bent – not out at arm's length)

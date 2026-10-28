@@ -164,6 +164,10 @@ export const HOLDS = {
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85, toBody: true }, // a door's handle
   // at work (first person): a tool upright in the fist, or the open hand palm down
   tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
+  // a knife carried as cooks carry one: lowered by my side, its point to the floor and a little behind, its edge
+  // back – the hand low at the edge of sight, the blade below it out of it (not held up before me, point down)
+  // (the knuckles forward, the back of the hand out, the wrist straight: the edge, so, behind me)
+  knifeCarry: { at: v(0.18, -0.2, -0.31), grip: FIST, a: IN_FIST, b: v(0.04, 1, -0.22), c: Z, pref: v(0.15, -0.5, 0.85), curl: 0.95 },
   // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
   // the handle, the back of the hand to the outside and a little up, the palm in – back: c → that)
   // (frame: given the knife's spine as well – up – the hand turned onto it exactly, as KNIFE holds it)

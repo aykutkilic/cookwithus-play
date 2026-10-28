@@ -1312,7 +1312,7 @@ function toggleView() {
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
   if (!touchUI) { if (S.fp) lockMouse(); else unlockMouse(); }
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E your right hand, Q your left (hold to hold on), Tab every option, Ctrl crouch, Space up on your toes'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E your right hand, Q your left (hold to hold on), Tab every option, Ctrl crouch, Space up on your toes, F full screen'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
@@ -1941,6 +1941,21 @@ function openResults() {
 // --- sound
 function refreshSoundBtn() { $('soundBtn').textContent = sfx.muted ? '🔇' : '🔊'; }
 $('soundBtn').onclick = () => { sfx.unlock(); sfx.setMuted(!sfx.muted); refreshSoundBtn(); };
+// full screen (F / ⛶): the game filling the whole screen – where the browser lets a page do that (not Safari on an
+// iPhone: there it's the app added to the home screen that opens full screen)
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsOK = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+function toggleFullscreen() {
+  if (!fsOK) return;
+  if (fsEl()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  const el = document.documentElement, r = (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' });
+  if (r && r.catch) r.catch(() => {});
+}
+const refreshFsBtn = () => $('fsBtn').classList.toggle('on', !!fsEl());
+$('fsBtn').hidden = !fsOK;
+$('fsBtn').onclick = () => { sfx.unlock(); toggleFullscreen(); };
+document.addEventListener('fullscreenchange', refreshFsBtn);
+document.addEventListener('webkitfullscreenchange', refreshFsBtn);
 refreshSoundBtn();
 
 // --- the sheet folds away (handy on phones)
@@ -1959,6 +1974,7 @@ addEventListener('keydown', (e) => {
     else if (S.working) closeStation();
     return;
   }
+  if ((e.key === 'f' || e.key === 'F') && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { toggleFullscreen(); return; }
   const map = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 0: 9, '-': 10, '=': 11 };
   if (e.key in map && !e.ctrlKey && !e.metaKey) { send({ t: 'chat', id: map[e.key] }); return; }
 });
