@@ -18,12 +18,12 @@ import { VESSELS, twoHanded, INGREDIENTS, TOOLS } from '../shared/ingredients.js
 import { slotOf } from '../shared/stock.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
-import { FpArms, SHOULDER, BRISK, APART, KNIFE } from './fparms3d.js';
+import { FpArms, SHOULDER, BRISK, APART, KNIFE, KNIFE_CARRY } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
-import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt } from './props3d.js';
+import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt, KNIFE_HANG } from './props3d.js';
 import { ACTIONS, BOARD_TOOLS, boardUnits } from '../shared/actions.js';
 import { SAKIR, phaseTarget, glovesOn } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
@@ -1765,9 +1765,9 @@ export class Scene3D {
       const h = this.fpHold.get(k) || 'palm';
       // carried over to a shelf with the pointer
       if (view.fpGrab && view.fpGrab.key === k && h !== 'side') return { kind: h, at: handAt(view.fpGrab.w, i ? 1 : -1) };
-      // (a knife: carried lowered at my side, point down – not held up before me)
+      // (a knife: carried in the hand as it's held to cut, its point forward and a little up, its edge down)
       const tk = k[0] === 'u' && view.C && view.C.tools && view.C.tools[k.slice(2)];
-      if (h === 'tool' && tk && tk.kind === 'chefKnife') return { kind: 'knifeCarry' };
+      if (h === 'tool' && tk && tk.kind === 'chefKnife') return { kind: 'knife', at: KNIFE_CARRY.at.clone(), dir: KNIFE_CARRY.dir.clone(), up: KNIFE_CARRY.up.clone() };
       if (h !== 'side') return { kind: h };
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
       return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.21, -0.25 - r) }; // (held before me, elbows bent – not out at arm's length)
@@ -1848,7 +1848,17 @@ export class Scene3D {
   // where a thing in my hand i is drawn: {pos, yaw}
   fpAttach(k, i, me) {
     const A = this.fpArms, h = this.fpHold.get(k) || 'palm';
-    if (h === 'tool') return { pos: A.fist(i), yaw: me.yaw, q: A.toolQuat(i) }; // (a utensil, a bottle … in the fist)
+    if (h === 'tool') {
+      // (a knife in the knife grip, as the hand holds it – KNIFE: the blade along xA, its spine yA; the carried one's
+      // the utensil, hung from its handle – its point down its −y, its spine its +x, KNIFE_HANG behind the bolster)
+      if (k[0] === 'u' && A.hands[i].hold === 'knife') {
+        const xA = A.handDir(i, KNIFE.axis).normalize(), u0 = A.handDir(i, KNIFE.up);
+        const yA = u0.addScaledVector(xA, -u0.dot(xA)).normalize(), zA = new THREE.Vector3().crossVectors(xA, yA);
+        const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(yA, xA.clone().negate(), zA));
+        return { pos: A.handPoint(i, KNIFE.at).addScaledVector(xA, -KNIFE_HANG), yaw: me.yaw, q };
+      }
+      return { pos: A.fist(i), yaw: me.yaw, q: A.toolQuat(i) }; // (a utensil, a bottle … in the fist)
+    }
     if (h === 'side') {
       const a = A.palm(0), b = A.palm(1);
       const vr = this.vessels.get(k.slice(2));

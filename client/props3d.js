@@ -1071,10 +1071,13 @@ function roundedPrism(w, d, rad, y0, y1) {
 
 // ------------------------------------------------------------------ by kind
 // The board's knife carried in a hand: hanging from the fist, the blade down (the handle up through it).
+// (the chef's knife as a utensil: hung from its handle – its point down its −y, its spine along its +x, the origin
+// where a fist holds it, KNIFE_HANG behind the bolster)
+export const KNIFE_HANG = 4 * KN;
 function hangingKnife() {
   const g = new THREE.Group(), k = chefKnifeMesh();
   k.rotation.z = -Math.PI / 2;
-  k.position.y = -4 * KN; // (the fist round the handle, 4 cm behind the bolster)
+  k.position.y = -KNIFE_HANG; // (the fist round the handle, 4 cm behind the bolster)
   g.add(k);
   return finish(g);
 }

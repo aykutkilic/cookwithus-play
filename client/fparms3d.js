@@ -143,6 +143,10 @@ const KNIFE_IN = v(-0.1, 0.3, -0.95).normalize();
 export const KNIFE = { at: v(-0.012, 0.018, -0.11), axis: v(0, 0.45, -0.89).normalize(), up: v(0, 0.89, 0.45).normalize() };
 // (where the hand holds the knife, as the scene has it – knifeAt's fist: 1.3 cm behind the bolster, 0.6 cm under the
 // spine, the kitchen's units – in hand space)
+// A knife carried, held as a cook holds it to cut (the knife hold, KNIFE): low before me on my right, its point
+// forward and a little up, its edge down – not hanging from my fist like a dagger. (The right hand's camera space:
+// where the hand holds it, which way the blade points, which way its spine)
+export const KNIFE_CARRY = { at: v(0.15, -0.2, -0.3), dir: v(-0.06, 0.55, -1).normalize(), up: v(0, 1, 0.55).normalize() };
 const KNIFE_GRIP = KNIFE.at.clone().addScaledVector(KNIFE.axis, -0.013 / 0.5).addScaledVector(KNIFE.up, -0.006 / 0.5);
 const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
@@ -164,10 +168,6 @@ export const HOLDS = {
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85, toBody: true }, // a door's handle
   // at work (first person): a tool upright in the fist, or the open hand palm down
   tool: { at: v(0.1, -0.1, -0.4), grip: FIST, a: IN_FIST, b: v(0, 1, 0.25), c: Z, pref: v(0.35, -0.5, 0.8), curl: 0.95 },
-  // a knife carried as cooks carry one: lowered by my side, its point to the floor and a little behind, its edge
-  // back – the hand low at the edge of sight, the blade below it out of it (not held up before me, point down)
-  // (the knuckles forward, the back of the hand out, the wrist straight: the edge, so, behind me)
-  knifeCarry: { at: v(0.18, -0.2, -0.31), grip: FIST, a: IN_FIST, b: v(0.04, 1, -0.22), c: Z, pref: v(0.15, -0.5, 0.85), curl: 0.95 },
   // (the handle in the fist, the blade forward, its edge down: the knuckles along the top of
   // the handle, the back of the hand to the outside and a little up, the palm in – back: c → that)
   // (frame: given the knife's spine as well – up – the hand turned onto it exactly, as KNIFE holds it)
