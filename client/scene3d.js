@@ -514,7 +514,9 @@ export class Scene3D {
       const w = this.glides.get(k) ? this.glides.get(k).pos.clone() : e.pos.clone();
       const vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
       w.y += vr ? vr.h * 0.5 : (e.size || 0.1) * 0.4;
-      mine.push({ kind: 'held', key: k, w, r: Math.max(34, this.pxOf(w, vr ? vr.r * 1.6 : (e.size || 0.1) * 0.9)) });
+      // (as big as it looks – not a wide ring round it: a bowl held before me mustn't take the click meant for the
+      // flour on the shelf past it)
+      mine.push({ kind: 'held', key: k, w, r: Math.min(120, Math.max(30, this.pxOf(w, vr ? vr.r : (e.size || 0.1) * 0.6))) });
     }
     const m = withHeld && near(mine);
     if (m) return m;
