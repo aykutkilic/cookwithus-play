@@ -71,9 +71,10 @@ export function stepHands(step) {
 // Loose food lives in its food container (boxable): a board job on it starts by
 // taking it out onto the board and ends by putting it back – cut up, gathered up
 // in both hands – where it stands beside the board. The board's own tools – its
-// knife, peeler and grater – lie on it: the one a job needs is picked up off the
-// board before the work with it and put back down on it after (held meanwhile –
-// `held` – while the other hand does something in between).
+// knife, peeler and grater – lie on it: the one a job needs is picked up before the
+// work with it (no need, if it's in my hand already) and stays in my hand after,
+// till I put it down myself (held – `held` – while the other hand does something).
+// stepTool: that tool, if the job works with one.
 export const BOARD_TOOLS = ['knife', 'peeler', 'grater'];
 const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', hint: 'Take it out of its container, onto the board',
   prog: (D, st) => { const it = item(D, st); if (it && it.out == null) it.out = 0; }, eff: (S, st) => { const it = item(S, st); if (it) it.out = 1; } });
@@ -82,7 +83,6 @@ const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', h
 const boxUp = (cut, pile = false) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
   eff: (S, st) => { const it = item(S, st); if (it) { splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
 const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
-const putTool = (t) => ({ g: 'tap', hot: 'rest', takes: t, tool: t, hint: `Put the ${t} down on the board` });
 // Several of a thing are worked one at a time: one taken out onto the board, worked
 // (its share of the cuts, strokes …), and moved to the side of the board – pushed
 // there with the knife – where a pile builds up; then the next. it.out: how many
@@ -116,15 +116,15 @@ function onBoard(s, phases, cut = false) {
     out = [];
     for (let u = 0; u < q; u++) out.push(takeOne(u, q), ...phases.map((p) => shareOf(p, u, q)), toSide(u, t === 'knife' ? 'knife' : 'hand'));
   }
-  // the board's tool: picked up for its first use, put down after its last, held in between
+  if (boxed) out.push(boxUp(cut, q > 1));
+  // the board's tool: picked up for its first use, in my hand from then on (held while the other hand works)
   if (t) {
     const k0 = out.findIndex((p) => p.tool === t);
-    let k1 = out.length - 1;
-    while (out[k1].tool !== t) k1--;
-    out = [...out.slice(0, k0), pickTool(t), ...out.slice(k0, k1 + 1).map((p) => (p.tool === t ? p : { ...p, held: t })), putTool(t), ...out.slice(k1 + 1)];
+    out = [...out.slice(0, k0), pickTool(t), ...out.slice(k0).map((p) => (p.tool === t ? p : { ...p, held: t }))];
   }
-  return boxed ? [...out, boxUp(cut, q > 1)] : out;
+  return out;
 }
+export function stepTool(step, bk) { const ps = phasesOf(step, bk); return BOARD_TOOLS.find((t) => ps.some((p) => p.tool === t)) || null; }
 // A bunch has more than the recipe takes (it.extra, in the same container): once what's
 // needed has its own container, what's left stays in the bunch's one – a leftover of its
 // own (`${id}~rest`) where it is, which goes back in the fridge / pantry.

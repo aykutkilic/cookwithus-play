@@ -19,7 +19,7 @@ import {
   choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
   handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR, glovesOn,
 } from '../shared/cook.js';
-import { phasesOf, ACTIONS, BOARD_TOOLS } from '../shared/actions.js';
+import { phasesOf, ACTIONS, BOARD_TOOLS, stepTool } from '../shared/actions.js';
 import { ingName, TOOLS } from '../shared/ingredients.js';
 import { foodWidth } from './food3d.js';
 import {
@@ -71,7 +71,9 @@ const scene = new Scene3D($('world'));
 scene.mainHand = S.mainHand;
 const sfx = new Sfx();
 const station = new Station($('stCanvas'), {
-  act: (m) => send(m),
+  act: (m) => { send(m); pickedAtWork(m); },
+  // (a board's tool – the knife, the peeler, the grater – in one of my hands)
+  holdsTool: (t) => myHeld().some((k) => boardKind(k) === t),
   sfx: (n, v) => sfx.play(n, v),
   pose: (p) => { S.pose = p; },
   progress: (info) => stationProgress(info),
@@ -80,6 +82,20 @@ const station = new Station($('stCanvas'), {
 });
 
 function send(obj) { if (S.net) S.net.send(obj); }
+// which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
+function boardKind(k) { const t = k && k[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
+// At work, the board's tool picked up off the board (its tap): really in my hand now – the hand that works with it,
+// the main one if it's free – and mine to put down when I choose.
+function pickedAtWork(m) {
+  const ph = m && m.t === 'act' && station.c && station.c.phases[m.ph];
+  if (!ph || ph.hot !== 'pick' || !S.working || myHeld().some((k) => boardKind(k) === ph.takes)) return;
+  const C = S.M.cook, fx = S.working.fx;
+  const hit = Object.entries(C.tools || {}).find(([, t]) => t.held == null && (t.at === `${fx}/board` || t.at === fx) && TOOLS[t.kind] && TOOLS[t.kind].board === ph.takes);
+  if (!hit) return;
+  const key = `u:${hit[0]}`;
+  wantHand(key, freeHandSlot(S.mainHand));
+  send({ t: 'take', what: key, fx: hit[1].at });
+}
 function toast(text, ms = 2600) {
   const t = $('toast');
   t.textContent = text;
@@ -790,6 +806,13 @@ function fpPointed(hand = S.mainHand) {
   const c = scene.viewCenter();
   const res = fpPointedAt(c);
   const k = hand >= 0 ? scene.fpSlots[hand] : null;
+  // (the knife – a board's tool – in this hand, at food a job here does with it: that job, its work begun)
+  const t = boardKind(k);
+  if (t && res && res.kind === 'thing' && res.key[0] === 'i') {
+    const f = fixtureById(S.K, splitPlace(res.fx)[0]);
+    const job = f && jobsAt(f).find((j) => j.sid && !j.off && (() => { const s = S.x.steps.find((q) => q.id === j.sid); return s && `i:${s.item}` === res.key && stepTool(s, bakeKind(f)) === t; })());
+    if (job) return { kind: 'work', sid: job.sid, fx: f.id, key: res.key, w: res.w, label: job.label };
+  }
   // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
   const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
   if (k && onTop) {
@@ -815,6 +838,7 @@ function placeName(id) { const B = S.K.bays && S.K.bays[id]; return B ? B.name :
 const isGloves = (key) => { const t = key && key[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[key.slice(2)]; return !!(t && TOOLS[t.kind] && TOOLS[t.kind].worn); };
 function fpPointLabel(pt) {
   const C = S.M.cook;
+  if (pt.kind === 'work') return pt.label;
   if (pt.kind === 'surface') return `${thingEmoji(C, pt.key)} Put the ${thingName(C, S.x, pt.key)} ${pt.sink ? 'in the sink' : pt.slot != null ? 'on this burner' : 'here'}`;
   if (pt.kind === 'hangGloves') return '🧤 Hang up the oven gloves';
   if (pt.kind === 'thing' && isGloves(pt.key)) return '🧤 Put on the oven gloves';
@@ -854,6 +878,7 @@ function fpPointAct(pt, hand = -1) {
     sfx.play('clunk', 0.4);
     return;
   }
+  if (pt.kind === 'work') { startJob(pt.sid, pt.fx); return; }
   if (pt.kind === 'surface') {
     // (just there – on the board, a burner, a spot on the worktop; in the sink, into it)
     send({ t: 'put', what: pt.key, fx: pt.fx, ...(pt.sink ? {} : { lay: { x: pt.w.x, y: pt.w.y, z: pt.w.z } }), ...(pt.slot != null ? { slot: pt.slot } : {}) });
@@ -1253,7 +1278,7 @@ function handDown(i) {
   const c = scene.viewCenter();
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
   const pt = fpPointed(i);
-  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn' || pt.kind === 'surface')) { hover = i; fpPointAct(pt, i); return; }
+  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn' || pt.kind === 'surface' || pt.kind === 'work')) { hover = i; fpPointAct(pt, i); return; }
   if (pick && (pick.kind === 'door' || pick.kind === 'thing') && !S.fpDrag) {
     fpGrab({ clientX: c.x, clientY: c.y, pointerId: HAND_ID[i] }, i);
     if (S.fpDrag) { Object.assign(h, { down: true, ox: 0, oy: 0, act: 'grab' }); moving = i; hover = i; return; }

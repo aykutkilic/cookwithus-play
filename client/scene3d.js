@@ -1106,6 +1106,9 @@ export class Scene3D {
   // The tools (the cutlery, the utensils, the bottles …) where they are: put away in their spot, in a
   // hand, or lying on a worktop – in a row from its front right corner. (A board's own knife, peeler and
   // grater lying in their places there: the kitchen's own meshes show them.)
+  // which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
+  boardKindOf(k) { const t = k && k[0] === 'u' && this.toolsNow && this.toolsNow[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
+
   updateTools(view) {
     void view;
     const tools = this.toolsNow || {};
@@ -1114,6 +1117,8 @@ export class Scene3D {
       const k = `u:${id}`;
       const kept = this.stashAt && this.stashAt.get(k);
       if (kept && (kept.hidden || kept.lie === 'board')) continue;
+      // (in my hand at work, the work drawing it there itself – the knife as it cuts: not twice)
+      if (kept && kept.fp && this.work && !this.work.idle && this.work.tool && TOOLS[t.kind] && this.work.tool.kind === TOOLS[t.kind].board) continue;
       const up = !!(TOOLS[t.kind] && TOOLS[t.kind].upright) || t.kind === 'grater';
       let pos, q;
       if (kept) {
@@ -2244,7 +2249,16 @@ export class Scene3D {
     // (for a left-handed cook, the other way about: M the main hand, O the other)
     const M = this.mainHand, O = 1 - M;
     const leftTakes = g.kind === 'drag' && g.source && g.source.fromBox && this.fpSlots[O] == null && this.fpSlots[M] != null;
-    const wi = ph.held || leftTakes ? O : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[M] || p.id === ['kq', 'ke'][O]) && this.fpSlots[O] == null ? O : M, oi = 1 - wi;
+    // (a board's tool in my hand that this gesture doesn't use – the knife, while the other hand takes the tomato out of
+    // its container – held at rest meanwhile, as between its uses)
+    const restTool = ph.held || (!BOARD_TOOLS.includes(ph.tool) && !(ph.g === 'tap' && ph.hot === 'pick') ? this.fpSlots.map((k) => this.boardKindOf(k)).find(Boolean) || null : null);
+    let wi = restTool || leftTakes ? O : held >= 0 ? (this.fpSlots[1] === srcKey ? 1 : held) : (this.fpSlots[M] || p.id === ['kq', 'ke'][O]) && this.fpSlots[O] == null ? O : M;
+    // (the board's tool – the knife … – in the hand that really holds it: that hand works with it, the other does the
+    // rest meanwhile)
+    const tk = BOARD_TOOLS.includes(ph.tool) && ph.g !== 'tap' ? ph.tool : restTool;
+    const th = tk ? this.fpSlots.findIndex((k) => this.boardKindOf(k) === tk) : -1;
+    if (th >= 0) wi = tk === ph.tool ? th : 1 - th;
+    const oi = 1 - wi;
     const pt = p.seen ? { x: p.x, y: p.y } : { x: MAIN.x + 60, y: MAIN.y - 120 };
     const len = TOOL_LEN[tool] || 0;
     const hand = (i, pos, kind, extra = {}) => { out.hands[i] = { w: pos, kind, ...extra }; };
@@ -2800,14 +2814,14 @@ export class Scene3D {
       if (ov && !ov.hide && !(g.source && (g.source.fromBox || g.source.unit || g.source.pieces))) { if (U.cur) ov.st = { ...U.cur, ...(ov.st || {}) }; else ov.hide = true; }
     }
     // the grater standing where it's used, the peeler in my other hand – held between uses
-    if (ph.held === 'grater' && !out.tool) out.tool = { kind: 'grater', at: { pos: w.O.clone().addScaledVector(w.R, -0.09).addScaledVector(UP, 0.115), yaw: out.yaw + Math.PI / 2 } };
-    if (ph.held === 'peeler' && !out.tool && !out.hands[oi]) {
+    if (restTool === 'grater' && !out.tool) out.tool = { kind: 'grater', at: { pos: w.O.clone().addScaledVector(w.R, -0.09).addScaledVector(UP, 0.115), yaw: out.yaw + Math.PI / 2 } };
+    if (restTool === 'peeler' && !out.tool && !out.hands[oi]) {
       const gp = w.O.clone().addScaledVector(w.R, 0.14).addScaledVector(w.N, 0.06).addScaledVector(UP, 0.07);
       out.tool = { kind: 'peeler', grip: gp, dir: UP.clone().addScaledVector(w.N, 0.3).normalize(), hand: oi };
       hand(oi, gp, 'tool');
     }
     // the knife held at rest (between knife work: turning the strips …) – its tip on the board, at the right
-    if (ph.held === 'knife' && !out.tool && !out.hands[oi]) {
+    if (restTool === 'knife' && !out.tool && !out.hands[oi]) {
       // (out on the board's right, its tip resting on it – the forearm laid along it, not drawn back to my side)
       const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.1).addScaledVector(w.N, -0.1).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.4).normalize(), 0.3);
       out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, up: K.yA, hand: oi, off: K.K0.clone().sub(K.fist) };

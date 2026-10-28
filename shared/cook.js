@@ -19,7 +19,7 @@
 // work is. A step starts only when what it needs is there (or in your hands –
 // you put it down as you start). Nothing walks by itself.
 
-import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest } from './actions.js';
+import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool } from './actions.js';
 import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
 import { stockKitchen, freeSpot, thingsIn } from './stock.js';
@@ -970,7 +970,9 @@ export function openStep(C, x, K, sid, place, memberId) {
     if (miss.length) return bringMsg(C, x, K, miss);
     // what you hold for something else stays in one hand if this needs only
     // the other – else you set it down here first, as anyone would
-    const extra = heldBy(C, memberId).filter((k) => !need.includes(k) && !holdsNeeded(C, k, need));
+    // (the board's tool the work's done with, in my hand already – the knife – isn't in the way: it's what I'll use)
+    const tool = stepTool(s), isTool = (k) => k[0] === 'u' && tool && TOOLS[C.tools[k.slice(2)].kind] && TOOLS[C.tools[k.slice(2)].kind].board === tool;
+    const extra = heldBy(C, memberId).filter((k) => !need.includes(k) && !holdsNeeded(C, k, need) && !isTool(k));
     if (extra.length && (stepHands(s) === 2 || extra.reduce((n, k) => n + handsFor(C, k), 0) >= HANDS)) {
       const f = fixtureById(K, pl.fx);
       if (putBlocked(C, x, K, extra, f)) return `Put the ${thingName(C, x, extra[0])} down first – you need ${stepHands(s) === 2 ? 'both hands' : 'a free hand'} for this`;

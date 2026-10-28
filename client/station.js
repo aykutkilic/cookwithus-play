@@ -232,6 +232,8 @@ export class Station {
     this.g = g;
     this.idle = 0;
     this.report();
+    // (picking up the board's tool – the knife, the peeler, the grater – that's in my hand already: nothing to do)
+    if (ph.g === 'tap' && ph.hot === 'pick' && this.hooks.holdsTool && this.hooks.holdsTool(ph.takes)) setTimeout(() => { if (this.phase === ph && this.k === 0) this.count(); }, 0);
   }
 
   // the stove's knob sits bottom right; the oven's on its control panel
