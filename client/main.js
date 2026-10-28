@@ -21,7 +21,7 @@ import {
 } from '../shared/cook.js';
 import { phasesOf, ACTIONS, BOARD_TOOLS, stepTool } from '../shared/actions.js';
 import { simProgress } from '../shared/sim.js';
-import { ingName, TOOLS } from '../shared/ingredients.js';
+import { ingName, TOOLS, stocked } from '../shared/ingredients.js';
 import { foodWidth } from './food3d.js';
 import {
   randomProfile, sanitizeProfile, isProfane, cleanName, QUICK_CHAT, SKINS, HAIR_COLORS, HAIR_STYLES, HATS, HAT_COLORS,
@@ -99,6 +99,27 @@ function pourTarget() {
   if (s) return { what: `staple:${s.itemKind}`, into: v.id, w: v.w, every: 0.5, label: `🧂 Season it – ${ingName(s.itemKind, 1).toLowerCase()} (a shake each moment)` };
   return null;
 }
+// Free work at fixture f – the recipe asking for it or not: with a board's knife in hand, slicing, dicing, mincing,
+// chopping what's uncut lying here; the peeler, peeling; the grater, grating; at the sink, washing what I hold.
+const FREE_BY_TOOL = { knife: ['slice', 'dice', 'mince', 'chop'], peeler: ['peel'], grater: ['grate'] };
+const FREE_ICON = { slice: '🔪', dice: '🔪', mince: '🔪', chop: '🔪', peel: '🥕', grate: '🧀', wash: '💧' };
+function freeJobs(f, only = null) {
+  const C = S.M.cook, out = [];
+  if (!C || !S.x || C.finished) return out;
+  const held = myHeld(), tools = held.map(boardKind).filter(Boolean);
+  // (not what the recipe itself does with it – that's its own step, already in the list)
+  const own = (a, id) => S.x.steps.some((q) => q.do === a && q.item === id && C.steps[q.id] && C.steps[q.id].s !== 'done');
+  const job = (a, id, it) => ({ sid: `#do.${a}.${id}.${it.kind}.${it.qty || 1}@${f.id}`, label: `${FREE_ICON[a]} ${ACTIONS[a].verb} the ${thingName(C, S.x, `i:${id}`)}`, chore: true, free: true, key: `i:${id}` });
+  for (const [id, it] of Object.entries(C.items)) {
+    if ((only && only !== `i:${id}`) || !stocked(it.kind)) continue; // (produce: peppers, tomatoes, onions … – not an egg sliced)
+    if (f.caps.includes('board') && it.at === f.id && !it.in && !it.used && !it.stored && it.held == null && !it.cut) {
+      for (const t of tools) for (const a of FREE_BY_TOOL[t] || []) if ((a !== 'peel' || !it.peeled) && !own(a, id)) out.push(job(a, id, it));
+    }
+    if (f.caps.includes('sink') && held.includes(`i:${id}`) && !it.washed && !own('wash', id)) out.push(job('wash', id, it));
+  }
+  return out;
+}
+
 // R: using what my main hand holds on what I aim at – the recipe's work that does that, its close-up and my strokes
 // (the knife on the tomatoes: dicing them; the peppers at the sink: washing them); at a pan, its sauté / stir – or, if
 // none's open, a stir there and then
@@ -112,6 +133,9 @@ function workTarget() {
     const f = fixtureById(S.K, splitPlace(res.fx)[0]);
     const job = f && jobsAt(f).find((j) => j.sid && !j.off && (() => { const s = S.x.steps.find((q) => q.id === j.sid); return s && `i:${s.item}` === res.key && stepTool(s, bakeKind(f)) === t; })());
     if (job) return { sid: job.sid, fx: f.id, w: res.w, label: job.label };
+    // (nothing the recipe does with it here: what it's free to do – the first of them; Tab for the rest)
+    const fj = f && freeJobs(f, res.key)[0];
+    if (fj) return { sid: fj.sid, fx: f.id, w: res.w, label: `${fj.label} (Tab: more)` };
   }
   const v = scene.vesselPick(c.x, c.y, S.me);
   if (v) {
@@ -1560,6 +1584,7 @@ function jobsAtNow(f) {
     // a dirty board (wooden: by hand, with the sponge)
     if (f.caps.includes('board') && C.fx[f.id] && C.fx[f.id].dirty) out.push({ sid: choreId('wipe', f.id), label: '🧽 Clean the board', chore: true });
     // a bunch with more than the recipe takes, lying here: just what's needed into a container of its own
+    out.push(...freeJobs(f));
     if (f.caps.includes('board')) for (const [id, it] of Object.entries(C.items)) {
       if (!(it.extra > 0) || it.at !== f.id || it.in || it.held != null) continue;
       out.push({ sid: `#portion.${id}.${it.qty || 1}@${f.id}`, label: `🫙 Take ${it.qty > 1 ? `${it.qty} of the ${thingName(C, x, `i:${id}`)}` : `one ${ingName(it.kind, 1).toLowerCase()}`} into a container of their own`, chore: true });

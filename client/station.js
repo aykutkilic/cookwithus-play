@@ -1144,7 +1144,7 @@ export class Station {
     const f = this.c.f;
     const t = f.type;
     if (this.mode === 'store') return 'store';
-    if (this.c.def.chore) return { clear: 'scraps', knob: 'hob', scrub: 'sink', wipe: 'board', dw: 'dishwasher', portion: 'board' }[this.c.def.do] || 'bin';
+    if (this.c.def.chore && !this.c.def.free) return { clear: 'scraps', knob: 'hob', scrub: 'sink', wipe: 'board', dw: 'dishwasher', portion: 'board' }[this.c.def.do] || 'bin';
     if (t === 'sink') return 'sink';
     if (t === 'fridge') return 'chill';
     if (t === 'pizzaOven' || t === 'stoneOven') return 'dome';

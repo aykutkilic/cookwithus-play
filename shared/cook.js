@@ -185,12 +185,21 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
+  // (free work – what the recipe doesn't ask for: a tomato sliced, a pepper washed – '#do.<action>.<item>.<kind>.<qty>@<fx>')
+  const fw = /^#do\.([a-z]+)\.([a-zA-Z0-9~]+)\.([a-zA-Z]+)\.(\d+)@([a-zA-Z]+\d*)$/.exec(sid);
+  if (fw && FREE_WORK[fw[1]]) {
+    const a = fw[1];
+    return { id: sid, do: a, item: fw[2], itemKind: fw[3], itemQty: Number(fw[4]), fx: fw[5], chore: true, free: true, after: [], n: FREE_WORK[a], name: `${ACTIONS[a].verb} the ${ingName(fw[3], Number(fw[4])).toLowerCase()}` };
+  }
   const p = /^#portion\.([a-zA-Z0-9]+)\.(\d+)@([a-zA-Z]+\d*)$/.exec(sid);
   if (p) return { id: sid, do: 'portion', item: p[1], n: Number(p[2]), fx: p[3], chore: true, after: [], name: ACTIONS.portion.verb };
   const m = /^#(clear|toss|bag|knob|scrub|wipe|dw|room|lay)@([a-zA-Z]+\d*)$/.exec(sid);
   if (!m) return null;
   return { id: sid, do: m[1], fx: m[2], chore: true, after: [], name: ACTIONS[m[1]].verb };
 }
+
+// what can be done freely, the recipe asking for it or not – and how many strokes, cuts … to it
+export const FREE_WORK = { slice: 6, dice: 4, mince: 8, chop: 4, peel: 4, grate: 6, wash: 4 };
 
 // every step a cook can be busy with: the recipe's and the chores under way
 function allDefs(C, x) {
@@ -220,6 +229,16 @@ function addScraps(C, fx, sc) {
 function choreBlocked(C, x, K, d, memberId) {
   const f = fixtureById(K, d.fx);
   if (!f) return 'No such place';
+  // (free work: the thing here – or in my hands – and not cut already, for a cut)
+  if (d.free) {
+    const it = C.items[d.item];
+    if (!it || it.in || it.used || !stocked(it.kind)) return 'Nothing like that here';
+    if (d.do === 'wash') return f.caps.includes('sink') ? '' : 'Wash it at the sink';
+    if (!f.caps.includes('board')) return 'That’s done on a board';
+    if (it.at !== d.fx && !heldBy(C, memberId).includes(`i:${d.item}`)) return 'Bring it here first';
+    if (['slice', 'dice', 'mince', 'chop'].includes(d.do) && it.cut) return 'It’s cut already';
+    return '';
+  }
   const sc = C.scraps[d.fx];
   const bin = C.bins[d.fx] || { fill: 0 };
   switch (d.do) {
@@ -1049,6 +1068,8 @@ export function openStep(C, x, K, sid, place, memberId) {
   }
   // one step at a time per cook
   for (const o of allDefs(C, x)) if (o.id !== sid && C.steps[o.id] && C.steps[o.id].s === 'active' && C.steps[o.id].by === memberId) closeStep(C, x, o.id, memberId);
+  // (worked on now: from where work on it starts – not the spot it was laid on)
+  if (s.item && C.items[s.item]) delete C.items[s.item].lay;
   st.s = 'active';
   st.by = memberId;
   st.fx = pl.fx;
