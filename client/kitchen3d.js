@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { FIXTURES, BAYS, glassDoor, wallUnits, counterDecor as decorOf } from '../shared/kitchens.js';
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
-import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake } from './parts3d.js';
+import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, consolidate } from './parts3d.js';
 import { chefKnifeMesh, peelerMesh, graterMesh, crockMesh } from './props3d.js';
 import { containerNest } from './food3d.js';
 
@@ -229,6 +229,22 @@ export function buildKitchen3D(K) {
   const hang = new THREE.Group();
   hangingString(hang, ctx, WIN);
   stat.add(hang);
+
+  // ------------------------------------------------------------------ the moving parts, each drawn in a few goes
+  // (a drawer's front, its sides and its handle together – not a draw each. What's reached for on its own is kept
+  // as it is: every part named in parts or a bay, and the flames' and fire's tongues, the board's stains – they
+  // flicker, come and go one by one)
+  const mark = (x) => {
+    if (!x || typeof x !== 'object') return;
+    if (x.isObject3D) { x.userData.keep = true; return; }
+    if (Array.isArray(x)) x.forEach(mark);
+    else if (x.constructor === Object) Object.values(x).forEach(mark);
+  };
+  for (const F of Object.values(fx)) {
+    mark(F.parts); mark(F.bays);
+    for (const k of ['flames', 'fire', 'stains']) for (const o of [].concat(F.parts[k] || [])) o.children.forEach((c) => { c.userData.keep = true; });
+  }
+  for (const o of dyn.children) consolidate(o);
 
   // ------------------------------------------------------------------ bake
   root.add(bake(stat));

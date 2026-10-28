@@ -230,7 +230,6 @@ export class FpArms {
     for (const h of this.hands) {
       const root = new THREE.Group();
       const upper = new THREE.Mesh(tube, shirt), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
-      upper.userData.noAO = true; // (running on up past the camera's edge: kept out of the ambient occlusion)
       // (the cuff closing in a little round the wrist – not a wide ring with its dark inside showing)
       const band = new THREE.Mesh(new THREE.CylinderGeometry(0.86, 1, 1, 18, 1, true), cuffIn);
       const hand = new THREE.Group();

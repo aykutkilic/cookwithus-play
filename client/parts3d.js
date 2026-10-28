@@ -123,6 +123,49 @@ export function turn(o, y, x = 0, z = 0) { o.rotation.set(x, y, z); return o; }
 
 const noRaycast = () => undefined;
 
+/**
+ * Merges the plain meshes under `root` – rigid with it – into one mesh per material (and way of
+ * casting shadows): the same picture in a few draw calls instead of one per piece. Left as they are:
+ * what's see-through and hides what's behind it (glass that doesn't – depthWrite off – is merged too),
+ * skinned, instanced or multi-material, cut by a knife's line (userData.clipX), hidden, or kept
+ * (userData.keep), and whatever's under those; root itself stays. The merged meshes keep their
+ * attributes, are still hit by rays, and replace the pieces in place. Returns root.
+ */
+export function consolidate(root) {
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const groups = new Map();
+  const left = (o) => { for (let p = o; p && p !== root; p = p.parent) if (!p.visible || p.userData.keep || p.userData.clipX != null) return true; return false; };
+  root.traverse((o) => {
+    if (o === root || !o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || Array.isArray(o.material) || o.morphTargetInfluences) return;
+    const m = o.material, geo = o.geometry;
+    if (m.transparent && m.depthWrite || m.clippingPlanes || geo.morphAttributes && Object.keys(geo.morphAttributes).length || left(o)) return;
+    const sig = Object.entries(geo.attributes).map(([k, a]) => `${k}${a.itemSize}${a.normalized ? 'n' : ''}`).sort().join();
+    const key = `${m.uuid}|${sig}|${o.castShadow}|${o.receiveShadow}|${o.renderOrder}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  });
+  const rel = new THREE.Matrix4();
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const geos = list.map((o) => {
+      const g = o.geometry.clone();
+      if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
+      g.clearGroups();
+      g.applyMatrix4(rel.multiplyMatrices(inv, o.matrixWorld));
+      return g;
+    });
+    const merged = mergeGeometries(geos, false);
+    for (const g of geos) g.dispose();
+    if (!merged) continue;
+    const o0 = list[0], mesh = new THREE.Mesh(merged, o0.material);
+    mesh.castShadow = o0.castShadow; mesh.receiveShadow = o0.receiveShadow; mesh.renderOrder = o0.renderOrder;
+    root.add(mesh);
+    for (const o of list) o.removeFromParent();
+  }
+  return root;
+}
+
 /** Merges every mesh under `root` into one mesh per material (lights kept). */
 export function bake(root, { cast = true, receive = true } = {}) {
   root.updateMatrixWorld(true);

@@ -87,6 +87,7 @@ export class Scene3D {
     r.setPixelRatio(this.dpr);
     r.shadowMap.enabled = !LITE;
     r.shadowMap.type = THREE.PCFShadowMap;
+    r.shadowMap.autoUpdate = false; // (drawn once a frame – see frame() – not again for every pass that draws)
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.localClippingEnabled = true; // (a thing half cut through ends at the knife's line)
@@ -113,27 +114,32 @@ export class Scene3D {
       return l;
     });
     this.composer = null;
-    if (!mobile && !LITE) {
+    // (ambient occlusion only where it's cheap: a screen of ordinary resolution – at a Retina's four pixels a
+    // point it costs more than the whole kitchen does, and the governor would soon take it away again, after
+    // seconds of stuttering)
+    if (!mobile && !LITE && innerWidth * innerHeight * this.dpr * this.dpr <= 2.6e6) {
       try {
-        const composer = new EffectComposer(r, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+        // (the scene drawn with its depth kept, for the occlusion)
+        const composer = new EffectComposer(r, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(1, 1) }));
         composer.addPass(new RenderPass(this.scene, this.camera));
         const ao = new GTAOPass(this.scene, this.camera, 1, 1);
         ao.updateGtaoMaterial({ radius: 0.25, distanceExponent: 2, thickness: 1, scale: 1, samples: 8 });
         ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 8 });
         ao.blendIntensity = 0.8;
-        // the food standees (sprites) are flat cut-outs: keep them out of the occlusion
-        // (it would see each as a solid card and darken a box round it) – nor my sleeves, where they fade out
-        const hide = ao._overrideVisibility.bind(ao);
-        ao._overrideVisibility = function () {
-          hide();
-          this.scene.traverse((o) => { if ((o.isSprite || o.userData.noAO) && o.visible) { this._visibilityCache.push(o); o.visible = false; } });
+        // the occlusion worked out from the depth the scene was just drawn with (its normals from that too) – not
+        // the whole kitchen drawn over again for it. (What doesn't write depth stays out of it: the food standees,
+        // the dirt being cleaned off.)
+        const aoRender = ao.render.bind(ao);
+        ao.render = function (renderer, writeBuffer, readBuffer, ...rest) {
+          if (this.depthTexture !== readBuffer.depthTexture) this.setGBuffer(readBuffer.depthTexture);
+          return aoRender(renderer, writeBuffer, readBuffer, ...rest);
         };
         composer.addPass(ao);
         composer.addPass(new OutputPass());
         this.composer = composer;
       } catch (e) { console.warn('no ambient occlusion', e); }
     }
-    this.q = { steps: this.qualitySteps(), level: 0, n: 0, sum: 0, skip: 120 };
+    this.q = { steps: this.qualitySteps(), level: 0, n: 0, sum: 0, skip: 1500 };
     this.fps = 0;
     this.K = null; this.k3 = null;
     this.vessels = new Map();  // vessel id -> {kind, group, liquid, lid, bits}
@@ -213,7 +219,7 @@ export class Scene3D {
       return { ...g, pos: p };
     });
     this.camInit = false;
-    this.q.skip = Math.max(this.q.skip, 60); // new shaders compile: don't count those frames
+    this.q.skip = Math.max(this.q.skip, 1000); // new shaders compile: don't count that time
     return this.K;
   }
 
@@ -244,25 +250,28 @@ export class Scene3D {
 
   // Called every frame with the time since the last one. It learns how fast
   // the display refreshes (60, 120 Hz …) from the quickest frames, and when the
-  // frames come clearly slower than that for a while (averaged over ~1 s), it
-  // drops the next extra and looks again.
+  // frames come clearly slower than 60 a second (or the display, if that's
+  // slower) – averaged over about a second – it drops the next extra and looks
+  // again. (Seconds, not frames: at a few frames a second, a count of them
+  // would be a long wait. And not chasing 120 a second on a 120 Hz display –
+  // 60 is smooth; the picture isn't given up for more.)
   govern(ms) {
     const q = this.q;
     if (ms > 250) return; // a hidden tab, a dialog: not the renderer's fault
     if (ms > 2) { q.fast = q.fast ? Math.min(q.fast * 1.002, ms) : ms; } // ~ the refresh interval (slowly forgiving)
-    if (q.skip > 0) { q.skip--; return; }
+    if (q.skip > 0) { q.skip -= ms; return; }
     q.n++; q.sum += ms;
-    if (q.n < 90) return;
+    if (q.sum < 1000) return;
     const avg = q.sum / q.n;
     q.n = 0; q.sum = 0;
     this.fps = Math.round(1000 / avg);
     const refresh = Math.max(4, Math.min(17, q.fast || 16.7));
     this.hz = Math.round(1000 / refresh);
-    if (avg > refresh * 1.18 && q.level < q.steps.length) {
+    if (avg > Math.max(1000 / 60, refresh) * 1.18 && q.level < q.steps.length) {
       const [name, apply] = q.steps[q.level++];
       apply();
       console.info(`cookwithus: ${this.fps} fps, now ${name}`);
-      q.skip = 45;
+      q.skip = 750;
     }
   }
 
@@ -678,6 +687,7 @@ export class Scene3D {
     this.updateLights(view);
     this.updateSakir(view, dt);
     this.updateSteam(dt);
+    this.renderer.shadowMap.needsUpdate = true;
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
   }
@@ -1950,7 +1960,6 @@ export class Scene3D {
     if (!L) {
       L = new THREE.Mesh(makeGeo(), new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 }));
       L.rotation.x = -Math.PI / 2;
-      L.userData.noAO = true;
       parent.add(L);
       parent.userData.cleanLayer = L;
     }

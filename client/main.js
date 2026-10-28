@@ -1982,7 +1982,7 @@ addEventListener('resize', layout);
 // ?lite / ?fps=N cap the frame rate (slow machines, headless tests); ?stats shows it
 const FRAME_MS = params.has('fps') ? 1000 / Math.max(1, Number(params.get('fps'))) : LITE ? 90 : 0;
 const STATS = params.has('stats') ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'stats' })) : null;
-let lastT = performance.now(), sceneDt = 0, frameNo = 0, statsAt = 0, jsMs = 0;
+let lastT = performance.now(), statsAt = 0, jsMs = 0;
 function frame(now) {
   if (FRAME_MS && now - lastT < FRAME_MS) { requestAnimationFrame(frame); return; }
   const gap = now - lastT;
@@ -1996,9 +1996,7 @@ function frame(now) {
     tickTimers(dt);
     sendPos(now);
     const view = buildView(now, dt);
-    // at the station your hands come first: the kitchen behind it takes every other frame
-    sceneDt += dt;
-    if (!S.working || frameNo++ % 2 === 0) { scene.frame(Math.min(0.1, sceneDt), view); sceneDt = 0; }
+    scene.frame(dt, view);
     scene.govern(gap);
     drawTags(view);
     if (S.working) station.frame(dt);

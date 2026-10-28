@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { artOf, artPal, normCut, sizeArt, defaultCount, pieceCol, roundDims, tubeOf, BLOCK_SIZE, mixHex, doughFlatGeom, artHash } from './art.js';
 import { ingName, PACKED } from '../shared/ingredients.js';
+import { consolidate } from './parts3d.js';
 
 export const FOOD_K = 0.00075;
 const K = FOOD_K;
@@ -117,6 +118,8 @@ export function buildFood(kind, st) {
   if (!g) {
     g = new THREE.Group();
     try { foodLocal(g, kind, st && typeof st === 'object' ? st : {}); } catch (e) { console.warn('food3d', kind, e); }
+    // (a heap of rice, a bunch of parsley …: its pieces drawn together, a few draw calls – not one each)
+    consolidate(g);
     if (CACHE.size > 400) CACHE.clear();
     CACHE.set(key, g);
   }
@@ -262,10 +265,11 @@ function containerMesh(sp) {
   }
   const water = new THREE.Mesh(GEO.box, WATER_MAT);
   water.visible = false;
+  water.userData.keep = true; // (filled and emptied on its own)
   g.add(water);
   g.userData.water = water;
   g.userData.inner = b;
-  return g;
+  return consolidate(g); // (its walls and floor as one, its four labels as one)
 }
 // A food in its container: {g, setWater(0..1)}. The food is built for the
 // container's inside (several in a grid, pieces over the floor) and shrunk if it must.
@@ -309,7 +313,7 @@ export function containerNest() {
     c.position.y = i * 0.006;
     g.add(c);
   });
-  return g;
+  return consolidate(g);
 }
 
 // how wide (along x) a food is, in kitchen units
