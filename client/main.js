@@ -881,7 +881,9 @@ function fpPointAct(pt, hand = -1) {
   if (pt.kind === 'work') { startJob(pt.sid, pt.fx); return; }
   if (pt.kind === 'surface') {
     // (just there – on the board, a burner, a spot on the worktop; in the sink, into it)
-    send({ t: 'put', what: pt.key, fx: pt.fx, ...(pt.sink ? {} : { lay: { x: pt.w.x, y: pt.w.y, z: pt.w.z } }), ...(pt.slot != null ? { slot: pt.slot } : {}) });
+    // (and facing as it was in my hand – not turned round as it lands)
+    const yaw = scene.heldYaw(pt.key);
+    send({ t: 'put', what: pt.key, fx: pt.fx, ...(pt.sink ? {} : { lay: { x: pt.w.x, y: pt.w.y, z: pt.w.z, ...(yaw != null ? { yaw } : {}) } }), ...(pt.slot != null ? { slot: pt.slot } : {}) });
     sfx.play('clunk', 0.45);
     return;
   }

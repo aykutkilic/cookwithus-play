@@ -1042,8 +1042,11 @@ export class Scene3D {
         const putting = r && !r.take && !r.released ? r.key : null;
         const k = putting || this.fpSlots[i];
         if (!k || (out.has(k) && !putting)) continue;
-        // (being put away: the hand takes it right to its spot on the shelf, and only there lets go)
+        // (being put away: the hand reaches to its spot on the shelf)
         if (putting && out.has(k) && k[0] === 'i') r.world = out.get(k).pos.clone().addScaledVector(UP, 0.01);
+        // (put down: out of the hand from the start, it goes straight to its spot – the hand reaching with it – not
+        // carried round the arm's way and dropped short)
+        if (putting) continue;
         // (where it lay till the hand closes on it; then, if the hand only got
         // within arm's length of it, it comes the rest of the way)
         if (r && r.key === k && r.take && !r.grabbed) { out.set(k, { pos: r.src, yaw: r.srcYaw, sig: 'fp:lying', fp: true, size: 0.24 }); continue; }
@@ -1106,6 +1109,12 @@ export class Scene3D {
   // The tools (the cutlery, the utensils, the bottles …) where they are: put away in their spot, in a
   // hand, or lying on a worktop – in a row from its front right corner. (A board's own knife, peeler and
   // grater lying in their places there: the kitchen's own meshes show them.)
+  // which way a thing in my hand faces now (its turn about the upright) – kept when it's put down – or null
+  heldYaw(k) {
+    const o = k[0] === 'v' ? this.vessels.get(k.slice(2))?.group : k[0] === 'i' ? this.foods.get(`item:${k.slice(2)}`)?.g : null;
+    return o ? new THREE.Euler().setFromQuaternion(o.quaternion, 'YXZ').y : null;
+  }
+
   // which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
   boardKindOf(k) { const t = k && k[0] === 'u' && this.toolsNow && this.toolsNow[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
 
@@ -1148,7 +1157,9 @@ export class Scene3D {
       rec.g.position.copy(pos);
       // (standing on its foot; lying, just above what it lies on)
       if (!(kept && (kept.q || kept.held))) rec.g.position.y += up ? rec.g.userData.foot || 0 : kept && kept.lie === 'crock' ? 0 : (rec.g.userData.under || 0) + 0.0008;
-      rec.g.quaternion.copy(q);
+      // (out of my hand onto the worktop: turning to lie as it goes, not in a jump)
+      const gl = this.glides.get(k);
+      if (gl && gl.fromHand && gl.t < 1) rec.g.quaternion.slerp(q, Math.min(1, this.dt * 9)); else rec.g.quaternion.copy(q);
       rec.g.visible = true;
       seen.add(id);
     }
@@ -1185,7 +1196,8 @@ export class Scene3D {
       // (set down, never tossed: out of a hand it slows as it lands; only a little lift over the way)
       const e = g.fromHand ? 1 - (1 - g.t) ** 3 : g.t * g.t * (3 - 2 * g.t);
       g.pos.lerpVectors(g.from, target, e);
-      g.pos.y += Math.sin(Math.PI * g.t) * 0.035 * Math.min(1, g.from.distanceTo(target) * 1.5);
+      // (out of my hand: straight to where it's put – no hop)
+      if (!g.fromHand) g.pos.y += Math.sin(Math.PI * g.t) * 0.035 * Math.min(1, g.from.distanceTo(target) * 1.5);
     } else g.pos.copy(target);
     return g.pos;
   }
@@ -1252,7 +1264,8 @@ export class Scene3D {
           this.dynamic.add(rec.group);
         }
         rec.group.position.copy(this.glide(`v:${id}`, kept ? kept.sig : `a:${v.at.fx}:${v.at.slot}:${v.onHob ? 1 : 0}`, p));
-        rec.group.rotation.set(0, ov && ov.yaw != null ? ov.yaw : kept && kept.yaw != null ? kept.yaw : pk && !ov && this.parkedAt.has(`v:${id}`) ? pk.yaw : F && F.f.type === 'sink' && !kept ? this.sinkYaw(F) : 0, 0);
+        const laid = !kept && v.lay && v.lay.fx === v.at.fx && v.lay.yaw != null ? v.lay.yaw : null; // (put down by hand: as it was in the hand)
+        rec.group.rotation.set(0, ov && ov.yaw != null ? ov.yaw : kept && kept.yaw != null ? kept.yaw : pk && !ov && this.parkedAt.has(`v:${id}`) ? pk.yaw : laid != null ? laid : F && F.f.type === 'sink' && !kept ? this.sinkYaw(F) : 0, 0);
         rec.group.scale.setScalar(ov || (kept && kept.fp) ? 1 : kept && kept.held ? 0.85 : kept ? 0.8 : 1);
         // (at work, first person: tipped to pour, tossed …)
         if (ov && ov.tilt) rec.group.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis, ov.tilt));
@@ -1438,7 +1451,7 @@ export class Scene3D {
         if (bx && bx.fx === fxId) return { pos: bx.pos, fxId, active: false };
         const active0 = view.activeAt && view.activeAt.get(fxId) === id;
         // (put down just there by hand: lies there)
-        if (it.lay && it.lay.fx === fxId && !(active0 && F.anchors.board)) return { pos: new THREE.Vector3(it.lay.x, it.lay.y, it.lay.z), fxId, active: active0 };
+        if (it.lay && it.lay.fx === fxId && !(active0 && F.anchors.board)) return { pos: new THREE.Vector3(it.lay.x, it.lay.y, it.lay.z), fxId, active: active0, yaw: it.lay.yaw };
         const n = perFx.get(fxId) || 0;
         perFx.set(fxId, n + 1);
         const A = F.anchors;
@@ -1466,12 +1479,12 @@ export class Scene3D {
       }
       const L = lie();
       if (!L) continue;
-      const { pos, fxId, active } = L;
+      const { pos, fxId, active, yaw: laidYaw } = L;
       const done = it.cut && (it.k || 0) >= (it.n || 0);
       const tex = () => (done && !active ? this.spriteFor(it.kind, null, it.cut) : this.spriteFor(it.kind, it));
       const at = this.glide(`i:${id}`, `a:${fxId}`, pos), g = this.glides.get(`i:${id}`);
       const size = active ? 0.34 : 0.24;
-      put(`item:${id}`, it.kind, done && !active ? { cut: it.cut, k: it.n, n: it.n, cook: it.cook } : it, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size, yawAt(fxId), active ? null : { of: it });
+      put(`item:${id}`, it.kind, done && !active ? { cut: it.cut, k: it.n, n: it.n, cook: it.cook } : it, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size, laidYaw ?? yawAt(fxId), active ? null : { of: it });
     }
     // at work: the containers of what's out on the board, standing beside it, empty
     if (fp && this.work) for (const [k, b] of this.work.boxes || []) {

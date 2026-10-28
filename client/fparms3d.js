@@ -121,7 +121,7 @@ const EASE = { elev: 0.35, plane: 0.35, rot: 0.3, elbow: 1.4, pro: 0.4, wrist: {
 // a reach: out to the thing and back – taking, the hand closes on it; putting
 // down, it comes in from a little above, lowers it, rests a moment and lets go
 export const BRISK = 1.5; // how quick my movements are (1: as they were first made – a little slow)
-const OUT_TAKE = 0.42 / BRISK, OUT_PUT = 0.55 / BRISK, SETTLE = 0.14 / BRISK, BACK = 0.4 / BRISK, LIFT = 0.06;
+const OUT_TAKE = 0.42 / BRISK, OUT_PUT = 0.55 / BRISK, SETTLE = 0.14 / BRISK, BACK = 0.4 / BRISK;
 const outOf = (r) => (r.take ? OUT_TAKE : OUT_PUT);
 const spanOf = (r) => outOf(r) + (r.take ? 0 : SETTLE) + BACK;
 const v = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -350,10 +350,17 @@ export class FpArms {
   farPose(h, r) {
     const tc = this.camera.worldToLocal(r.world.clone());
     const right = mirrorV(tc, h.s);
-    // out of reach: the hand stops at arm's length, toward it
-    const sh = SHOULDER.clone(), toT = right.clone().sub(sh);
+    // out of reach: the hand stops at arm's length, toward it (putting down: within the arm's own reach from my
+    // shoulder – no leaning over for it, the posture changing on the way; what's put slides on from there to its spot)
+    const sh = r.take ? SHOULDER.clone() : h.sh.clone(), toT = right.clone().sub(sh);
     const grip0 = (HOLDS[r.hold] || HOLDS.palm).grip.clone().multiplyScalar(HS).length();
-    if (toT.length() > REACH - grip0) right.copy(sh).add(toT.setLength(REACH - grip0));
+    const reach = r.take ? REACH : (UPPER + FORE) * 0.9, R = reach - grip0;
+    if (toT.length() > R) {
+      // (putting down: at its spot's height, as near it as the arm goes – set down level, not lowered from above)
+      const up = mirrorV(this.upLocal(), h.s), vy = toT.dot(up), hor = toT.clone().addScaledVector(up, -vy);
+      if (!r.take && Math.abs(vy) < R) right.copy(sh).addScaledVector(up, vy).add(hor.setLength(Math.min(hor.length(), Math.sqrt(R * R - vy * vy))));
+      else right.copy(sh).add(toT.setLength(R));
+    }
     let q;
     if (r.hold === 'palm' || r.hold === 'tub') {
       // food, a plate: from above, the fingers toward it, palm down
@@ -409,8 +416,6 @@ export class FpArms {
         if (r.t < out) {
           const e = ease(r.t / out);
           h.wrist.lerpVectors(r.from.wrist, far.wrist, e);
-          // (putting down: over the spot first, then lowered onto it)
-          if (!r.take) h.wrist.addScaledVector(this.upLocal(), LIFT * ease(Math.min(1, r.t / out / 0.3)) * (1 - ease(Math.max(0, (r.t / out - 0.5) / 0.5))));
           h.q.slerpQuaternions(r.from.q, far.q, e);
           h.curl += (far.curl - h.curl) * Math.min(1, dt * 18 * BRISK);
           r.p = e;

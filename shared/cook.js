@@ -651,7 +651,7 @@ export function putDown(C, x, K, m, fx, only = null, spot = null, lay = null, sl
   const surface = f.caps.includes('board') || f.caps.includes('plate') || f.caps.includes('sink');
   // (a point on this fixture's top – what's handed in from the client, kept only if it's plausibly there)
   const at = lay && !B && held.length === 1 && [lay.x, lay.y, lay.z].every(Number.isFinite) && lay.x > f.x - 0.1 && lay.x < f.x + f.w + 0.1 && lay.z > f.y - 0.1 && lay.z < f.y + f.h + 0.1 && lay.y > 0.2 && lay.y < 1.4
-    ? { fx: fid, x: Math.round(lay.x * 1000) / 1000, y: Math.round(lay.y * 1000) / 1000, z: Math.round(lay.z * 1000) / 1000 } : null;
+    ? { fx: fid, x: Math.round(lay.x * 1000) / 1000, y: Math.round(lay.y * 1000) / 1000, z: Math.round(lay.z * 1000) / 1000, ...(Number.isFinite(lay.yaw) ? { yaw: Math.round(lay.yaw * 1000) / 1000 } : {}) } : null;
   for (const k of held) {
     const t = thingOf(C, k);
     t.held = null;
