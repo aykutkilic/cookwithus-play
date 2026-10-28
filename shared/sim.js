@@ -84,9 +84,15 @@ function subjectOf(x, s) {
 const contentOf = (v, kind) => v && (v.contents || []).find((c) => c.kind === kind);
 
 // Is step s as the kitchen is now? (null: it isn't something the kitchen shows – serving: its own gesture)
-export function simDone(C, x, s) {
+// (K: the kitchen – which fixture is an oven, a fridge)
+export function simDone(C, x, s, K) {
   const it = s.item && C.items[s.item], v = s.vessel && C.vessels[s.vessel], into = s.into && C.vessels[s.into];
+  const f = v && v.at && K && K.fixtures.find((q) => q.id === v.at.fx), caps = (f && f.caps) || [];
   switch (s.do) {
+    case 'bakeIn': return !!(v && caps.includes('bake') && !v.onHob && v.heat > 0);
+    case 'chillIn': return !!(v && caps.includes('chill'));
+    case 'bakeOut': return !!(v && !(caps.includes('bake') && !v.onHob));
+    case 'chillOut': return !!(v && !caps.includes('chill'));
     case 'wash': return !!(it && it.washed);
     case 'slice': case 'dice': case 'mince': case 'chop': return !!(it && it.cut === cutOf(s) && it.n && it.k >= it.n);
     case 'heat': return !!(v && v.at && v.onHob && v.heat === (s.level ?? 3));
@@ -118,7 +124,7 @@ export function simProgress(C, x, s) {
 
 // (steps the kitchen can show long before they're done – a pan off the heat at the start: not done till what comes
 // before them is)
-export const IN_ORDER = new Set(['remove']);
+export const IN_ORDER = new Set(['remove', 'bakeOut', 'chillOut']);
 
 // How it came out – what the cook did shows on the plate: [{what, note, q}] (q: 0..1, how far it costs the stars)
 export function simVerdict(C, x) {

@@ -366,7 +366,7 @@ function choreDone(C, x, K, d, st) {
 // move), and when they let go it's open or shut (`door`).
 export function swingDoor(C, K, m, fx, v, done) {
   const f = fixtureById(K, fx);
-  if (!f || !isStore(f)) return 'There’s no door to swing there';
+  if (!f || !(isStore(f) || f.type === 'oven')) return 'There’s no door to swing there';
   if (!freeHand(C, m)) return 'Both your hands are full – put it down first, then come back for the door';
   const s = fxState(C, fx);
   v = Math.max(0, Math.min(1, Number(v) || 0));
@@ -411,6 +411,12 @@ export function stirPan(C, into) {
 // it) the empty burner burns so. ('' = done)
 export function turnKnob(C, K, m, fx, slot, level) {
   const f = fixtureById(K, fx);
+  // (an oven's dial: the oven's heat – what's in it bakes so)
+  if (f && f.caps.includes('bake') && !f.caps.includes('hob') && slot === 0 && Number.isInteger(level) && level >= 0 && level <= 3) {
+    fxState(C, fx).oven = level;
+    for (const v of Object.values(C.vessels)) if (v.at && v.at.fx === fx && !v.onHob) v.heat = level;
+    return '';
+  }
   if (!f || !f.caps.includes('hob') || !Number.isInteger(slot) || slot < 0 || slot >= (f.slots || 1)) return 'No such knob';
   if (!Number.isInteger(level) || level < 0 || level > 3) return 'No such setting';
   const v = Object.values(C.vessels).find((q) => q.at && q.at.fx === fx && q.at.slot === slot && q.onHob);
@@ -605,8 +611,12 @@ export function takeThing(C, x, K, m, key, fx) {
     const vid = key.slice(2);
     const timer = x.steps.find((q) => q.do === 'wait' && q.vessel === vid && C.steps[q.id].s === 'running');
     if (timer && t.heat > 0) return `It’s cooking – ${timer.label || 'wait for the timer'} first`;
-    if (f.caps.includes('chill')) return 'Take it out of the fridge with its step';
-    if (f.caps.includes('bake') && !t.onHob) return 'Take it out of the oven with its step';
+    if (f.caps.includes('chill')) { if (!x.sim) return 'Take it out of the fridge with its step'; if (!doorOpen(C, f.id)) return 'Open the fridge door first'; }
+    if (f.caps.includes('bake') && !t.onHob) {
+      if (!x.sim) return 'Take it out of the oven with its step';
+      if (f.type === 'oven' && !doorOpen(C, f.id)) return 'Open the oven door first';
+      if ((t.heat > 0 || t.hot) && !glovesOn(C, m)) return 'It’s hot – put the oven gloves on first 🧤';
+    }
   }
   if (inUse(C, x, key) != null) return 'Someone is working on that';
   if (halfDone(C, x, key, fx)) return 'Finish the job on it here first';
@@ -645,7 +655,9 @@ function putBlocked(C, x, K, held, f, place = f.id) {
     if (k[0] === 'v') {
       const v = thingOf(C, k);
       if (place === f.id && bigVessel(C, k) && boardDown(C, K, f.id)) return `No room – stand the board up at the back first`;
+      if (store && f.type === 'fridge' && x && x.sim) continue; // (in it goes – what's in it chills)
       if (store && (f.type === 'fridge' || v.contents.length || v.water > 0.05 || (v.items && v.items.length))) return f.type === 'fridge' ? 'Pots go in the fridge with their step' : 'Empty it before you put it away';
+      if (f.caps.includes('bake') && !f.caps.includes('hob') && x && x.sim) { if (f.type === 'oven' && !doorOpen(C, f.id)) return 'Open the oven door first'; continue; }
       if (!surface && !store && !(f.caps.includes('hob') && freeSlot(C, x, f) >= 0)) return f.caps.includes('hob') ? 'No free burner' : 'Put it on a counter, the stove or the shelf';
     }
   }
@@ -718,8 +730,16 @@ export function putDown(C, x, K, m, fx, only = null, spot = null, lay = null, sl
       continue;
     }
     if (k[0] === 'i') { t.at = fx; t.stored = isStore(f) ? 1 : 0; if (at && !isStore(f)) t.lay = at; continue; }
+    // (a dish with something in it into the fridge: there, chilling – not put away)
+    if (isStore(f) && x && x.sim && f.caps.includes('chill') && ((t.contents || []).length || t.water > 0.05 || (t.items || []).length)) { t.at = { fx, slot: 0 }; t.onHob = 0; continue; }
     if (isStore(f)) { t.at = null; t.home = fx; continue; }
     const onHob = !surface && f.caps.includes('hob');
+    // (into the oven: on its rack, baking at whatever its dial's set to – into a hot one only in the gloves)
+    if (f.caps.includes('bake') && !onHob && x && x.sim) {
+      if ((fxState(C, fx).oven || 0) > 0 && !glovesOn(C, m)) { t.held = m; return 'The oven’s hot – put the oven gloves on first 🧤'; }
+      t.at = { fx, slot: 0 }; t.onHob = 0; t.heat = fxState(C, fx).oven || 0;
+      continue;
+    }
     // (on a stove: the burner it was put on, if that's free)
     const want = onHob && Number.isInteger(slot) && slot >= 0 && slot < f.slots && !slotTaken(C, x, f.id, slot, null) ? slot : null;
     t.at = { fx, slot: onHob ? want ?? freeSlot(C, x, f) : 0 };
@@ -1365,7 +1385,7 @@ export function tickCook(C, x, K, dt) {
     for (const s of x.steps) {
       const st = C.steps[s.id];
       if (st.s === 'done' || st.s === 'active' || s.do === 'serve' || (IN_ORDER.has(s.do) && !inOrder(C, s))) continue;
-      const shows = simDone(C, x, s);
+      const shows = simDone(C, x, s, K);
       if (shows == null && s.do === 'wait') {
         // (a wait its pan doesn't show: its time, counted while the kitchen's as it needs to be)
         if (!inOrder(C, s)) continue;

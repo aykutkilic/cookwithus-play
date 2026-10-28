@@ -674,7 +674,7 @@ export class Scene3D {
     let best = null;
     for (const [fx, F] of Object.entries(this.k3.fx)) {
       const f = F.f;
-      if (!F.parts.knobs || !F.anchors.burners || Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) > 1.05) continue;
+      if (!F.parts.knobs || !(F.anchors.burners || F.parts.drop) || Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) > 1.05) continue;
       F.parts.knobs.forEach((kn, slot) => {
         const w = kn.getWorldPosition(new THREE.Vector3()), s = this.screenOf(w);
         if (!s.on) return;
@@ -686,8 +686,27 @@ export class Scene3D {
   }
   // how high a stove's burner is on (0 off … 3): the pan on it's, or the empty burner's
   burnerLevel(fx, slot) {
-    const D = this.D, F = this.k3.fx[fx], v = D && F && vesselAtSlot(D, fx, slot, F.f.type), fxs = (this.lastC && this.lastC.fx) || {};
+    const D = this.D, F = this.k3.fx[fx], fxs = (this.lastC && this.lastC.fx) || {};
+    if (F && F.parts.drop) return (fxs[fx] && fxs[fx].oven) || 0; // (an oven: its dial)
+    const v = D && F && vesselAtSlot(D, fx, slot, F.f.type);
     return v ? v.heat || 0 : (fxs[fx] && fxs[fx].lit && fxs[fx].lit[slot]) || 0;
+  }
+  // An oven's door handle in reach under this point of the screen: {kind: 'ovenDoor', fx, w, open}; or, its door open and
+  // something in my hands, its inside: {kind: 'surface', fx, w, inside: true} – to put it in
+  ovenPick(cx, cy, me, holding) {
+    if (!this.firstPerson || !me || !this.k3) return null;
+    for (const [fx, F] of Object.entries(this.k3.fx)) {
+      const f = F.f;
+      if (!F.parts.drop || Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) > 1.05) continue;
+      const open = !!(this.lastC && this.lastC.fx[fx] && this.lastC.fx[fx].door);
+      const hw = this.handleWorld(fx), hs = hw && this.screenOf(hw);
+      if (hs && hs.on && Math.hypot(hs.x - cx, hs.y - cy) < Math.max(24, this.pxOf(hw, 0.07))) return { kind: 'ovenDoor', fx, w: hw, open };
+      if (open && holding && F.anchors.inside) {
+        const w = F.anchors.inside.clone(), s = this.screenOf(w);
+        if (s.on && Math.hypot(s.x - cx, s.y - cy) < Math.max(40, this.pxOf(w, 0.3))) return { kind: 'surface', fx, w, inside: true };
+      }
+    }
+    return null;
   }
 
   // Where my line of sight meets a worktop in reach – a counter's top or the board lying on it, a table, a
@@ -968,7 +987,7 @@ export class Scene3D {
       if (P.glow) {
         const inV = D && Object.values(D.vessels).find((v) => v.at && v.at.fx === id && v.heat > 0 && !v.onHob);
         P.glow.material.emissiveIntensity = inV ? 1.4 + Math.sin(this.t * 3) * 0.15 : 0;
-        if (P.knobs && P.knobs[0]) P.knobs[0].rotation.z = this.work && this.work.knob && this.work.knob.fx === id ? -this.work.knob.level * 0.9 : -(inV ? inV.heat : 0) * 0.9;
+        if (P.knobs && P.knobs[0]) P.knobs[0].rotation.z = this.work && this.work.knob && this.work.knob.fx === id ? -this.work.knob.level * 0.9 : -(inV ? inV.heat : (fxs[id] && fxs[id].oven) || 0) * 0.9;
       }
       if (P.fire) P.fire.children.forEach((c, i) => { c.scale.y = 0.75 + Math.sin(this.t * (9 + i) + i * 2) * 0.3; });
       if (P.fire && P.fire.isMesh) P.fire.material.emissiveIntensity = 2.6 + Math.sin(this.t * 5) * 0.4;

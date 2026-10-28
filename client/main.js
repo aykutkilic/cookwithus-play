@@ -866,6 +866,9 @@ function fpPointed(hand = S.mainHand) {
   const c = scene.viewCenter();
   const res = fpPointedAt(c);
   const k = hand >= 0 ? scene.fpSlots[hand] : null;
+  // (into the oven, its door open)
+  const oi = k && k[0] === 'v' && scene.ovenPick(c.x, c.y, S.me, true);
+  if (oi && oi.kind === 'surface') return { ...oi, key: k };
   // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
   const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
   // (not at the fridge, the pantry – its door, its shelves, what's on them: that's taking from it, putting in it)
@@ -879,9 +882,11 @@ function fpPointed(hand = S.mainHand) {
   return res;
 }
 function fpPointedAt(c) {
-  // (a stove's knob: to turn)
+  // (a stove's knob, an oven's dial: to turn; an oven's door handle)
   const kn = scene.knobPick(c.x, c.y, S.me);
   if (kn) return kn;
+  const od = scene.ovenPick(c.x, c.y, S.me, false);
+  if (od) return od;
   // (the oven gloves on: at where they lie beside the oven – to hang them back)
   if (glovesOn(S.M.cook, S.myId)) { const g = scene.glovesSpotAt(c.x, c.y); if (g) return { kind: 'hangGloves', fx: g.fx, w: g.w }; }
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }); // (past what's in my hands)
@@ -899,8 +904,9 @@ const isGloves = (key) => { const t = key && key[0] === 'u' && S.M.cook && (S.M.
 function fpPointLabel(pt) {
   const C = S.M.cook;
   if (pt.kind === 'work') return pt.label;
-  if (pt.kind === 'knob') return `🔥 Turn the knob – ${KNOB_NAMES[pt.level]} (hold and move the mouse)`;
-  if (pt.kind === 'surface') return `${thingEmoji(C, pt.key)} Put the ${thingName(C, S.x, pt.key)} ${pt.sink ? 'in the sink' : pt.slot != null ? 'on this burner' : 'here'}`;
+  if (pt.kind === 'knob') return `🔥 Turn the ${fixtureById(S.K, pt.fx) && fixtureById(S.K, pt.fx).type === 'oven' ? 'oven' : 'knob'} – ${KNOB_NAMES[pt.level]} (hold and move the mouse)`;
+  if (pt.kind === 'ovenDoor') return `${pt.open ? 'Shut' : 'Open'} the oven`;
+  if (pt.kind === 'surface') return `${thingEmoji(C, pt.key)} Put the ${thingName(C, S.x, pt.key)} ${pt.inside ? 'in the oven' : pt.sink ? 'in the sink' : pt.slot != null ? 'on this burner' : 'here'}`;
   if (pt.kind === 'hangGloves') return '🧤 Hang up the oven gloves';
   if (pt.kind === 'thing' && isGloves(pt.key)) return '🧤 Put on the oven gloves';
   if (pt.kind === 'bay') return `${pt.open ? 'Shut' : 'Open'} the ${placeName(pt.fx)}`;
@@ -944,7 +950,7 @@ function fpPointAct(pt, hand = -1) {
     // (just there – on the board, a burner, a spot on the worktop; in the sink, into it)
     // (and facing as it was in my hand – not turned round as it lands)
     const yaw = scene.heldYaw(pt.key);
-    send({ t: 'put', what: pt.key, fx: pt.fx, ...(pt.sink ? {} : { lay: { x: pt.w.x, y: pt.w.y, z: pt.w.z, ...(yaw != null ? { yaw } : {}) } }), ...(pt.slot != null ? { slot: pt.slot } : {}) });
+    send({ t: 'put', what: pt.key, fx: pt.fx, ...(pt.sink || pt.inside ? {} : { lay: { x: pt.w.x, y: pt.w.y, z: pt.w.z, ...(yaw != null ? { yaw } : {}) } }), ...(pt.slot != null ? { slot: pt.slot } : {}) });
     sfx.play('clunk', 0.45);
     return;
   }
@@ -1348,6 +1354,14 @@ function handDown(i) {
   const c = scene.viewCenter();
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
   const pt = fpPointed(i);
+  if (pt && pt.kind === 'ovenDoor') {
+    // (a free hand on its handle: down it comes, or up it goes)
+    if (scene.fpSlots[i] != null && scene.fpSlots[1 - i] != null) { toast('Both your hands are full – put something down first'); return; }
+    scene.fpArms.reach(scene.fpSlots[i] == null ? i : 1 - i, { key: null, take: false, hold: 'grab', world: pt.w });
+    send({ t: 'door', fx: pt.fx, v: pt.open ? 0 : 1, done: true });
+    sfx.play(pt.open ? 'clunk' : 'door', 0.6);
+    return;
+  }
   if (pt && pt.kind === 'knob') {
     // (a hand on the stove's knob: moving the mouse turns it, a setting at a time – the burner follows)
     if (scene.fpSlots[i] != null) { toast('That hand’s full – turn the knob with the other one'); return; }
