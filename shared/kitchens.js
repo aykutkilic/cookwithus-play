@@ -221,6 +221,7 @@ export const BAYS = {
   u0: { name: 'wall cupboard', door: true, levels: 2, slots: 2 },
   u1: { name: 'wall cupboard', door: true, levels: 2, slots: 2 },
   board: { name: 'board', levels: 1, slots: 3 },
+  nest: { name: 'stack of containers', levels: 1, slots: 3 }, // (the empty food containers beside a board, nested)
   crock: { name: 'crock', levels: 1, slots: 4 },
   corner: { name: 'corner', levels: 1, slots: 2 },
   gloves: { name: 'beside the oven', levels: 1, slots: 1 }, // (where the oven gloves lie, on its worktop)
@@ -282,7 +283,7 @@ export function baysOf(K) {
     if (f.type === 'counter') { add(f, 'dr'); add(f, 'c0'); add(f, 'c1'); }
     if (f.type === 'sink') { add(f, 'c0'); add(f, 'c1'); }
     if (f.type === 'stove') add(f, 'c0', { slots: 3 }); // (its one wide door)
-    if (['counter', 'dishwasher', 'table'].includes(f.type)) add(f, 'board');
+    if (['counter', 'dishwasher', 'table'].includes(f.type)) { add(f, 'board'); add(f, 'nest'); }
     if (decor[f.id] === 0) add(f, 'crock');
     if (decor[f.id] === 1 || decor[f.id] === 2) add(f, 'corner');
     if (walls[f.id] === 'cupboard') { add(f, 'u0'); add(f, 'u1'); }

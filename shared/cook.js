@@ -21,7 +21,7 @@
 
 import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool, useItem } from './actions.js';
 import { simTick, simDone, simVerdict, IN_ORDER, simSeason, simStir, TEMP } from './sim.js';
-import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
+import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked, boxable } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
 import { stockKitchen, freeSpot, thingsIn } from './stock.js';
 import { RECIPES } from './recipes.js';
@@ -185,11 +185,12 @@ export function stepDef(x, sid) {
 
 export function choreId(kind, fx) { return `#${kind}@${fx}`; }
 export function choreDef(sid) {
-  // (free work – what the recipe doesn't ask for: a tomato sliced, a pepper washed – '#do.<action>.<item>.<kind>.<qty>@<fx>')
-  const fw = /^#do\.([a-z]+)\.([a-zA-Z0-9~]+)\.([a-zA-Z]+)\.(\d+)@([a-zA-Z]+\d*)$/.exec(sid);
+  // (free work – what the recipe doesn't ask for: a tomato sliced, a pepper washed – '#do.<action>.<item>.<kind>.<qty>[l]@<fx>';
+  // l: loose, out of its container – no taking it out, no putting it back)
+  const fw = /^#do\.([a-z]+)\.([a-zA-Z0-9~.]+)\.([a-zA-Z]+)\.(\d+)(l?)@([a-zA-Z]+\d*)$/.exec(sid);
   if (fw && FREE_WORK[fw[1]]) {
     const a = fw[1];
-    return { id: sid, do: a, item: fw[2], itemKind: fw[3], itemQty: Number(fw[4]), fx: fw[5], chore: true, free: true, after: [], n: FREE_WORK[a], name: `${ACTIONS[a].verb} the ${ingName(fw[3], Number(fw[4])).toLowerCase()}` };
+    return { id: sid, do: a, item: fw[2], itemKind: fw[3], itemQty: Number(fw[4]), ...(fw[5] ? { loose: true } : {}), fx: fw[6], chore: true, free: true, after: [], n: FREE_WORK[a], name: `${ACTIONS[a].verb} the ${ingName(fw[3], Number(fw[4])).toLowerCase()}` };
   }
   const p = /^#portion\.([a-zA-Z0-9]+)\.(\d+)@([a-zA-Z]+\d*)$/.exec(sid);
   if (p) return { id: sid, do: 'portion', item: p[1], n: Number(p[2]), fx: p[3], chore: true, after: [], name: ACTIONS.portion.verb };
@@ -233,6 +234,7 @@ function choreBlocked(C, x, K, d, memberId) {
   if (d.free) {
     const it = C.items[d.item];
     if (!it || it.in || it.used || !stocked(it.kind)) return 'Nothing like that here';
+    if (!!d.loose !== !!it.loose) return it.loose ? 'It’s out of its container now' : 'It’s in its container';
     if (d.do === 'wash') return f.caps.includes('sink') ? '' : 'Wash it at the sink';
     if (!f.caps.includes('board')) return 'That’s done on a board';
     if (it.at !== d.fx && !heldBy(C, memberId).includes(`i:${d.item}`)) return 'Bring it here first';
@@ -396,6 +398,72 @@ export function swingDoor(C, K, m, fx, v, done) {
 export function doorOpen(C, fx) { return !!(C.fx[fx] && C.fx[fx].door); }
 
 // A drawer or a cupboard door, opened or shut by a cook's free hand (place: '<fixture>/<bay>').
+// One taken out of a bunch in its container – a lemon of the lemons – into cook m's hand, loose (no container); one more
+// into a hand that has some of the same loose already joins them. Spares first (the recipe keeps its count); the last
+// one: the bunch itself, loose now. ('' = done)
+export function takePiece(C, x, K, m, key, fx) {
+  const id = key.slice(2), it = key[0] === 'i' && C.items[id];
+  if (!it || !boxable(it.kind) || !stocked(it.kind)) return 'Take it whole';
+  if (it.held != null || it.in || it.used) return 'It isn’t here';
+  const L = locate(C, K, key), [fid] = splitPlace(fx);
+  if (L.stored) { if (!placeOpen(C, K, L.fx)) return openFirst(K, L.fx); } else if (L.fx !== fid && L.fx !== fx) return 'It isn’t here';
+  if (inUse(C, x, key) != null) return 'Someone is working on that';
+  const same = (o) => o && o.loose && o.kind === it.kind && !o.in && !!o.washed === !!it.washed && (o.cut || null) === (it.cut || null) && !!o.peeled === !!it.peeled;
+  const mine = heldBy(C, m).map((k) => k[0] === 'i' && [k, C.items[k.slice(2)]]).find((p) => p && same(p[1]));
+  if (!mine && !freeHand(C, m)) return 'Both your hands are full – put something down first';
+  it.cap = Math.max(it.cap || 0, (it.qty || 1) + (it.extra || 0)); // (its container's as big as it was, fewer in it)
+  if ((it.qty || 1) + (it.extra || 0) <= 1) {
+    // (the last one: the bunch itself – with the others, if I've some in hand already – and its container stays where
+    // it was, empty)
+    C.seqP = (C.seqP || 0) + 1;
+    C.tools = C.tools || {};
+    C.tools[`e${C.seqP}.box`] = { kind: 'box', ...(it.tub || { of: it.kind, cap: it.cap }), at: it.at, home: null, held: null, ...(it.spot ? { spot: it.spot } : {}), ...(it.lay ? { lay: it.lay } : {}) };
+    if (mine) { it.qty = (it.qty || 1) + (mine[1].qty || 1); delete C.items[mine[0].slice(2)]; }
+    Object.assign(it, { loose: 1, held: m, at: null, stored: 0 });
+    delete it.spot; delete it.lay; delete it.tub; delete it.cap;
+    return '';
+  }
+  if (it.extra > 0) it.extra -= 1; else it.qty -= 1;
+  if (mine) { mine[1].qty = (mine[1].qty || 1) + 1; return ''; }
+  C.seqP = (C.seqP || 0) + 1;
+  const nid = `${id}~p${C.seqP}`;
+  C.items[nid] = { ...JSON.parse(JSON.stringify(it)), qty: 1, extra: 0, loose: 1, held: m, at: null, in: null, stored: 0, used: 0 };
+  for (const q of ['spot', 'lay', 'tub', 'cap', 'spare']) delete C.items[nid][q];
+  return '';
+}
+// Loose ones (taken out of their bunch) put back in with it – or with any bunch of the same, in the same state. ('' = done)
+export function mergeInto(C, x, K, m, what, into) {
+  const a = what[0] === 'i' && C.items[what.slice(2)], b = into[0] === 'i' && C.items[into.slice(2)];
+  if (!a || !b || a === b || !a.loose || a.held !== m || b.held != null || b.in || b.used || b.loose) return 'They don’t go in there';
+  if (a.kind !== b.kind || !!a.washed !== !!b.washed || (a.cut || null) !== (b.cut || null)) return 'Not with those – they aren’t the same';
+  b.qty = (b.qty || 1) + (a.qty || 1);
+  delete C.items[what.slice(2)];
+  return '';
+}
+
+// Loose ones in cook m's hand into an empty container – lying there or in m's other hand: in it they are, and kept in it
+// (the container isn't a thing of its own any more: theirs). ('' = done)
+export function boxInto(C, x, K, m, what, box, lay = null) {
+  const a = what[0] === 'i' && C.items[what.slice(2)], b = box[0] === 'u' && (C.tools || {})[box.slice(2)];
+  if (!a || !a.loose || a.held !== m) return 'Take them out of their container first';
+  if (!b || b.kind !== 'box') return 'That isn’t a container';
+  if (b.held != null && b.held !== m) return 'Someone else has it';
+  if (b.held == null) {
+    const L = locate(C, K, box);
+    if (L.stored && !placeOpen(C, K, L.fx)) return openFirst(K, L.fx);
+    if (splitPlace(L.fx || '')[1] === 'nest') return 'Take it off the stack first';
+    Object.assign(a, { held: null, at: b.at, stored: L.stored ? 1 : 0 });
+    if (b.spot) a.spot = b.spot; else delete a.spot;
+    // (where it stands – lying in a row as tools do, the point it's seen at: handed in from the client)
+    const ok = !b.lay && lay && !L.stored && [lay.x, lay.y, lay.z].every(Number.isFinite) && lay.y > 0.2 && lay.y < 1.4;
+    if (b.lay) a.lay = b.lay; else if (ok) a.lay = { fx: b.at, x: Math.round(lay.x * 1000) / 1000, y: Math.round(lay.y * 1000) / 1000, z: Math.round(lay.z * 1000) / 1000 }; else delete a.lay;
+  }
+  delete a.loose;
+  a.tub = b.of ? { of: b.of, cap: b.cap } : { size: b.size ?? 1 };
+  delete C.tools[box.slice(2)];
+  return '';
+}
+
 // Tipped in by hand (T), any time: what cook m holds – food: all of it into the pot or pan (eggs: one cracked in each
 // time) – or a staple's shake (what: 'staple:salt' …, n shakes) into vessel into. ('' = done)
 export function pourInto(C, x, K, m, what, into, n = 1) {
@@ -509,7 +577,7 @@ export function thingName(C, x, key) {
   if (key[0] === 'u') { const u = (C.tools || {})[id]; return ((u && TOOLS[u.kind] && TOOLS[u.kind].name) || 'tool').toLowerCase(); }
   const t = key[0] === 'i' && C.items[id];
   if (t && t.rest) return `leftover ${ingName(t.kind, t.qty).toLowerCase()}`;
-  if (t && t.spare) return ingName(t.kind, t.qty).toLowerCase();
+  if (t && (t.spare || t.loose)) return ingName(t.kind, t.qty).toLowerCase(); // (loose ones in hand: as many as there are)
   return (x && x.names[id]) || (key[0] === 'v' ? (VESSELS[C.vessels[id]?.kind]?.name || id) : ingName(C.items[id]?.kind || id, 1)).toLowerCase();
 }
 
@@ -623,6 +691,7 @@ export function takeThing(C, x, K, m, key, fx) {
   const off = L.inV && key[0] === 'i' && bigVessel(C, `v:${L.inV}`);
   if (L.inV && !off) return `It’s in the ${thingName(C, x, `v:${L.inV}`)} – take that`;
   if (L.held != null || L.fx !== fx) return 'It isn’t here';
+  if (bay === 'nest' && Object.values(C.tools || {}).some((o) => o !== t && o.at === fx && o.held == null && (o.size ?? 0) < (t.size ?? 0))) return 'Take the one on top first';
   if (t.inDw && dwRunning(C, fx)) return 'The dishwasher is running – wait till it’s done';
   const why = handsFree(C, x, m, key);
   if (why) return why;
@@ -689,6 +758,7 @@ function bayBlocked(C, K, held, B, place) {
   const kinds = held.map((k) => thingOf(C, k).kind);
   if (B.bay === 'board' && !held.every((k, i) => k[0] === 'u' && TOOLS[kinds[i]] && TOOLS[kinds[i]].board)) return 'Only the board’s knife, peeler and grater go there';
   if (B.bay === 'crock' && !held.every((k, i) => k[0] === 'u' && CROCKED.has(kinds[i]))) return 'Only the cooking spoons, ladles, whisks … go in the crock';
+  if (B.bay === 'nest' && !held.every((k, i) => k[0] === 'u' && kinds[i] === 'box')) return 'Only empty containers go on the stack';
   if (B.bay === 'dr' && held.some((k) => k[0] === 'v')) return 'That won’t fit in the drawer';
   for (const k of held) {
     if (k[0] !== 'v') continue;

@@ -69,6 +69,8 @@ export function stockKitchen(C, K, x) {
   for (const p of places(K, ['crock'])) CROCK.forEach((k, i) => tool(k, p, { r: 0, x: i / 3 }));
   for (const p of places(K, ['corner'])) cornerKind(K, p).forEach((k, i) => tool(k, p, { r: 0, x: i }));
   for (const p of places(K, ['gloves'])) tool('ovenGloves', p, { r: 0, x: 0 });
+  // (the stack of empty containers beside each board: the big one at the bottom, the small one on top)
+  for (const p of places(K, ['nest'])) [2, 1, 0].forEach((size, i) => { tool('box', p, { r: 0, x: i / 2 }); C.tools[`s${n}.box`].size = size; });
   const drawers = places(K, ['dr']);
   drawers.forEach((p, d) => {
     const list = d === 0 ? CUTLERY : d === 1 ? UTENSILS : UTENSILS.slice((d * 3) % 8, (d * 3) % 8 + 3);

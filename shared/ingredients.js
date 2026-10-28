@@ -195,6 +195,8 @@ export const TOOLS = {
   sugarJar:   { name: 'Jar of sugar', emoji: '🫙', upright: true },
   // (put on, not held: hot trays and dishes without a handle go in and out of the oven in them)
   ovenGloves: { name: 'Oven gloves', emoji: '🧤', worn: true },
+  // (an empty food container – size 0 … 2, one of a board's stack; or the one a bunch was in: `of` it, `cap` as many)
+  box:        { name: 'Food container', emoji: '🫙', upright: true, box: true },
 };
 
 export const ING_KINDS = Object.keys(INGREDIENTS);

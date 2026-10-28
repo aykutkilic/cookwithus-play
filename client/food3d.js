@@ -167,6 +167,9 @@ function gridFor(q, w, d, w0, d0) {
   return best;
 }
 export function boxSpec(kind, st) {
+  // (put into an empty one: that one – one of a board's stack, or the one something else was in)
+  const tub = st && st.tub;
+  if (tub) return tub.of ? boxSpec(tub.of, { qty: tub.cap || 1 }) : { size: clamp(num(tub.size, 1) | 0, 0, 2), style: 'glass', color: PLASTIC[0], label: '' };
   const q = clamp(Math.max(num(st && st.qty, 1) + num(st && st.extra, 0), num(st && st.cap, 0)) | 0, 1, 12); // (a bunch: all it was filled with)
   const key = `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${q}`;
   let sp = SPECS.get(key);
@@ -316,6 +319,16 @@ export function containerNest() {
   return consolidate(g);
 }
 
+// An empty food container, a thing of its own (shared/ingredients.js TOOLS.box): one of a board's stack – size 0 … 2 – or
+// the one a bunch was in (of, cap)
+export function emptyBox(t) {
+  const c = containerMesh(boxSpec(null, { tub: t.of ? { of: t.of, cap: t.cap } : { size: t.size } }));
+  const wm = c.userData.water;
+  if (wm && wm.parent) wm.parent.remove(wm);
+  return c;
+}
+export function emptyBoxSize(t) { return boxSpec(null, { tub: t.of ? { of: t.of, cap: t.cap } : { size: t.size } }).size; }
+
 // how wide (along x) a food is, in kitchen units
 const WIDTHS = new Map();
 export function foodWidth(kind, st) {
@@ -392,6 +405,8 @@ function cluster(g, a, q, make, spread = 0, box = null, slots = q) {
       const z = Math.max(-box[1] / 2 + (deep * fit) / 2, Math.min(box[1] / 2 - (deep * fit) / 2, (rI - (usedR - 1) / 2) * cd + nz));
       h.position.set(x, L * layerH, z);
       h.scale.setScalar(fit);
+      // (where each lies in its container – the top of it – to take one out by: g.userData.pieces)
+      (g.userData.pieces = g.userData.pieces || []).push({ x, y: L * layerH + S.h * K * 0.6 * fit, z });
       h.rotation.y = (slots > 1 ? ((i * 1.7) % 0.5) - 0.25 : 0) + (up ? (L % 2 ? 0.35 : -0.35) : 0);
     } else if (spread > 0) {
       const an = i * 2.4, rr = q > 1 ? Math.min(spread - w * 0.4, spread * 0.55) * (0.5 + 0.5 * ((i * 0.618) % 1)) : 0;

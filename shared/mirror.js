@@ -35,12 +35,13 @@ export function applyMsg(M, msg, nowMs = 0) {
         const old = C.steps[id];
         C.steps[id] = { ...st, t: st.t ?? (old ? old.t : 0), over: st.over ?? (old ? old.over : 0) };
       }
-      if (msg.items) Object.assign(C.items, msg.items);
+      if (msg.items) for (const [id, v] of Object.entries(msg.items)) { if (v == null) delete C.items[id]; else C.items[id] = v; }
       if (msg.vessels) for (const [id, v] of Object.entries(msg.vessels)) {
         const old = C.vessels[id];
         C.vessels[id] = { ...v, boil: v.boil ?? (old ? old.boil : 0) };
       }
       for (const k of ['fx', 'scraps', 'bins', 'carry', 'dw', 'tools']) if (msg[k]) C[k] = Object.assign(C[k] || {}, msg[k]);
+      if (msg.tools) for (const [id, v] of Object.entries(msg.tools)) if (v == null) delete C.tools[id]; // (one no more: filled)
       for (const k of ['speed', 'started', 'finished', 'stars', 'verdict', 'credits', 'bagsOut', 'sakir']) if (k in msg) C[k] = msg[k];
       return msg.ev || [];
     }

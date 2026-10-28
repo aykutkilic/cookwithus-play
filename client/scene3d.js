@@ -20,7 +20,7 @@ import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
 import { FpArms, SHOULDER, BRISK, APART, KNIFE, KNIFE_CARRY } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
-import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts } from './food3d.js';
+import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts, emptyBox, emptyBoxSize } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt, KNIFE_HANG } from './props3d.js';
@@ -583,6 +583,7 @@ export class Scene3D {
       if (!e.place || e.hidden || e.fp || e.held) continue;
       const F = this.k3.fx[splitPlace(e.place)[0]];
       if (!F || !reach(F.f)) continue;
+      if (e.lie === 'nest' && this.nestTop(e.place) !== k) continue; // (a stack: the one on top)
       const w = (this.glides.get(k) ? this.glides.get(k).pos : e.pos).clone();
       const vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
       w.y += vr ? vr.h * 0.4 : k[0] === 'u' ? (TOOLS[(this.toolsNow[k.slice(2)] || {}).kind] || {}).upright ? 0.06 : e.lie === 'crock' ? 0.05 : 0.01 : 0.04;
@@ -631,6 +632,13 @@ export class Scene3D {
     }
     // (a thing in front of what it's in – unless a door or a drawer, or another one's open drawer, is in the way)
     if (thing && !(bay && bay.front && bay.t < thing.far - 0.05) && !(nearest && nearest.place !== thing.pick.fx && nearest.t < thing.far - 0.05)) return thing.pick;
+    // a board's stack of containers, with an empty one in my hand: on it
+    if (held.some((k) => k[0] === 'u' && this.toolsNow[k.slice(2)] && this.toolsNow[k.slice(2)].kind === 'box')) for (const [fid, F] of Object.entries(this.k3.fx)) {
+      const P = this.K.bays && this.K.bays[`${fid}/nest`] && reach(F.f) && this.placeSpots(`${fid}/nest`);
+      if (!P) continue;
+      const c = P.at().addScaledVector(UP, 0.05), s = this.screenOf(c);
+      if (s.on && Math.hypot(s.x - cx, s.y - cy) < Math.max(26, this.pxOf(c, 0.12))) return { kind: 'bayIn', fx: `${fid}/nest`, spot: null, w: c };
+    }
     // the crock, with a spoon or a ladle in my hand: in it
     if (held.length) for (const [fid, F] of Object.entries(this.k3.fx)) {
       const c = F.anchors.crock;
@@ -666,6 +674,29 @@ export class Scene3D {
       const w = rec.group.position.clone().setY(rec.group.position.y + rec.h * 0.5), s = this.screenOf(w);
       const d = s.on ? Math.hypot(s.x - cx, s.y - cy) : Infinity;
       if (d < Math.max(30, this.pxOf(w, rec.r * 1.3)) && (!best || d < best.d)) best = { d, pick: { kind: 'vessel', id, w } };
+    }
+    return best && best.pick;
+  }
+
+  // One of a bunch in its container under this point of the screen, in reach – a lemon of the lemons, to take out:
+  // {kind: 'piece', key, fx, w}
+  piecePick(cx, cy, me) {
+    if (!this.firstPerson || !me || !this.D) return null;
+    let best = null;
+    const near = (fx) => { const F = this.k3.fx[splitPlace(fx)[0]], f = F && F.f; return f && Math.hypot(Math.max(f.x, Math.min(f.x + f.w, me.x)) - me.x, Math.max(f.y, Math.min(f.y + f.h, me.y)) - me.y) < 1.1; };
+    for (const [id, it] of Object.entries(this.D.items)) {
+      if (it.loose || it.held != null || it.in || it.used || !it.at || !near(it.at)) continue;
+      const f = this.foods.get(`item:${id}`);
+      if (!f || !f.g.visible) continue;
+      let food = null;
+      f.g.traverse((o) => { if (!food && o.userData.pieces) food = o; });
+      if (!food) continue;
+      food.updateWorldMatrix(true, false);
+      for (const p of food.userData.pieces) {
+        const w = food.localToWorld(new THREE.Vector3(p.x, p.y, p.z)), s = this.screenOf(w);
+        const d = s.on ? Math.hypot(s.x - cx, s.y - cy) : Infinity;
+        if (d < Math.max(14, this.pxOf(w, 0.03)) && (!best || d < best.d)) best = { d, pick: { kind: 'piece', key: `i:${id}`, fx: it.at, w } };
+      }
     }
     return best && best.pick;
   }
@@ -1149,6 +1180,11 @@ export class Scene3D {
     const [fid, bay] = splitPlace(place);
     const F = this.k3.fx[fid], spec = this.K.bays && this.K.bays[place];
     if (!F || !spec) return null;
+    if (bay === 'nest') {
+      // (the stack of empty containers beside a board: one in another – where it stands, moved aside with the board)
+      const n = F.parts.nest ? F.parts.nest.getWorldPosition(new THREE.Vector3()) : F.anchors.nest;
+      return n ? { spec, out: F.front, lie: 'nest', hidden: false, open: 1, at: () => n.clone() } : null;
+    }
     if (bay === 'board' || bay === 'crock' || bay === 'corner' || bay === 'gloves') {
       const A = bay === 'board' ? (F.parts.tools ? ['knife', 'peeler', 'grater'].map((t) => F.parts.tools[t].getWorldPosition(new THREE.Vector3())) : F.anchors.boardTools) : F.anchors[bay];
       if (!A) return null;
@@ -1175,14 +1211,31 @@ export class Scene3D {
   // which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
   boardKindOf(k) { const t = k && k[0] === 'u' && this.toolsNow && this.toolsNow[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
 
+  // the empty containers on a board's stack, the biggest at the bottom: [[key, tool]]
+  nestOf(place) {
+    const out = Object.entries(this.toolsNow || {}).filter(([, t]) => t.kind === 'box' && t.held == null && t.at === place).map(([id, t]) => [`u:${id}`, t]);
+    return out.sort((a, b) => emptyBoxSize(b[1]) - emptyBoxSize(a[1]) || a[0].localeCompare(b[0]));
+  }
+  nestTop(place) { const n = this.nestOf(place); return n.length ? n[n.length - 1][0] : null; }
+
   updateTools(view) {
     void view;
     const tools = this.toolsNow || {};
     const seen = new Set(), perFx = new Map();
+    // (a board's stack as the kitchen has it – its three, nothing else: the kitchen's own mesh shows it; else each there is drawn)
+    const whole = new Set();
+    for (const [fid, F] of Object.entries(this.k3.fx)) {
+      if (!F.parts.nest) continue;
+      const n = this.nestOf(`${fid}/nest`);
+      const full = n.length === 3 && n.every(([, t], i) => !t.of && t.size === 2 - i);
+      if (full) whole.add(`${fid}/nest`);
+      F.parts.nest.visible = full;
+    }
     for (const [id, t] of Object.entries(tools)) {
       const k = `u:${id}`;
       const kept = this.stashAt && this.stashAt.get(k);
       if (kept && (kept.hidden || kept.lie === 'board')) continue;
+      if (kept && kept.lie === 'nest' && whole.has(kept.place)) continue;
       // (in my hand at work, the work drawing it there itself – the knife as it cuts: not twice)
       if (kept && kept.fp && this.work && !this.work.idle && this.work.tool && TOOLS[t.kind] && this.work.tool.kind === TOOLS[t.kind].board) continue;
       const up = !!(TOOLS[t.kind] && TOOLS[t.kind].upright) || t.kind === 'grater';
@@ -1204,10 +1257,13 @@ export class Scene3D {
         pos = this.glide(k, `a:${t.at}:${n}`, this.toolLie(F, n));
         q = this.lieQuat('flat', F.front, up, n);
       } else continue;
+      // (on its stack: one in another, a little higher each)
+      if (kept && kept.lie === 'nest') { const n = this.nestOf(kept.place); pos = pos.clone().setY(pos.y + Math.max(0, n.findIndex(([q]) => q === k)) * 0.006); q = new THREE.Quaternion().setFromAxisAngle(UP, Math.atan2(kept.out.x, kept.out.z)); }
+      const mk = t.kind === 'box' ? `box|${t.size}|${t.of || ''}|${t.cap || ''}` : t.kind;
       let rec = this.tools.get(id);
-      if (!rec || rec.kind !== t.kind) {
+      if (!rec || rec.kind !== mk) {
         if (rec) this.dynamic.remove(rec.g);
-        rec = { kind: t.kind, g: utensilMesh(t.kind) };
+        rec = { kind: mk, g: t.kind === 'box' ? emptyBox(t) : utensilMesh(t.kind) };
         this.tools.set(id, rec);
         this.dynamic.add(rec.g);
       }
@@ -1453,7 +1509,7 @@ export class Scene3D {
   placeFood(slot, kind, st, pos, yaw = 0, box = null, scale = 1) {
     const boxed = !!box && boxable(kind);
     const sp = boxed ? boxSpec(kind, box.of || st) : null;
-    const key = (boxed && box.empty ? `${kind}|empty` : foodKey(kind, st)) + (boxed ? `|box${sp.size}${sp.style}` : '');
+    const key = (boxed && box.empty ? `${kind}|empty` : foodKey(kind, st)) + (boxed ? `|box${sp.size}${sp.style}${sp.color}|${(box.of || st || {}).cap || ''}` : '');
     let f = this.foods.get(slot);
     if (!f || f.key !== key) {
       if (f) this.dynamic.remove(f.g);
@@ -1525,7 +1581,7 @@ export class Scene3D {
         const r = it.at && this.fpPutting(`i:${id}`);
         const L = r && lie();
         if (L) r.world = L.pos.clone().addScaledVector(UP, 0.01);
-        put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17, kept.yaw || 0, { of: it });
+        put(`item:${id}`, it.kind, it, () => this.spriteFor(it.kind, it), this.glide(`i:${id}`, kept.sig, kept.pos), kept.fp ? kept.size : kept.held ? 0.2 : 0.17, kept.yaw || 0, (it.loose ? null : { of: it }));
         continue;
       }
       const pk = this.parkedAt && this.parkedAt.get(`i:${id}`);
@@ -1541,12 +1597,12 @@ export class Scene3D {
       const tex = () => (done && !active ? this.spriteFor(it.kind, null, it.cut) : this.spriteFor(it.kind, it));
       const at = this.glide(`i:${id}`, `a:${fxId}`, pos), g = this.glides.get(`i:${id}`);
       const size = active ? 0.34 : 0.24;
-      put(`item:${id}`, it.kind, done && !active ? { cut: it.cut, k: it.n, n: it.n, cook: it.cook } : it, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size, laidYaw ?? yawAt(fxId), active ? null : { of: it });
+      put(`item:${id}`, it.kind, done && !active ? { cut: it.cut, k: it.n, n: it.n, cook: it.cook } : it, tex, at, g.fromHand && g.t < 1 ? 0.1 + (size - 0.1) * g.t * g.t * (3 - 2 * g.t) : size, laidYaw ?? yawAt(fxId), active ? null : (it.loose ? null : { of: it }));
     }
     // at work: the containers of what's out on the board, standing beside it, empty
     if (fp && this.work) for (const [k, b] of this.work.boxes || []) {
       const it = D.items[k];
-      if (it && boxable(it.kind)) food(`box:${k}`, it.kind, b.st || null, b.pos, b.yaw, { of: b.of || it, empty: !b.st, tilt: b.tilt, axis: b.axis });
+      if (it && boxable(it.kind) && !it.loose) food(`box:${k}`, it.kind, b.st || null, b.pos, b.yaw, { of: b.of || it, empty: !b.st, tilt: b.tilt, axis: b.axis });
     }
     // the empty food containers set down on the stove after their food was tipped into the pot –
     // nested in each other, the smaller inside the bigger
@@ -1816,15 +1872,25 @@ export class Scene3D {
     const holding = (rec && rec.holding) || [];
     const vk = (k) => (k && k[0] === 'v' && D && D.vessels[k.slice(2)] ? D.vessels[k.slice(2)].kind : null);
     // (food in its container: carried on the palm, out at the waist)
-    const holdOf = (k) => { if (k[0] === 'u') return 'tool'; const kd = vk(k); if (!kd) { const it = k[0] === 'i' && D && D.items[k.slice(2)]; return it && boxable(it.kind) ? 'tub' : 'palm'; } return twoHanded(kd) ? 'side' : GRIP3D[kd] ? 'handle' : 'palm'; };
+    const holdOf = (k) => { if (k[0] === 'u') return view.C && view.C.tools && view.C.tools[k.slice(2)] && view.C.tools[k.slice(2)].kind === 'box' ? 'tub' : 'tool'; const kd = vk(k); if (!kd) { const it = k[0] === 'i' && D && D.items[k.slice(2)]; return it && boxable(it.kind) && !it.loose ? 'tub' : 'palm'; } return twoHanded(kd) ? 'side' : GRIP3D[kd] ? 'handle' : 'palm'; };
     const slots = this.fpSlots, came = [], gone = [];
     for (let i = 0; i < 2; i++) if (slots[i] && !holding.includes(slots[i])) { gone.push([i, slots[i]]); slots[i] = null; }
+    // (loose ones put into the empty container my other hand holds: in that hand now, in it)
+    const mv = this.fpMove;
+    if (mv && holding.includes(mv.k) && !holding.includes(mv.box) && slots[mv.to] == null) {
+      const j = slots.indexOf(mv.k);
+      if (j >= 0) { slots[j] = null; slots[mv.to] = mv.k; }
+      this.fpHold.set(mv.k, 'tub');
+      this.fpMove = null;
+    } else if (mv && !holding.includes(mv.k)) this.fpMove = null;
     for (const k of holding) {
       if (slots.includes(k)) continue;
       const h = holdOf(k);
       this.fpHold.set(k, h);
-      const want = this.fpWant.get(k);
+      let want = this.fpWant.get(k);
       this.fpWant.delete(k);
+      // (one taken out of a bunch – a new thing: the hand that took it)
+      if (want == null && this.fpWantNext != null && k.includes('~p')) { want = this.fpWantNext; this.fpWantNext = null; }
       const M = this.mainHand;
       if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = want != null && slots[want] == null ? want : slots[M] == null ? M : 1 - M; slots[i] = k; came.push([i, k]); }
     }
@@ -1989,7 +2055,7 @@ export class Scene3D {
       const c = Math.cos(th), sn = Math.sin(th);
       return { pos: A.fist(i).sub(new THREE.Vector3(g.x * c + g.z * sn, g.y, -g.x * sn + g.z * c)), yaw: th };
     }
-    return { pos: A.onPalm(i), yaw: me.yaw };
+    return { pos: A.onPalm(i), yaw: me.yaw, ...(k[0] === 'u' ? { q: new THREE.Quaternion().setFromAxisAngle(UP, me.yaw) } : {}) }; // (an empty container: on the palm)
   }
 
   // ---------------------------------------------------------------- first person: work right there

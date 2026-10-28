@@ -107,7 +107,7 @@ function shareOf(p, u, q) {
   };
 }
 function onBoard(s, phases, cut = false) {
-  const boxed = !(s.itemKind && !boxable(s.itemKind));
+  const boxed = !(s.itemKind && !boxable(s.itemKind)) && !s.loose; // (loose: lying on the board already, no container)
   const q = boxed ? Math.max(1, Math.min(8, s.itemQty || 1)) : 1;
   const t = BOARD_TOOLS.find((x) => phases.some((p) => p.tool === x));
   let out;

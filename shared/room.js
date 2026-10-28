@@ -11,7 +11,7 @@
 
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
-  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange, openBay, turnKnob, pourInto, stirPan,
+  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange, openBay, turnKnob, pourInto, stirPan, takePiece, mergeInto, boxInto,
   setSpeed, skipWait, SPEEDS, skipDw, refresh, sakirTick, sakirStart, wearGloves, hangGloves,
 } from './cook.js';
 import { ingName } from './ingredients.js';
@@ -203,6 +203,16 @@ export class Room {
         if (!err) this.flush(true);
         break;
       }
+      case 'piece': case 'merge': case 'boxInto': {
+        // (one taken out of a bunch – a lemon of the lemons; loose ones put back in with theirs, or into an empty container)
+        if (!C) return;
+        const err = msg.t === 'piece' ? takePiece(C, x, K, m.id, String(msg.what || ''), String(msg.fx || ''))
+          : msg.t === 'merge' ? mergeInto(C, x, K, m.id, String(msg.what || ''), String(msg.into || ''))
+            : boxInto(C, x, K, m.id, String(msg.what || ''), String(msg.into || ''), msg.lay && typeof msg.lay === 'object' ? { x: +msg.lay.x, y: +msg.lay.y, z: +msg.lay.z } : null);
+        client.sendText(JSON.stringify({ t: 'handled', what: msg.t, key: msg.what, err }));
+        if (!err) this.flush(true);
+        break;
+      }
       case 'stir': {
         // (a stir by hand)
         if (!C) return;
@@ -327,18 +337,20 @@ export class Room {
     if (!C) { this.ev = []; return; }
     const up = { t: 'up', recipe: C.recipe };
     let any = false;
-    const diff = (key, src, keyFn) => {
+    const diff = (key, src, keyFn, gone = false) => {
       let out = null;
       for (const [id, v] of Object.entries(src)) {
         const k = keyFn(v);
         if (this.sent[key][id] !== k) { this.sent[key][id] = k; (out = out || {})[id] = v; }
       }
+      // (gone: one no more – loose ones put back in with their bunch – told as null)
+      if (gone) for (const id of Object.keys(this.sent[key])) if (!(id in src)) { delete this.sent[key][id]; (out = out || {})[id] = null; }
       if (out) { up[key] = out; any = true; }
     };
     diff('steps', C.steps, stepKey);
-    diff('items', C.items, (v) => JSON.stringify(v));
+    diff('items', C.items, (v) => JSON.stringify(v), true);
     diff('vessels', C.vessels, vesselKey);
-    diff('tools', C.tools || {}, (v) => JSON.stringify(v));
+    diff('tools', C.tools || {}, (v) => JSON.stringify(v), true);
     diff('fx', C.fx, (v) => JSON.stringify(v));
     diff('scraps', C.scraps, (v) => JSON.stringify(v));
     diff('bins', C.bins, (v) => JSON.stringify(v));

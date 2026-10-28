@@ -91,7 +91,24 @@ const KNOB_NAMES = ['off', 'low', 'medium', 'high'];
 function pourTarget() {
   const C = S.M.cook;
   if (!S.fp || S.working || !C) return null;
-  const c = scene.viewCenter(), v = scene.vesselPick(c.x, c.y, S.me);
+  const c = scene.viewCenter();
+  // (loose ones in a hand – tomatoes taken out one by one – at a bunch of the same: back in with them)
+  const lk = [scene.fpSlots[S.mainHand], scene.fpSlots[1 - S.mainHand]].find((q) => q && q[0] === 'i' && C.items[q.slice(2)] && C.items[q.slice(2)].loose);
+  const at = lk && fpPointedAt(c);
+  if (at && (at.kind === 'piece' || at.kind === 'thing') && at.key[0] === 'i' && at.key !== lk) {
+    const lo = C.items[lk.slice(2)], b = C.items[at.key.slice(2)];
+    if (b && b.kind === lo.kind && !b.loose && !!b.washed === !!lo.washed && (b.cut || null) === (lo.cut || null)) return { merge: true, what: lk, into: at.key, w: at.w, every: 0.25, label: `${thingEmoji(C, lk)} Put the ${thingName(C, S.x, lk)} back in with the ${thingName(C, S.x, at.key)}` };
+  }
+  const v = scene.vesselPick(c.x, c.y, S.me);
+  if (lk) {
+    // (… into an empty container: the one I aim at, lying about – not on its stack – or, aiming at no pan, the one in my
+    // other hand)
+    const isBox = (q) => q && q[0] === 'u' && C.tools[q.slice(2)] && C.tools[q.slice(2)].kind === 'box';
+    const bt = at && at.kind === 'thing' && isBox(at.key) && !String(C.tools[at.key.slice(2)].at || '').endsWith('/nest') ? at.key : null;
+    const ob = scene.fpSlots.find(isBox);
+    const bx = bt || (!v && ob);
+    if (bx) return { boxInto: true, what: lk, into: bx, w: bt ? at.w : null, every: 0.25, label: `${thingEmoji(C, lk)} Put the ${thingName(C, S.x, lk)} in the ${bt ? 'container' : 'container in your other hand'}` };
+  }
   if (!v) return null;
   const into = thingName(C, S.x, `v:${v.id}`), sl = scene.fpSlots, M = S.mainHand;
   const k = [sl[M], sl[1 - M]].find((q) => q && q[0] === 'i');
@@ -110,7 +127,7 @@ function freeJobs(f, only = null) {
   const held = myHeld(), tools = held.map(boardKind).filter(Boolean);
   // (not what the recipe itself does with it – that's its own step, already in the list)
   const own = (a, id) => S.x.steps.some((q) => q.do === a && q.item === id && C.steps[q.id] && C.steps[q.id].s !== 'done');
-  const job = (a, id, it) => ({ sid: `#do.${a}.${id}.${it.kind}.${it.qty || 1}@${f.id}`, label: `${FREE_ICON[a]} ${ACTIONS[a].verb} the ${thingName(C, S.x, `i:${id}`)}`, chore: true, free: true, key: `i:${id}` });
+  const job = (a, id, it) => ({ sid: `#do.${a}.${id}.${it.kind}.${it.qty || 1}${it.loose ? 'l' : ''}@${f.id}`, label: `${FREE_ICON[a]} ${ACTIONS[a].verb} the ${thingName(C, S.x, `i:${id}`)}`, chore: true, free: true, key: `i:${id}` });
   for (const [id, it] of Object.entries(C.items)) {
     if ((only && only !== `i:${id}`) || !stocked(it.kind)) continue; // (produce: peppers, tomatoes, onions … – not an egg sliced)
     if (f.caps.includes('board') && it.at === f.id && !it.in && !it.used && !it.stored && it.held == null && !it.cut) {
@@ -165,7 +182,18 @@ function pourFrame(dt) {
   P.what = t.what;
   if (!P.reached && t.hand >= 0) { P.reached = true; scene.fpArms.reach(t.hand, { key: null, take: false, hold: 'palm', world: t.w.clone().setY(t.w.y + 0.08) }); }
   P.t += dt;
-  if (P.t >= t.every) { P.t = 0; send({ t: 'pour', what: t.what, into: t.into, n: 1 }); sfx.play(t.what.startsWith('staple:') ? 'click' : 'pop', 0.45); }
+  if (P.t >= t.every) {
+    P.t = 0;
+    if (t.merge) { send({ t: 'merge', what: t.what, into: t.into }); sfx.play('clunk', 0.35); return; }
+    if (t.boxInto) {
+      const h = scene.fpSlots.indexOf(t.into);
+      if (h >= 0) scene.fpMove = { k: t.what, box: t.into, to: h }; // (in that hand, in it)
+      const g = h < 0 && scene.tools.get(t.into.slice(2)), p = g && g.g.position;
+      send({ t: 'boxInto', what: t.what, into: t.into, ...(p ? { lay: { x: p.x, y: p.y, z: p.z } } : {}) }); sfx.play('clunk', 0.35);
+      return;
+    }
+    send({ t: 'pour', what: t.what, into: t.into, n: 1 }); sfx.play(t.what.startsWith('staple:') ? 'click' : 'pop', 0.45);
+  }
 }
 // which of the board's tools a thing is – 'knife', 'peeler', 'grater' – or null
 function boardKind(k) { const t = k && k[0] === 'u' && S.M.cook && (S.M.cook.tools || {})[k.slice(2)]; return (t && TOOLS[t.kind] && TOOLS[t.kind].board) || null; }
@@ -897,7 +925,9 @@ function fpPointed(hand = S.mainHand) {
   const oi = k && k[0] === 'v' && scene.ovenPick(c.x, c.y, S.me, true);
   if (oi && oi.kind === 'surface') return { ...oi, key: k };
   // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
-  const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
+  // (the stack of containers beside a board too – unless it's an empty one I hold: that goes on the stack)
+  const boxIn = k && k[0] === 'u' && S.M.cook.tools[k.slice(2)] && S.M.cook.tools[k.slice(2)].kind === 'box';
+  const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board') || (res.fx.endsWith('/nest') && !boxIn)));
   // (not at the fridge, the pantry – its door, its shelves, what's on them: that's taking from it, putting in it)
   const raw = k && onTop ? scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }) : null;
   const atStore = raw && (raw.kind === 'door' || raw.kind === 'shelf' || raw.kind === 'store' || (raw.kind === 'thing' && raw.fx && isStore(fixtureById(S.K, splitPlace(raw.fx)[0]))));
@@ -914,6 +944,9 @@ function fpPointedAt(c) {
   if (kn) return kn;
   const od = scene.ovenPick(c.x, c.y, S.me, false);
   if (od) return od;
+  // (one of a bunch in its container: a lemon of the lemons – the container itself further out)
+  const pc = scene.piecePick(c.x, c.y, S.me);
+  if (pc) return pc;
   // (the oven gloves on: at where they lie beside the oven – to hang them back)
   if (glovesOn(S.M.cook, S.myId)) { const g = scene.glovesSpotAt(c.x, c.y); if (g) return { kind: 'hangGloves', fx: g.fx, w: g.w }; }
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld(), { withHeld: false }); // (past what's in my hands)
@@ -931,13 +964,15 @@ const isGloves = (key) => { const t = key && key[0] === 'u' && S.M.cook && (S.M.
 function fpPointLabel(pt) {
   const C = S.M.cook;
   if (pt.kind === 'work') return pt.label;
+  if (pt.kind === 'piece') { const it = C.items[pt.key.slice(2)]; return `${thingEmoji(C, pt.key)} Take ${it && it.kind ? `a${/^[aeiou]/i.test(ingName(it.kind, 1)) ? 'n' : ''} ${ingName(it.kind, 1).toLowerCase()}` : 'one'}`; }
+  if (pt.kind === 'merge') return `${thingEmoji(C, pt.what)} Put the ${thingName(C, S.x, pt.what)} in with the ${thingName(C, S.x, pt.into)}`;
   if (pt.kind === 'knob') return `🔥 Turn the ${fixtureById(S.K, pt.fx) && fixtureById(S.K, pt.fx).type === 'oven' ? 'oven' : 'knob'} – ${KNOB_NAMES[pt.level]} (hold and move the mouse)`;
   if (pt.kind === 'ovenDoor') return `${pt.open ? 'Shut' : 'Open'} the oven`;
   if (pt.kind === 'surface') return `${thingEmoji(C, pt.key)} Put the ${thingName(C, S.x, pt.key)} ${pt.inside ? 'in the oven' : pt.sink ? 'in the sink' : pt.slot != null ? 'on this burner' : 'here'}`;
   if (pt.kind === 'hangGloves') return '🧤 Hang up the oven gloves';
   if (pt.kind === 'thing' && isGloves(pt.key)) return '🧤 Put on the oven gloves';
   if (pt.kind === 'bay') return `${pt.open ? 'Shut' : 'Open'} the ${placeName(pt.fx)}`;
-  if (pt.kind === 'bayIn') { const k = fpPutWhat(-1); return k ? `${thingEmoji(C, k)} Put the ${thingName(C, S.x, k)} in the ${placeName(pt.fx)}` : ''; }
+  if (pt.kind === 'bayIn') { const k = fpPutWhat(-1); return k ? `${thingEmoji(C, k)} Put the ${thingName(C, S.x, k)} ${pt.fx.endsWith('/nest') ? 'back on the stack' : `in the ${placeName(pt.fx)}`}` : ''; }
   return `${thingEmoji(C, pt.key)} Take the ${thingName(C, S.x, pt.key)}`;
 }
 // what goes in when I put something away (the hand asked for – 1 right, 0 left – if it holds something)
@@ -973,6 +1008,16 @@ function fpPointAct(pt, hand = -1) {
     return;
   }
   if (pt.kind === 'work') { startJob(pt.sid, pt.fx); return; }
+  if (pt.kind === 'piece') {
+    // (that hand takes one out – or one more, with the same in it already)
+    const i = hand >= 0 ? hand : freeHandSlot(S.mainHand);
+    scene.fpWantNext = i;
+    if (i >= 0 && pt.w) scene.fpArms.reach(i, { key: null, take: false, hold: 'pinch', world: pt.w });
+    send({ t: 'piece', what: pt.key, fx: pt.fx });
+    sfx.play('grab', 0.4);
+    return;
+  }
+  if (pt.kind === 'merge') { send({ t: 'merge', what: pt.what, into: pt.into }); sfx.play('clunk', 0.35); return; }
   if (pt.kind === 'surface') {
     // (just there – on the board, a burner, a spot on the worktop; in the sink, into it)
     // (and facing as it was in my hand – not turned round as it lands)
@@ -1398,7 +1443,7 @@ function handDown(i) {
     sfx.play('click', 0.4);
     return;
   }
-  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn' || pt.kind === 'surface' || pt.kind === 'work')) { hover = i; fpPointAct(pt, i); return; }
+  if (pt && (pt.kind === 'bay' || pt.kind === 'bayIn' || pt.kind === 'surface' || pt.kind === 'work' || pt.kind === 'piece' || pt.kind === 'merge')) { hover = i; fpPointAct(pt, i); return; }
   if (pick && (pick.kind === 'door' || pick.kind === 'thing') && !S.fpDrag) {
     fpGrab({ clientX: c.x, clientY: c.y, pointerId: HAND_ID[i] }, i);
     if (S.fpDrag) { Object.assign(h, { down: true, ox: 0, oy: 0, act: 'grab' }); moving = i; hover = i; return; }
