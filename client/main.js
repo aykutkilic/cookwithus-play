@@ -99,6 +99,39 @@ function pourTarget() {
   if (s) return { what: `staple:${s.itemKind}`, into: v.id, w: v.w, every: 0.5, label: `🧂 Season it – ${ingName(s.itemKind, 1).toLowerCase()} (a shake each moment)` };
   return null;
 }
+// R: using what my main hand holds on what I aim at – the recipe's work that does that, its close-up and my strokes
+// (the knife on the tomatoes: dicing them; the peppers at the sink: washing them); at a pan, its sauté / stir – or, if
+// none's open, a stir there and then
+function workTarget() {
+  const C = S.M.cook;
+  if (!S.fp || S.working || !C || !S.x) return null;
+  const c = scene.viewCenter(), k = scene.fpSlots[S.mainHand], t = boardKind(k);
+  const open = (s) => s && C.steps[s.id] && !['done', 'active'].includes(C.steps[s.id].s) && (C.steps[s.id].s !== 'active' || C.steps[s.id].by === S.myId);
+  const res = fpPointedAt(c);
+  if (t && res && res.kind === 'thing' && res.key[0] === 'i') {
+    const f = fixtureById(S.K, splitPlace(res.fx)[0]);
+    const job = f && jobsAt(f).find((j) => j.sid && !j.off && (() => { const s = S.x.steps.find((q) => q.id === j.sid); return s && `i:${s.item}` === res.key && stepTool(s, bakeKind(f)) === t; })());
+    if (job) return { sid: job.sid, fx: f.id, w: res.w, label: job.label };
+  }
+  const v = scene.vesselPick(c.x, c.y, S.me);
+  if (v) {
+    // (its sauté once what it's for is in the pan)
+    const s = S.x.steps.find((q) => (q.do === 'saute' || q.do === 'stir') && q.vessel === v.id && open(q) && (q.do !== 'saute' || !S.x.sim || simProgress(C, S.x, q) != null));
+    const vv = C.vessels[v.id];
+    if (s && vv && vv.at) return { sid: s.id, fx: vv.at.fx, w: v.w, label: `${stepIcon(s)} ${s.name}` };
+    if (vv && (vv.contents || []).length) return { stir: v.id, w: v.w, label: '🥄 Stir it' };
+  }
+  const f = S.target, held = myHeld();
+  const job = f && held.length && jobsAt(f).find((j) => j.sid && !j.off && j.uses);
+  if (job) return { sid: job.sid, fx: f.id, w: null, label: job.label };
+  return null;
+}
+function workNow() {
+  const t = workTarget();
+  if (!t) return;
+  if (t.sid) { startJob(t.sid, t.fx); return; }
+  if (t.stir) { send({ t: 'stir', into: t.stir }); const i = scene.fpSlots[S.mainHand] == null ? S.mainHand : 1 - S.mainHand; if (t.w && scene.fpSlots[i] == null) scene.fpArms.reach(i, { key: null, take: false, hold: 'hand', world: t.w }); sfx.play('whoosh', 0.3); }
+}
 function pourFrame(dt) {
   const P = S.pour, t = P && pourTarget();
   if (!t) return;
@@ -833,13 +866,6 @@ function fpPointed(hand = S.mainHand) {
   const c = scene.viewCenter();
   const res = fpPointedAt(c);
   const k = hand >= 0 ? scene.fpSlots[hand] : null;
-  // (the knife – a board's tool – in this hand, at food a job here does with it: that job, its work begun)
-  const t = boardKind(k);
-  if (t && res && res.kind === 'thing' && res.key[0] === 'i') {
-    const f = fixtureById(S.K, splitPlace(res.fx)[0]);
-    const job = f && jobsAt(f).find((j) => j.sid && !j.off && (() => { const s = S.x.steps.find((q) => q.id === j.sid); return s && `i:${s.item}` === res.key && stepTool(s, bakeKind(f)) === t; })());
-    if (job) return { kind: 'work', sid: job.sid, fx: f.id, key: res.key, w: res.w, label: job.label };
-  }
   // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
   const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board')));
   if (k && onTop) {
@@ -1391,6 +1417,7 @@ const controls = new Controls({
   onStep: () => { if (S.working && S.working.fp && $('modal').hidden) closeStation(); },
   onView: () => toggleView(),
   onPour: (down) => { S.pour = down ? { t: 0 } : null; },
+  onWork: () => workNow(),
   onFirst: () => sfx.unlock(),
   onMenuMove: (d) => {
     const bs = [...$('menu').querySelectorAll('button:not([disabled])')];
@@ -1411,7 +1438,7 @@ function toggleView() {
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
   if (!touchUI) { if (S.fp) lockMouse(); else unlockMouse(); }
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E or left click your main hand, Q or right click the other (hold to hold on), Tab every option, Ctrl crouch, Space up on your toes, F full screen'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E or left click your main hand, Q or right click the other (hold to hold on), R use what you hold, T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
@@ -2291,9 +2318,10 @@ function drawTags(view) {
   const pt = $('menu').hidden && $('modal').hidden ? fpPointed() : null;
   const ptLabel = pt && fpPointLabel(pt);
   const pour = $('menu').hidden && $('modal').hidden && !touchUI ? pourTarget() : null;
-  const pourHtml = pour ? `<span class="more"><kbd>T</kbd> ${esc(pour.label)}</span>` : '';
-  if (!ptLabel && pour) {
-    const p = scene.screenOf(pour.w);
+  const work = $('menu').hidden && $('modal').hidden && !touchUI ? workTarget() : null;
+  const pourHtml = (work ? `<span class="more"><kbd>R</kbd> ${esc(work.label)}</span>` : '') + (pour ? `<span class="more"><kbd>T</kbd> ${esc(pour.label)}</span>` : '');
+  if (!ptLabel && (pour || work)) {
+    const p = scene.screenOf((pour || work).w || scene.rayPoint(scene.viewCenter().x, scene.viewCenter().y, 0.6));
     pr.hidden = false;
     pr.style.transform = `translate(${p.x}px, ${p.y - 40}px)`;
     if (pr.dataset.h !== pourHtml) { pr.innerHTML = pourHtml; pr.dataset.h = pourHtml; }

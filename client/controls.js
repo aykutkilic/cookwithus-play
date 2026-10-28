@@ -10,7 +10,8 @@
 // kitchen directions.
 
 export class Controls {
-  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep, onPour }) {
+  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep, onPour, onWork }) {
+    this.onWork = onWork;   // first person: R pressed – using what my main hand holds on what I aim at
     this.onUse = onUse;
     this.onPour = onPour;   // first person: T held (down?) – tipping what I hold into the pot / pan I aim at
     this.onHand = onHand;   // first person: (hand – 1 right, 0 left, down?)
@@ -39,6 +40,7 @@ export class Controls {
       if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
       if (k === 'f2' && !e.repeat && this.onView) { e.preventDefault(); this.first(); this.onView(); }
       if (this.fp && k === 't' && !e.repeat && this.onPour) { e.preventDefault(); this.first(); this.onPour(true); }
+      if (this.fp && k === 'r' && !e.repeat && this.onWork) { e.preventDefault(); this.first(); this.onWork(); }
     });
     addEventListener('keyup', (e) => {
       const k = e.key.toLowerCase();

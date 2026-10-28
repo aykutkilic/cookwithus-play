@@ -20,7 +20,7 @@
 // you put it down as you start). Nothing walks by itself.
 
 import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool, useItem } from './actions.js';
-import { simTick, simDone, simVerdict, IN_ORDER, simSeason } from './sim.js';
+import { simTick, simDone, simVerdict, IN_ORDER, simSeason, simStir } from './sim.js';
 import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
 import { stockKitchen, freeSpot, thingsIn } from './stock.js';
@@ -395,6 +395,14 @@ export function pourInto(C, x, K, m, what, into, n = 1) {
     if (it.cracked < it.qty) return '';
   }
   useItem(C, id, into);
+  return '';
+}
+
+// A stir given by hand (R at a pan, no stirring step there): what's in it is turned, nothing catches for a while.
+export function stirPan(C, into) {
+  const v = C.vessels[into];
+  if (!v || !v.at || !(v.contents || []).length) return 'Nothing in it to stir';
+  simStir(C, v);
   return '';
 }
 
@@ -1097,6 +1105,8 @@ export function actStep(C, x, K, sid, memberId, a) {
       st.extra.push({ kind: ph.piece, x: Math.round(px * 100) / 100, y: Math.round(py * 100) / 100 });
     }
     st.k = Math.min(k, target);
+    // (a simulated kitchen: a turn of the spoon round the pan is a stir – nothing catches for a while)
+    if (x.sim && ph.g === 'circle' && C.vessels[s.vessel]) simStir(C, C.vessels[s.vessel]);
     ev.push({ k: 'g', g: ph.g, sid, fx: st.fx });
     credit(C, memberId, 'moves');
     if (st.k >= target) completePhase(C, x, K, s, st, ph, st.k, f, ev);

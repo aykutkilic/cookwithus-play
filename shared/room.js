@@ -11,7 +11,7 @@
 
 import { buildKitchen, SIZES, CUISINES, fixtureById } from './kitchens.js';
 import {
-  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange, openBay, turnKnob, pourInto,
+  recipeById, canCook, newCook, expanded, openStep, closeStep, actStep, tickCook, toggleClaim, dropMember, takeThing, putDown, swingDoor, arrange, openBay, turnKnob, pourInto, stirPan,
   setSpeed, skipWait, SPEEDS, skipDw, refresh, sakirTick, sakirStart, wearGloves, hangGloves,
 } from './cook.js';
 import { ingName } from './ingredients.js';
@@ -201,6 +201,12 @@ export class Room {
         const err = msg.on ? wearGloves(C, m.id, String(msg.fx || '')) : hangGloves(C, m.id);
         client.sendText(JSON.stringify({ t: 'handled', what: 'wear', err }));
         if (!err) this.flush(true);
+        break;
+      }
+      case 'stir': {
+        // (a stir by hand)
+        if (!C) return;
+        if (!stirPan(C, String(msg.into || ''))) this.flush(true);
         break;
       }
       case 'pour': {
