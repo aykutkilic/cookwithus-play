@@ -17,7 +17,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <title>cookwithus · cook together</title>
   <link rel="stylesheet" href="client/style.css">
-  <script type="importmap">{ "imports": { "three": "./client/vendor/three/three.module.js", "three/addons/": "./client/vendor/three/addons/" } }</script>
+  <script type="importmap">{ "imports": { "three": "./client/vendor/three/three.module.js", "three/addons/": "./client/vendor/three/addons/", "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/vision_bundle.mjs" } }</script>
 </head>
 <body>
   <canvas id="world"></canvas>
@@ -36,6 +36,7 @@
     <button id="kitchenBtn" class="btn" title="Create a kitchen">🏠 <span class="lbl">Kitchen</span></button>
     <button id="joinBtn" class="btn" title="Join a kitchen with a code">🔑 <span class="lbl">Join</span></button>
     <button id="viewBtn" class="btn icon" title="First person / the whole room (F2)">👁</button>
+    <button id="camBtn" class="btn icon" title="Hands by camera – play with your real hands">📷</button>
     <button id="soundBtn" class="btn icon" title="Sound">🔊</button>
     <button id="fsBtn" class="btn icon" title="Full screen (F)">⛶</button>
     <button id="meBtn" class="me" title="Your cook"><canvas id="meFace" width="80" height="80"></canvas><span id="meName">Chef</span></button>

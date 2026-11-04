@@ -11,6 +11,7 @@ import { Sfx } from './audio.js';
 import { lookOf, drawPortrait, drawCook } from './figure.js';
 import { drawDish } from './art.js';
 import { initPwa } from './pwa.js';
+import { CamHands, edgeTurn } from './camhands.js';
 import { newMirror, applyMsg } from '../shared/mirror.js';
 import { SIZES, SIZE_ORDER, CUISINES, CUISINE_ORDER, FIXTURES, buildKitchen, kitchenCaps, fixtureById, bakeKind, isStore, splitPlace } from '../shared/kitchens.js';
 import { RECIPES } from '../shared/recipes.js';
@@ -88,10 +89,10 @@ const KNOB_NAMES = ['off', 'low', 'medium', 'high'];
 // T: tipping into the pot / pan I aim at – what one of my hands holds (the main one first: food, all of it, once T's
 // held a moment – eggs cracked in one at a time), or, empty-handed, the staple the recipe wants in it (salt, pepper
 // flakes …: a shake each half second – as much as I hold it for)
-function pourTarget() {
+function pourTarget(hand = -1) {
   const C = S.M.cook;
   if (!S.fp || S.working || !C) return null;
-  const c = scene.viewCenter();
+  const c = aimC(hand >= 0 ? hand : S.mainHand);
   // (loose ones in a hand – tomatoes taken out one by one – at a bunch of the same: back in with them)
   const lk = [scene.fpSlots[S.mainHand], scene.fpSlots[1 - S.mainHand]].find((q) => q && q[0] === 'i' && C.items[q.slice(2)] && C.items[q.slice(2)].loose);
   const at = lk && fpPointedAt(c);
@@ -141,13 +142,14 @@ function freeJobs(f, only = null) {
 // R: using what my main hand holds on what I aim at – the recipe's work that does that, its close-up and my strokes
 // (the knife on the tomatoes: dicing them; the peppers at the sink: washing them); at a pan, its sauté / stir – or, if
 // none's open, a stir there and then
-function workTarget() {
+function workTarget(hand = S.mainHand) {
   const C = S.M.cook;
   if (!S.fp || S.working || !C || !S.x) return null;
-  const c = scene.viewCenter(), k = scene.fpSlots[S.mainHand], t = boardKind(k);
+  const c = aimC(hand), k = scene.fpSlots[hand], t = boardKind(k);
   const open = (s) => s && C.steps[s.id] && !['done', 'active'].includes(C.steps[s.id].s) && (C.steps[s.id].s !== 'active' || C.steps[s.id].by === S.myId);
   const res = fpPointedAt(c);
-  if (t && res && res.kind === 'thing' && res.key[0] === 'i') {
+  // (the food – or one of a bunch of it: the bunch)
+  if (t && res && (res.kind === 'thing' || res.kind === 'piece') && res.key[0] === 'i') {
     const f = fixtureById(S.K, splitPlace(res.fx)[0]);
     const job = f && jobsAt(f).find((j) => j.sid && !j.off && (() => { const s = S.x.steps.find((q) => q.id === j.sid); return s && `i:${s.item}` === res.key && stepTool(s, bakeKind(f)) === t; })());
     if (job) return { sid: job.sid, fx: f.id, w: res.w, label: job.label };
@@ -168,14 +170,15 @@ function workTarget() {
   if (job) return { sid: job.sid, fx: f.id, w: null, label: job.label };
   return null;
 }
-function workNow() {
-  const t = workTarget();
-  if (!t) return;
-  if (t.sid) { startJob(t.sid, t.fx); return; }
-  if (t.stir) { send({ t: 'stir', into: t.stir }); const i = scene.fpSlots[S.mainHand] == null ? S.mainHand : 1 - S.mainHand; if (t.w && scene.fpSlots[i] == null) scene.fpArms.reach(i, { key: null, take: false, hold: 'hand', world: t.w }); sfx.play('whoosh', 0.3); }
+function workNow(hand = S.mainHand) {
+  const t = workTarget(hand);
+  if (!t) return false;
+  if (t.sid) { startJob(t.sid, t.fx); return true; }
+  if (t.stir) { send({ t: 'stir', into: t.stir }); const i = scene.fpSlots[hand] == null ? hand : 1 - hand; if (t.w && scene.fpSlots[i] == null) scene.fpArms.reach(i, { key: null, take: false, hold: 'hand', world: t.w }); sfx.play('whoosh', 0.3); }
+  return true;
 }
 function pourFrame(dt) {
-  const P = S.pour, t = P && pourTarget();
+  const P = S.pour, t = P && pourTarget(P.hand != null ? P.hand : -1);
   if (!t) return;
   // (one press, one thing: the peppers tipped in, it doesn't go on into the salt)
   if (P.what && P.what !== t.what) return;
@@ -918,7 +921,7 @@ function fpLookTarget() {
 // (hand: whose – a hand holding something, aimed at a worktop, puts it down just there)
 function fpPointed(hand = S.mainHand) {
   if (!S.fp || S.working || !S.M.cook) return null;
-  const c = scene.viewCenter();
+  const c = aimC(hand);
   const res = fpPointedAt(c);
   const k = hand >= 0 ? scene.fpSlots[hand] : null;
   // (into the oven, its door open)
@@ -1031,7 +1034,7 @@ function fpPointAct(pt, hand = -1) {
 // E at a store in first person: what's in the middle of the view (done
 // with hand: 1 the right – E, 0 the left – Q)
 function fpStoreLook(f, hand = -1) {
-  const c = scene.viewCenter();
+  const c = aimC(hand);
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
   const C = S.M.cook, fridge = f.type === 'fridge', name = fridge ? 'fridge' : 'pantry';
   const open = C && C.fx[f.id] && C.fx[f.id].door;
@@ -1210,7 +1213,9 @@ function openWork(sid, fx) {
   $('fwIcon').textContent = (ACTIONS[s.do] && ACTIONS[s.do].icon) || '🍳';
   $('fwName').textContent = s.name;
   $('fpWork').hidden = false;
-  $('fwKeys').hidden = touchUI;
+  $('fwKeys').hidden = touchUI && !cam.active;
+  // (hands by camera: how it goes with them)
+  if (cam.active !== !!$('fwKeys').dataset.cam) { $('fwKeys').dataset.cam = cam.active ? '1' : ''; if (!$('fwKeys').dataset.keys) $('fwKeys').dataset.keys = $('fwKeys').innerHTML; $('fwKeys').innerHTML = cam.active ? 'your hands move over the work · close a hand to press with it, open it to let go · knife strokes: down and back up · walk off to step away' : $('fwKeys').dataset.keys; }
   document.body.classList.add('fpwork');
   station.open({ sid, def: s, st, phases: phasesOf(s, bakeKind(f)), f, bk: bakeKind(f), pal: K.palette, C, x, K, me: S.myId, look: lookOf(S.profile.avatar) });
   // step right up to it (a counter is a square deep: from the middle of the
@@ -1423,7 +1428,7 @@ function handDown(i) {
   }
   if (S.working) return;
   // the fridge / the pantry: a hand takes hold of the door's handle, a thing on a shelf
-  const c = scene.viewCenter();
+  const c = aimC(i);
   const pick = scene.fpPick(c.x, c.y, S.me, myHeld());
   const pt = fpPointed(i);
   if (pt && pt.kind === 'ovenDoor') {
@@ -1478,13 +1483,185 @@ function handsFrame(dt) {
   const atWork = !!(S.working && S.working.fp);
   for (const [i, h] of hands.entries()) {
     if (h.down && ((h.act === 'work' && !(S.working && S.working.fp)) || (h.act === 'grab' && !(S.fpDrag && S.fpDrag.pid === HAND_ID[i])))) { h.down = false; h.act = null; if (moving === i) moving = hands[1 - i].down ? 1 - i : -1; }
-    if (h.down || (!h.ox && !h.oy) || atWork) continue;
+    if (h.down || (!h.ox && !h.oy) || atWork || (cam.active && cam.sw[i].present)) continue; // (a hand the camera sees is where it is)
     const k = Math.exp(-dt * 12);
     h.ox *= k; h.oy *= k;
     if (Math.hypot(h.ox, h.oy) < 0.5) h.ox = h.oy = 0;
   }
   if (S.working && S.working.fp && !hands[0].down && !hands[1].down) workPtr('move', handAt(hover));
   if (!$('modal').hidden) unlockMouse(); // (a window to click in)
+}
+// ------------------------------------------------------------------ hands by camera
+// The webcam's two real hands are my two hands (client/camhands.js): each points where it is on the
+// camera, closing it is pressing that hand's button (E / Q) there – and holding it, holding on: a door's
+// handle swung, a knob turned with a twist of the wrist, the work at the bench stroked. Hold to carry: a
+// hand closing on a thing takes it, and it's carried as long as the hand stays closed; opened over a
+// worktop, a burner, the sink, a drawer, a shelf, it's put down there – over nothing, it stays in the hand.
+// A closed hand with the board's knife (peeler, grater) chopping down on the food is R, tipping what a hand
+// holds over a pan (the wrist rolled) is T. At the camera's edges the view turns; the keys still walk.
+const cam = new CamHands({ on: (i, kind, sw) => camEvent(i, kind, sw), move: (i, sw) => camMove(i, sw) });
+const camCarry = [false, false]; // (the hand closed round what it holds – opening puts it down)
+const camCur = [0, 1].map((i) => document.body.appendChild(Object.assign(document.createElement('div'), { className: `camCur ${i ? 'r' : 'l'}`, hidden: true })));
+let camChopT = 0;
+const camHist = [[], []]; // (where each hand's been, the last moment: a chop aims where it started)
+let camAimAt = null; // (aiming hand i from just there: { i, x, y })
+// where hand i aims: the camera's hand, or the dot in the middle of the view
+function aimC(i) {
+  if (camAimAt && camAimAt.i === i) return camAimAt;
+  const p = cam.active && i >= 0 && S.fp ? cam.screen(i, canvas.getBoundingClientRect()) : null;
+  return p || scene.viewCenter();
+}
+// (the hand's offset from the dot – what handAt / the work go by – where the camera has it)
+function camSync(i) {
+  const p = cam.screen(i, canvas.getBoundingClientRect());
+  if (!p) return null;
+  const c = scene.viewCenter();
+  hands[i].ox = p.x - c.x; hands[i].oy = p.y - c.y;
+  return p;
+}
+function camEvent(i, kind) {
+  sfx.unlock();
+  if (!S.fp || !$('modal').hidden || !$('menu').hidden) { if (kind !== 'close') handUp(i); return; }
+  camSync(i);
+  if (kind === 'close') camClose(i);
+  else if (kind === 'open') camOpen(i);
+  else if (kind === 'lost') { handUp(i); if (S.pour && S.pour.hand === i) S.pour = null; }
+}
+function camClose(i) {
+  const atWork = !!(S.working && S.working.fp);
+  hover = i;
+  if (atWork) { handDown(i); return; }
+  if (S.working) return;
+  // (closed round what it holds already: gripping it – nothing else)
+  if (scene.fpSlots[i] != null) { camCarry[i] = true; return; }
+  const pt = fpPointed(i);
+  // hold to carry: closing on a thing takes it (a drawer's, the crock's, one of a bunch, a tool lying about)
+  if (pt && (pt.kind === 'thing' || pt.kind === 'piece')) { fpPointAct(pt, i); camCarry[i] = true; return; }
+  // (… or the fridge's, the pantry's, off its shelf)
+  const c = aimC(i), pick = scene.fpPick(c.x, c.y, S.me, myHeld());
+  const inStore = pick && pick.kind === 'thing' && pick.fx && isStore(fixtureById(S.K, splitPlace(pick.fx)[0]));
+  if (inStore) { wantHand(pick.key, i); send({ t: 'take', what: pick.key, fx: pick.fx }); sfx.play('grab', 0.5); camCarry[i] = true; return; }
+  // (nothing to take hold of there – at the sink with the tomatoes, over a pan: the work there, as R would – the
+  // washing, a stir – this free hand at it)
+  if (!pt && !(pick && (pick.kind === 'door' || pick.kind === 'thing'))) {
+    const o = scene.fpSlots[1 - i] != null ? 1 - i : S.mainHand;
+    if (workTarget(o) && workNow(o)) return;
+  }
+  // else what the hand's button does there: a door's handle, a knob, a drawer, the oven, the work …
+  handDown(i);
+}
+function camOpen(i) {
+  if (hands[i].down) { handUp(i); return; }
+  if (S.working) return;
+  const k = scene.fpSlots[i];
+  if (k == null || !camCarry[i]) return;
+  camCarry[i] = false;
+  // let go over somewhere to put it: it's put down there
+  const pt = fpPointed(i);
+  if (pt && (pt.kind === 'surface' || pt.kind === 'bayIn' || pt.kind === 'merge')) { fpPointAct(pt, i); return; }
+  const c = aimC(i);
+  for (const fx of storesNear()) {
+    const sp = scene.shelfSpotAt(fx, c.x, c.y);
+    if (sp) { send({ t: 'put', what: k, fx, r: sp.r, x: sp.x }); sfx.play('clunk', 0.5); return; }
+  }
+  // (over nothing: it stays in the hand)
+}
+function camMove(i, sw) {
+  if (!S.fp) return;
+  const h = hands[i];
+  const p = camSync(i);
+  if (!p) return;
+  if (S.working && S.working.fp) {
+    // (the knife hand came to the work closed round it: it's on the work)
+    if (sw.closed && !h.down && $('modal').hidden) { hover = i; handDown(i); }
+    if (h.down) workPtr('move', handAt(i));
+    else if (!hands[0].down && !hands[1].down && i === hover) workPtr('move', handAt(i));
+    return;
+  }
+  if (h.down && h.act === 'grab' && S.fpDrag && S.fpDrag.pid === HAND_ID[i]) { fpDragTo(p.x, p.y); return; }
+  if (h.down && h.act === 'knob' && S.knobDrag) {
+    // (a knob: turned with a twist of the wrist – clockwise up – or moved across, a setting each 70 px)
+    const K = S.knobDrag;
+    if (K.roll0 == null) { K.roll0 = sw.roll; K.x0 = p.x; }
+    const lv = Math.max(0, Math.min(3, K.level0 + Math.round((sw.roll - K.roll0) / 0.55 + (p.x - K.x0) / 70)));
+    if (lv !== K.level) { K.level = lv; send({ t: 'knob', fx: K.fx, slot: K.slot, level: lv }); sfx.play(lv ? 'click' : 'clunk', 0.4); }
+    return;
+  }
+  if (S.working || !$('modal').hidden) return;
+  const k = scene.fpSlots[i];
+  // R by hand: the board's tool held closed, chopped down onto the food
+  const now = performance.now(), hist = camHist[i];
+  hist.push({ t: now, x: p.x, y: p.y });
+  while (hist.length && now - hist[0].t > 350) hist.shift();
+  if (sw.closed && boardKind(k) && sw.vel.y > 0.8 && now - camChopT > 800) {
+    // (what it came down on: where the stroke began, or on its way down)
+    camChopT = now;
+    for (const q of [hist[0], ...hist.slice(1)]) {
+      camAimAt = { i, x: q.x, y: q.y };
+      const ok = !!workTarget(i) && workNow(i);
+      camAimAt = null;
+      if (ok) return;
+    }
+  }
+  // T by hand: what it holds tipped over the pan (the wrist rolled well over) – as long as it's tipped
+  const tipped = Math.abs(sw.roll) > 0.95, upright = Math.abs(sw.roll) < 0.6;
+  if (k != null && tipped && !S.pour && pourTarget(i)) S.pour = { t: 0, hand: i, cam: true };
+  else if (S.pour && S.pour.cam && S.pour.hand === i && (upright || k == null)) S.pour = null;
+}
+// each frame: the view turned by a hand at the edge (not while it's holding on to a door, a knob), and the hands'
+// rings on the screen
+function camFrame(dt) {
+  const r = canvas.getBoundingClientRect();
+  for (const i of [0, 1]) {
+    const p = S.fp && cam.screen(i, r), el = camCur[i];
+    el.hidden = !p;
+    if (!p) continue;
+    el.style.transform = `translate(${p.x}px, ${p.y}px)`;
+    el.classList.toggle('closed', cam.sw[i].closed);
+    el.classList.toggle('full', scene.fpSlots[i] != null);
+  }
+  if (!cam.active || !S.fp || S.working || !$('modal').hidden) return;
+  if (hands.some((h) => h.down && (h.act === 'grab' || h.act === 'knob'))) return;
+  let yaw = 0, pitch = 0;
+  for (const s of cam.sw) {
+    if (!s.present) continue;
+    const t = edgeTurn(s.at);
+    if (Math.abs(t.yaw) > Math.abs(yaw)) yaw = t.yaw;
+    if (Math.abs(t.pitch) > Math.abs(pitch)) pitch = t.pitch;
+  }
+  if (!yaw && !pitch) return;
+  const dy = yaw * dt, p0 = S.pitch;
+  S.me.yaw += dy;
+  S.pitch = Math.max(-1.1, Math.min(0.6, S.pitch + pitch * dt));
+  scene.lookBy(dy, S.pitch - p0);
+}
+// where my free hands hover in the kitchen: before me, where the camera has them (for the scene)
+function camAim() {
+  if (!cam.active || !S.fp || S.working) return null;
+  const r = canvas.getBoundingClientRect();
+  return [0, 1].map((i) => {
+    const p = cam.screen(i, r);
+    return p && scene.fpSlots[i] == null && !hands[i].down ? { w: scene.rayPoint(p.x, p.y, 0.45), closed: cam.sw[i].closed } : null;
+  });
+}
+// 📷: hands by camera on / off
+async function toggleCam(on = !cam.active) {
+  sfx.unlock();
+  const b = $('camBtn');
+  if (!on) { cam.stop(); camCarry.fill(false); b.classList.remove('on'); toast('📷 Hands by camera off – the mouse and keys again'); return; }
+  if (!S.fp) toggleView();
+  unlockMouse();
+  b.classList.add('wait');
+  toast('📷 Opening the camera – the hand model loads the first time (a few MB)…', 6000);
+  try {
+    await cam.start({ camera: !params.has('camfake') });
+    b.classList.add('on');
+    toast('🖐 Your hands are your hands now: point, close your hand to take hold – keep it closed to carry, open it to put it down. A chop with the knife cuts, a tip of the wrist pours, a hand at the edge turns you. W A S D walk.', 9000);
+  } catch (err) {
+    cam.stop();
+    toast(err && err.name === 'NotAllowedError' ? '📷 The camera wasn’t allowed – allow it in the browser to play with your hands' : `📷 No camera to be had (${(err && err.message) || err})`, 5000);
+  }
+  b.classList.remove('wait');
 }
 canvas.addEventListener('mousedown', (e) => {
   if (!locked()) return;
@@ -1531,6 +1708,7 @@ function toggleView() {
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
+$('camBtn').onclick = () => toggleCam();
 controls.setTouch(touchUI);
 if (touchUI) lockZoom();
 
@@ -2252,6 +2430,7 @@ function frame(now) {
     const t0 = performance.now();
     moveMe(dt);
     handsFrame(dt);
+    camFrame(dt);
     pourFrame(dt);
     S.target = S.working ? null : fpLookTarget() || findTarget();
     tickTimers(dt);
@@ -2382,7 +2561,7 @@ function buildView(now, dt) {
     const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
     station.geo = scene.workGeo(wf, subj);
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work, camAim: camAim() };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:
@@ -2499,4 +2678,4 @@ function workScreen(x, y) {
   const s = scene.screenOf(scene.workWorld(w, x, y)), off = scene.workOffset(w, station);
   return { x: s.x - off.x, y: s.y - off.y };
 }
-window.cookwithus = { S, scene, station, sfx, goDo, goAct, goStore, closeStation, send, useNow, workScreen, toggleView };
+window.cookwithus = { S, scene, station, sfx, goDo, goAct, goStore, closeStation, send, useNow, workScreen, toggleView, cam, toggleCam, fpPointed, workTarget };

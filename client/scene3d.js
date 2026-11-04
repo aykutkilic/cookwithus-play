@@ -1981,6 +1981,13 @@ export class Scene3D {
       if (eye && (!this.restNow || this.restNow.key !== key)) this.restNow = { key, spots: this.benchRest({ pos: eye, fwd: new THREE.Vector3(Math.sin(F.yaw), 0, Math.cos(F.yaw)) }, { reach: 0.46, board: true, pref: mood.pref }) };
       if (eye) for (let i = 0; i < 2; i++) if (holds[i] == null && mood.rest[i] && this.restNow.spots[i]) { holds[i] = rest(this.restNow.spots[i], i); leaning = true; }
     }
+    // (hands by camera: a free hand hovers where my real one is – open, or closing as it closes)
+    if (view.camAim && !(this.work && !this.work.idle)) {
+      for (let i = 0; i < 2; i++) {
+        const a = view.camAim[i];
+        if (a && a.w && (holds[i] == null || holds[i].kind === 'rest')) holds[i] = { kind: 'hand', at: handAt(a.w, i ? 1 : -1), curl: a.closed ? 0.85 : 0.2 };
+      }
+    }
     this.restLean = leaning;
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {

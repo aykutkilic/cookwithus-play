@@ -336,3 +336,17 @@ body.touchui:not(.sheetMin) #touch .tuse { bottom: calc(46vh + 20px); }
 @media (min-width: 761px) { body.touchui #touch .tuse { bottom: 110px; } }
 @media (max-width: 560px) { #joinBtn { display: none; } #top { gap: 5px; padding-left: 8px; padding-right: 8px; } }
 #stats { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 50; padding: 3px 10px; border-radius: 10px; background: rgba(30, 20, 14, 0.75); color: #fff; font: 600 12px/1.4 ui-monospace, monospace; pointer-events: none; }
+
+/* hands by camera: the camera's picture (mirrored, as in a mirror) with the hands it sees, and a ring where each points */
+#camHands { position: fixed; right: 12px; bottom: 12px; z-index: 6; width: 208px; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; pointer-events: none; background: #1d1712; box-shadow: 0 4px 14px rgba(0,0,0,.35), 0 0 0 1.5px rgba(255,255,255,.5); }
+#camHands video, #camHands canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#camHands video { object-fit: cover; transform: scaleX(-1); opacity: .8; }
+#camHands.synthetic video { display: none; }
+#camHands small { position: absolute; left: 6px; bottom: 4px; font-size: 11px; color: #fff; text-shadow: 0 1px 2px #000; }
+.camCur { position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 2.5px solid rgba(180,240,138,.95); box-shadow: 0 0 0 1.5px rgba(40,30,20,.45); transition: width .1s, height .1s, margin .1s, background .1s; }
+.camCur.r { border-color: rgba(127,209,255,.95); }
+.camCur.closed { width: 20px; height: 20px; margin: -10px 0 0 -10px; background: rgba(255,179,71,.55); border-color: #ffb347; }
+.camCur.full::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; border: 1.5px dashed rgba(255,255,255,.7); }
+#camBtn.wait { animation: camWait 1s ease-in-out infinite alternate; }
+@keyframes camWait { to { opacity: .4; } }
+#camBtn.on { background: var(--sun); }
