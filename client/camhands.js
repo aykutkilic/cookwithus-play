@@ -49,11 +49,13 @@ export function edgeTurn(p) {
   return { yaw: ease(x) * TURN_RATE.yaw, pitch: ease(y) * TURN_RATE.pitch };
 }
 
-// Which of the frame's hands is my left (0) and right (1): by handedness, and if the
-// model calls both the same, by where they are (the one further right is the right).
-export function sides(hands) {
+// Which of the frame's hands is my left (0) and right (1): by handedness (flip: the model's
+// labels the wrong way round for this camera), and if the model calls both the same, by where
+// they are (the one further right is the right).
+const label = (h, flip) => (flip ? (h.handedness === 'Left' ? 'Right' : 'Left') : h.handedness);
+export function sides(hands, flip = false) {
   const out = [null, null];
-  const L = hands.filter((h) => h.handedness === 'Left'), R = hands.filter((h) => h.handedness === 'Right');
+  const L = hands.filter((h) => label(h, flip) === 'Left'), R = hands.filter((h) => label(h, flip) === 'Right');
   if (L.length <= 1 && R.length <= 1) { out[0] = L[0] || null; out[1] = R[0] || null; return out; }
   const byX = [...hands].sort((a, b) => a.features.center.x - b.features.center.x);
   out[0] = byX[0] || null; out[1] = byX[byX.length - 1] || null;
@@ -83,11 +85,29 @@ export class HandSwitch {
 }
 
 // What the hands look like as they're seen: [left, right] for each frame, with events.
+// Which way round the labels are is learnt as it goes: MediaPipe's handedness depends on whether
+// the picture is mirrored, and cameras differ. With both hands up, well apart and not crossed,
+// the one on the left of the (mirrored, selfie) picture is my left; if the labels keep saying
+// otherwise, they're flipped – and both hands start afresh (what they held on to let go).
+export const FLIP_VOTES = 12;
 export class HandPair {
-  constructor() { this.sw = [new HandSwitch(), new HandSwitch()]; }
+  constructor({ flip = false, onFlip = null } = {}) { this.sw = [new HandSwitch(), new HandSwitch()]; this.flip = flip; this.onFlip = onFlip; this.votes = 0; }
+  learn(hands) {
+    if (hands.length !== 2 || hands[0].handedness === hands[1].handedness) return false;
+    const [a, b] = [...hands].sort((p, q) => p.features.center.x - q.features.center.x);
+    if (b.features.center.x - a.features.center.x < 0.25) return false; // (close together, maybe crossed: no telling)
+    if (label(a, this.flip) === 'Left') { this.votes = 0; return false; }
+    if (++this.votes < FLIP_VOTES) return false;
+    this.flip = !this.flip; this.votes = 0;
+    if (this.onFlip) this.onFlip(this.flip);
+    return true;
+  }
   update(frame) {
-    const [l, r] = sides(frame.hands || []);
-    return [l, r].map((h, i) => ({ i, h, sw: this.sw[i], ev: this.sw[i].update(h, frame.t) }));
+    const hs = frame.hands || [];
+    const lost = [[], []];
+    if (this.learn(hs)) for (const [i, s] of this.sw.entries()) if (s.present) { s.present = false; s.closed = false; lost[i].push('lost'); }
+    const [l, r] = sides(hs, this.flip);
+    return [l, r].map((h, i) => ({ i, h, sw: this.sw[i], ev: [...lost[i], ...this.sw[i].update(h, frame.t)] }));
   }
 }
 
@@ -97,6 +117,7 @@ const KIT = './vendor/hands/hand-gesture-kit.js';
 // (MediaPipe's own files – the JS is in the import map – from the CDN, at the version the kit pins; the model is
 // Google's release)
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm';
+const FLIP_KEY = 'cookwithus.camFlip';
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
 export class CamHands {
@@ -133,6 +154,13 @@ export class CamHands {
   // camera: true – the webcam (call from a click); false – no camera, hands come from inject() (tests)
   async start({ camera = true } = {}) {
     const K = await this.load();
+    // (the camera: the way round learnt last time – flipped to start with, as seen on a Mac's camera with
+    // MediaPipe 1.1.0; synthetic hands are labelled truly)
+    let saved = null;
+    try { saved = localStorage.getItem(FLIP_KEY); } catch { /* ignore */ }
+    this.pair.flip = camera ? saved !== '0' : false;
+    this.pair.votes = 0;
+    this.pair.onFlip = camera ? (f) => { try { localStorage.setItem(FLIP_KEY, f ? '1' : '0'); } catch { /* ignore */ } } : null;
     const el = this.preview();
     el.hidden = false;
     if (!this.hands) {
@@ -173,7 +201,7 @@ export class CamHands {
     // (the part of the picture that is the screen)
     g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 1;
     g.strokeRect(REGION.x0 * cv.width, REGION.y0 * cv.height, (REGION.x1 - REGION.x0) * cv.width, (REGION.y1 - REGION.y0) * cv.height);
-    const [l, r] = sides(frame.hands || []);
+    const [l, r] = sides(frame.hands || [], this.pair.flip);
     for (const [i, h] of [l, r].entries()) {
       if (!h) continue;
       const closed = this.pair.sw[i].closed;
