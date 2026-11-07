@@ -1133,6 +1133,15 @@ function openWork(sid, fx) {
       const s = scene.screenOf(k), p = scene.workAt(w, s.x, s.y);
       return p ? { x: p.x, y: p.y, r: Math.max(50, 0.04 / w.S) } : null;
     }
+    // (gathering up what was cut – into its own container or an empty one off the stack: where that's set down for it,
+    // on the board left of the pieces – scene3d fetches it there)
+    const gph = station.phase;
+    if ((to === 'box' || to === 'stack') && gph && gph.obj === 'pieces') {
+      const w = workFrame();
+      if (!w) return null;
+      const p = scene.workPoint(w, scene.gatherSpot(w, gph.pile ? scene.pileSpot(w) : w.O));
+      return { x: p.x, y: p.y, r: Math.max(60, 0.075 / w.S) };
+    }
     // (the stack of empty containers beside the board; portioning: the bunch's container, the new one)
     if (to === 'stack' || to === 'portion' || to === 'portionFrom') {
       const w = workFrame();

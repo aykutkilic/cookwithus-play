@@ -103,6 +103,8 @@ export class PadWork {
         // taken where a hand would take it (a pan by its handle) and carried over
         const a = st.grabPoint(), t = g.target;
         if (!t) break;
+        // (cut pieces: cupped together in both hands a moment first, then carried over at a cook's pace)
+        if (g.ph.obj === 'pieces') { this.down(a); await sleep(450 * this.slow); await this.path(line(a, t, 24).slice(1), 28); this.up(t); await sleep(60 * this.slow); break; }
         await this.stroke(line(a, { x: t.x + a.x - g.pos.x, y: t.y + a.y - g.pos.y }, 16));
         break;
       }
