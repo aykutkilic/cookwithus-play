@@ -2416,9 +2416,13 @@ export class Scene3D {
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         return hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
       }
-      // (leaning back toward me as a spoon's held to stir or spread – not upright, seen end on from above –
-      // the fist round the handle, along it)
-      const dir = UP.clone().multiplyScalar(0.74).addScaledVector(w.N, 0.67).normalize();
+      // (the handle rising out of the pot at about 45°, back toward me and out to the side of the hand that
+      // holds it – as a cook stirs, the hand up over the rim, clear of the food: not upright, seen end on from
+      // above with the fist down in the pan – fal.ai reference, docs/work-by-buttons.md; a masher's pushed
+      // straight down)
+      const side = wi === 1 ? 1 : -1;
+      const dir = tool === 'masher' ? UP.clone().multiplyScalar(0.9).addScaledVector(w.N, 0.44).normalize()
+        : UP.clone().multiplyScalar(0.55).addScaledVector(w.R, side * 0.6).addScaledVector(w.N, 0.55).normalize();
       const grip = pos.clone().addScaledVector(dir, len);
       out.tool = { kind: tool, grip, dir, hand: wi };
       return hand(wi, grip, 'tool', { dir });
@@ -2935,6 +2939,13 @@ export class Scene3D {
         toolHand(at(pt));
         const s2 = st.steadies && st.steadies() && st.steadyAt();
         if (s2) hand(oi, at(s2).addScaledVector(UP, 0.01), 'claw');
+        // (stirring a pan with a long handle on my other hand's side: that hand holds it steady by the handle)
+        const sv = !s2 && ['circle', 'strokes'].includes(g.kind) && g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id);
+        const sg = sv && GRIP3D[sv.kind];
+        if (sg) {
+          const yaw = sv.group.rotation.y, off = new THREE.Vector3(sg.x * Math.cos(yaw) + sg.z * Math.sin(yaw), sg.y, -sg.x * Math.sin(yaw) + sg.z * Math.cos(yaw));
+          if (off.dot(w.R) * (oi === 1 ? 1 : -1) > 0) hand(oi, sv.group.position.clone().add(off), 'handle', { dir: off.clone().setY(0).negate().normalize() });
+        }
         // the pan jumps when you toss it
         if (g.kind === 'flick' && g.toss) {
           const k = vKey(g.subject);

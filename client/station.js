@@ -1576,6 +1576,7 @@ export class Station {
   handSpots(keys) {
     const C = this.c.C;
     const t = (k) => (k[0] === 'v' ? C.vessels[k.slice(2)] : C.items[k.slice(2)]);
+    keys = keys.filter(t); // (a thing used up a moment ago – the butter melted in the pan – isn't in a hand)
     const heavy = keys.find((k) => k[0] === 'v' && twoHanded(t(k).kind));
     if (heavy) return [{ k: heavy, x: 500, y: 548, s: Math.min(0.75, this.vesselScale(t(heavy).kind) * 0.6), two: true }];
     const first = this.holdSide(); // the first thing goes in the hand away from the work

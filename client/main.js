@@ -12,6 +12,7 @@ import { lookOf, drawPortrait, drawCook } from './figure.js';
 import { drawDish } from './art.js';
 import { initPwa } from './pwa.js';
 import { CamHands, edgeTurn } from './camhands.js';
+import { PadWork } from './padwork.js';
 import { newMirror, applyMsg } from '../shared/mirror.js';
 import { SIZES, SIZE_ORDER, CUISINES, CUISINE_ORDER, FIXTURES, buildKitchen, kitchenCaps, fixtureById, bakeKind, isStore, splitPlace } from '../shared/kitchens.js';
 import { RECIPES } from '../shared/recipes.js';
@@ -83,6 +84,8 @@ const station = new Station($('stCanvas'), {
   store: (m) => send(m),
   close: () => closeStation(true),
 });
+// (R, □ at work: the gesture played by a button – client/padwork.js)
+const pad = new PadWork(station, { hint: (m) => station.twoHint(m) });
 
 function send(obj) { if (S.net) S.net.send(obj); }
 const KNOB_NAMES = ['off', 'low', 'medium', 'high'];
@@ -1384,8 +1387,9 @@ function handAt(i) {
   const c = scene.viewCenter();
   return { clientX: c.x + hands[i].ox, clientY: c.y + hands[i].oy, pointerId: HAND_ID[i], pointerType: 'mouse' };
 }
-function mouseMoved(mx, my) {
+function mouseMoved(mx, my, stick = false) {
   if (Math.abs(mx) > 600 || Math.abs(my) > 600) return; // (a browser's stray jump)
+  if (stick && !S.fp) return; // (a gamepad's right stick: the view, in first person)
   // a hand holds on – or, at work (the camera looking down on it), the hand over it: the mouse moves it
   const atWork = !!(S.working && S.working.fp);
   const i = moving >= 0 && hands[moving].down ? moving : atWork ? hover : -1;
@@ -1488,7 +1492,7 @@ function handsFrame(dt) {
     h.ox *= k; h.oy *= k;
     if (Math.hypot(h.ox, h.oy) < 0.5) h.ox = h.oy = 0;
   }
-  if (S.working && S.working.fp && !hands[0].down && !hands[1].down) workPtr('move', handAt(hover));
+  if (S.working && S.working.fp && !hands[0].down && !hands[1].down && !pad.active) workPtr('move', handAt(hover));
   if (!$('modal').hidden) unlockMouse(); // (a window to click in)
 }
 // ------------------------------------------------------------------ hands by camera
@@ -1680,10 +1684,14 @@ const controls = new Controls({
   // (E my main hand, Q the other)
   onHand: (i, down) => { const h = i ? S.mainHand : 1 - S.mainHand; return down ? handDown(h) : handUp(h); },
   // first person at work: walking off steps away from it
-  onStep: () => { if (S.working && S.working.fp && $('modal').hidden) closeStation(); },
+  // (at work, a direction the work has a use for – a knob up or down – is that; else first person steps away)
+  onStep: (d) => { if (S.working && pad.wantsDir(d)) { pad.dir(d); return; } if (S.working && S.working.fp && $('modal').hidden) closeStation(); },
   onView: () => toggleView(),
   onPour: (down) => { S.pour = down ? { t: 0 } : null; },
-  onWork: () => workNow(),
+  // (R, □: at work the gesture it needs, played – a press a beat, held it goes on)
+  onWork: () => { if (S.working && $('modal').hidden && pad.press()) return; workNow(); },
+  onWorkUp: () => pad.release(),
+  onLook: (dx, dy) => mouseMoved(dx, dy, true),
   onFirst: () => sfx.unlock(),
   onMenuMove: (d) => {
     const bs = [...$('menu').querySelectorAll('button:not([disabled])')];
@@ -1704,7 +1712,7 @@ function toggleView() {
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
   if (!touchUI) { if (S.fp) lockMouse(); else unlockMouse(); }
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E or left click your main hand, Q or right click the other (hold to hold on), R use what you hold, T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E or left click your main hand, Q or right click the other (hold to hold on), R use what you hold (at work: R does the work – a press a beat, held it goes on), T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen; a gamepad works too'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
@@ -2428,6 +2436,7 @@ function frame(now) {
   lastT = now;
   if (S.K && S.M.room) {
     const t0 = performance.now();
+    controls.pollPad(dt);
     moveMe(dt);
     handsFrame(dt);
     camFrame(dt);
@@ -2678,4 +2687,4 @@ function workScreen(x, y) {
   const s = scene.screenOf(scene.workWorld(w, x, y)), off = scene.workOffset(w, station);
   return { x: s.x - off.x, y: s.y - off.y };
 }
-window.cookwithus = { S, scene, station, sfx, goDo, goAct, goStore, closeStation, send, useNow, workScreen, toggleView, cam, toggleCam, fpPointed, workTarget };
+window.cookwithus = { S, scene, station, pad, sfx, goDo, goAct, goStore, closeStation, send, useNow, workScreen, toggleView, cam, toggleCam, fpPointed, workTarget };

@@ -10,8 +10,10 @@
 // kitchen directions.
 
 export class Controls {
-  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep, onPour, onWork }) {
-    this.onWork = onWork;   // first person: R pressed – using what my main hand holds on what I aim at
+  constructor({ onUse, onMore, onView, onFirst, onMenuMove, onHand, onStep, onPour, onWork, onWorkUp, onLook }) {
+    this.onWork = onWork;   // R pressed – at work: the gesture the work needs (client/padwork.js); else, first person: using what my main hand holds on what I aim at
+    this.onWorkUp = onWorkUp; // R let go
+    this.onLook = onLook;   // a gamepad's right stick: (dx, dy) in mouse pixels this frame
     this.onUse = onUse;
     this.onPour = onPour;   // first person: T held (down?) – tipping what I hold into the pot / pan I aim at
     this.onHand = onHand;   // first person: (hand – 1 right, 0 left, down?)
@@ -32,7 +34,7 @@ export class Controls {
       if (isTyping(e)) return;
       const k = e.key.toLowerCase();
       if (this.menuOpen && ['arrowup', 'w', 'arrowdown', 's'].includes(k)) { this.onMenuMove(k === 'arrowup' || k === 'w' ? -1 : 1); e.preventDefault(); return; }
-      if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); if (!e.repeat && this.onStep) this.onStep(); }
+      if (MOVE[k]) { this.keys.add(k); e.preventDefault(); this.first(); if (!e.repeat && this.onStep) this.onStep(MOVE[k]); }
       if (this.fp && (k === 'control' || k === 'c' || k === ' ')) { this.keys.add(k === ' ' ? 'space' : k); e.preventDefault(); this.first(); return; }
       if (k === 'tab') { e.preventDefault(); if (!e.repeat && this.onMore) { this.first(); this.onMore(); } return; }
       if (this.fp && this.onHand && !this.menuOpen && (k === 'e' || k === 'q')) { e.preventDefault(); if (!e.repeat) { this.first(); this.onHand(k === 'e' ? 1 : 0, true); } return; }
@@ -40,13 +42,14 @@ export class Controls {
       if (k === 'q' && !e.repeat && this.onMore) { e.preventDefault(); this.first(); this.onMore(); }
       if (k === 'f2' && !e.repeat && this.onView) { e.preventDefault(); this.first(); this.onView(); }
       if (this.fp && k === 't' && !e.repeat && this.onPour) { e.preventDefault(); this.first(); this.onPour(true); }
-      if (this.fp && k === 'r' && !e.repeat && this.onWork) { e.preventDefault(); this.first(); this.onWork(); }
+      if (k === 'r' && !e.repeat && this.onWork) { e.preventDefault(); this.first(); this.onWork(); }
     });
     addEventListener('keyup', (e) => {
       const k = e.key.toLowerCase();
       this.keys.delete(k === ' ' ? 'space' : k);
       if (this.onHand && (k === 'e' || k === 'q')) this.onHand(k === 'e' ? 1 : 0, false);
       if (k === 't' && this.onPour) this.onPour(false);
+      if (k === 'r' && this.onWorkUp) this.onWorkUp();
     });
     addEventListener('blur', () => { this.keys.clear(); if (this.onHand) { this.onHand(1, false); this.onHand(0, false); } });
 
@@ -123,6 +126,7 @@ export class Controls {
   dir() {
     if (!this.enabled) return { x: 0, y: 0, mag: 0 };
     if (this.stick && this.mag > 0) return { x: this.sx, y: this.sy, mag: this.mag, stick: true };
+    if (this.pad && this.pad.mag > 0) return { x: this.pad.x, y: this.pad.y, mag: this.pad.mag, stick: true };
     let x = 0, y = 0;
     for (const k of this.keys) { const m = MOVE[k]; if (m && !(this.fp && TURNS[k])) { x += m[0]; y += m[1]; } }
     const d = Math.hypot(x, y);
@@ -154,6 +158,31 @@ export class Controls {
     document.body.classList.toggle('touchui', on);
   }
 
+  // A gamepad (the standard layout: Xbox, PlayStation…), read each frame. Its
+  // buttons are the keyboard's keys – the same things happen – and its sticks
+  // are the touch stick (walking) and the mouse (looking round; at work, the
+  // hand). A nudge of the left stick is a direction pressed (a knob turned).
+  //   A ✕ use / E   B ○ pour T (held)   X □ work R   Y △ every option Tab
+  //   LT left hand Q   RT right hand E   LB crouch   RB up on your toes
+  //   ✚ the arrows   Back / Share F2 the view   Start / Options Esc
+  pollPad(dt) {
+    const gp = navigator.getGamepads ? [...navigator.getGamepads()].find((g) => g && g.connected && g.mapping === 'standard') || [...navigator.getGamepads()].find((g) => g && g.connected) : null;
+    if (!gp) { if (this.pad) { this.releasePad(); this.pad = null; } return; }
+    if (!this.pad) this.pad = { x: 0, y: 0, mag: 0, down: new Set(), nudge: false };
+    const P = this.pad;
+    for (const [i, key] of PAD_KEYS) {
+      const b = gp.buttons[i], on = !!b && (b.pressed || b.value > 0.5);
+      if (on && !P.down.has(i)) { P.down.add(i); this.first(); fakeKey('keydown', key); } else if (!on && P.down.has(i)) { P.down.delete(i); fakeKey('keyup', key); }
+    }
+    const dead = (v) => (Math.abs(v) < 0.18 ? 0 : (v - Math.sign(v) * 0.18) / 0.82);
+    const lx = dead(gp.axes[0] || 0), ly = dead(gp.axes[1] || 0), m = Math.min(1, Math.hypot(lx, ly));
+    Object.assign(P, m ? { x: lx / Math.hypot(lx, ly), y: ly / Math.hypot(lx, ly), mag: m } : { x: 0, y: 0, mag: 0 });
+    if (m > 0.6 && !P.nudge) { P.nudge = true; if (this.onStep) this.onStep(Math.abs(lx) > Math.abs(ly) ? [Math.sign(lx), 0] : [0, Math.sign(ly)]); } else if (m < 0.3) P.nudge = false;
+    const rx = dead(gp.axes[2] || 0), ry = dead(gp.axes[3] || 0);
+    if ((rx || ry) && this.onLook && this.enabled) { this.first(); this.onLook(Math.sign(rx) * rx * rx * 900 * dt, Math.sign(ry) * ry * ry * 700 * dt); }
+  }
+  releasePad() { for (const i of this.pad.down) fakeKey('keyup', PAD_KEYS.get(i)); this.pad.down.clear(); }
+
   // the Use button says what it will do
   setUseLabel(text, enabled) {
     this.useBtn.querySelector('span').textContent = text || 'Use';
@@ -166,6 +195,9 @@ const MOVE = {
   arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0],
 };
 const TURNS = { arrowleft: -1, arrowright: 1 };
+// a gamepad's buttons (the standard layout's numbers) as the keyboard's keys
+const PAD_KEYS = new Map([[0, 'e'], [1, 't'], [2, 'r'], [3, 'Tab'], [4, 'c'], [5, ' '], [6, 'q'], [7, 'e'], [8, 'F2'], [9, 'Escape'], [12, 'ArrowUp'], [13, 'ArrowDown'], [14, 'ArrowLeft'], [15, 'ArrowRight']]);
+function fakeKey(type, key) { document.body.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true })); }
 
 function isTyping(e) {
   const t = e.target;
