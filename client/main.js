@@ -21,7 +21,7 @@ import {
   choreId, carrying, binHolds, stepDuration, planStep, needsOf, heldBy, locate, thingName, thingEmoji,
   handsFree, canPut, HANDS, handsUsed, inOrder, cleanup, needsWash, dwRunning, dwLoad, dishwasherSafe, DW_DUR, glovesOn,
 } from '../shared/cook.js';
-import { phasesOf, ACTIONS, BOARD_TOOLS, stepTool } from '../shared/actions.js';
+import { phasesOf, ACTIONS, BOARD_TOOLS, stepTool, boardUnits } from '../shared/actions.js';
 import { simProgress } from '../shared/sim.js';
 import { ingName, TOOLS, stocked } from '../shared/ingredients.js';
 import { foodWidth } from './food3d.js';
@@ -30,6 +30,7 @@ import {
   APRONS, SHIRTS, FACIAL, EXTRAS,
 } from '../shared/names.js';
 
+const UNITS_FWD = 0.095; // (several cut one at a time: how much nearer me each is cut than the board's middle, where their slices go)
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const store = {
@@ -382,7 +383,7 @@ function onMessage(msg, ev) {
       if (S.working && S.M.cook.steps[S.working.sid] && S.M.cook.steps[S.working.sid].s === 'done') {
         const sid = S.working.sid;
         // (a moment to see it done – the pieces fallen into their container – before I step back)
-        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, S.working.fp ? 2500 : 900);
+        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, S.working.fp ? 5000 : 900);
       }
       if (S.M.cook && S.M.cook.finished && S.finishedShown !== S.M.cook.recipe) {
         S.finishedShown = S.M.cook.recipe;
@@ -1257,7 +1258,11 @@ function workFrame() {
     scale = Math.max(0.00025, Math.min(0.0012, foodWidth(it.kind, whole) / Math.max(40, station.subjectBox().w)));
     S.workScale = { sid: S.working.sid, scale };
   } else if (S.workScale && S.workScale.sid === S.working.sid) scale = S.workScale.scale; // (the same all through the step: gathering it up, between phases)
-  return scene.workFrame(S.working.fx, station.sceneKind(), st ? st.slot || 0 : 0, scale);
+  // (several cut one at a time: each worked a little nearer me, its slices pushed back to the board's middle – where
+  // they're gathered up from, as the user's reference video has them: the gathering itself at the middle)
+  const sit = station.c && station.c.def && station.c.def.item && S.M.cook.items[station.c.def.item];
+  const ph = station.phase, fwd = sit && boardUnits(sit) && !(ph && ph.obj === 'pieces') ? UNITS_FWD : 0;
+  return scene.workFrame(S.working.fx, station.sceneKind(), st ? st.slot || 0 : 0, scale, fwd);
 }
 
 function closeStation(silent = false) {

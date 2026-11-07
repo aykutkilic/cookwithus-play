@@ -153,6 +153,10 @@ export function hasCuts(root) {
 export function boxable(kind) { const a = artOf(kind); return !!a && !PACKED.has(a.type); }
 // (inside at the rim: w × d, h deep; the walls lean out a little, so they stack)
 const BOX_SIZES = [{ w: 0.12, d: 0.09, h: 0.055 }, { w: 0.16, d: 0.12, h: 0.065 }, { w: 0.21, d: 0.155, h: 0.08 }];
+// (size -1: the small square glass bowl cut-up pieces are gathered into – as the user's reference video has it: its
+// rim measured there through the same camera, 0.062 × 0.06 (about 12 cm); not one of the three a whole food's chosen from)
+const MINI_BOX = { w: 0.062, d: 0.06, h: 0.034 };
+const boxDims = (size) => (size < 0 ? MINI_BOX : BOX_SIZES[size]);
 const PLASTIC = ['#7ec8a8', '#f2a65a', '#8ab4e8', '#e9dfc9', '#d98ab0'];
 const SPECS = new Map();
 // which container a food has: the smallest of the three it fits in, whole – it keeps it while it's cut up
@@ -169,7 +173,7 @@ function gridFor(q, w, d, w0, d0) {
 export function boxSpec(kind, st) {
   // (put into an empty one: that one – one of a board's stack, or the one something else was in)
   const tub = st && st.tub;
-  if (tub) return tub.of ? boxSpec(tub.of, { qty: tub.cap || 1 }) : { size: clamp(num(tub.size, 1) | 0, 0, 2), style: 'glass', color: PLASTIC[0], label: '' };
+  if (tub) return tub.of ? boxSpec(tub.of, { qty: tub.cap || 1 }) : { size: clamp(num(tub.size, 1) | 0, -1, 2), style: 'glass', color: PLASTIC[0], label: '' };
   const q = clamp(Math.max(num(st && st.qty, 1) + num(st && st.extra, 0), num(st && st.cap, 0)) | 0, 1, 12); // (a bunch: all it was filled with)
   const key = `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${q}`;
   let sp = SPECS.get(key);
@@ -228,7 +232,7 @@ const LABEL_GEO = new THREE.PlaneGeometry(1, 1);
 
 // the container itself (origin: the middle of its floor) – .userData.water: its water, scaled to how full
 function containerMesh(sp) {
-  const b = BOX_SIZES[sp.size], m = boxMat(sp.style, sp.color), t = sp.style === 'glass' ? 0.004 : 0.0025;
+  const b = boxDims(sp.size), m = boxMat(sp.style, sp.color), t = sp.style === 'glass' ? 0.004 : 0.0025;
   const g = new THREE.Group();
   // (a square frustum, stretched: the walls lean out toward the rim)
   const walls = new THREE.Mesh(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2 * 0.86, 1, 4, 1, true), m);
@@ -279,7 +283,7 @@ function containerMesh(sp) {
 // (of: the thing itself – its container is chosen by how many there are, whatever state they're in)
 export function boxedFood(kind, st, of = st) {
   const sp = boxSpec(kind, of);
-  const b = BOX_SIZES[sp.size];
+  const b = boxDims(sp.size);
   const g = new THREE.Group();
   const c = containerMesh(sp);
   g.add(c);
@@ -316,6 +320,19 @@ export function containerNest() {
     c.position.y = i * 0.006;
     g.add(c);
   });
+  return consolidate(g);
+}
+
+// A few of the small square glass bowls cut-up pieces are gathered into (size -1), stacked
+export function bowlNest() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const c = containerMesh({ size: -1, style: 'glass', color: PLASTIC[0], label: '' });
+    const wm = c.userData.water;
+    if (wm && wm.parent) wm.parent.remove(wm);
+    c.position.y = i * 0.005;
+    g.add(c);
+  }
   return consolidate(g);
 }
 
@@ -880,6 +897,10 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   // (cut into strips: they lie together where it was – turned a quarter round, as far as it's been, to be cut across)
   const loose = Array.isArray(st.box) || num(st.spread) > 0;
   if (done && cut === 'strips' && !loose && cutGeom(a).sec) return stripsLayout(g, a, P, cutGeom(a), n || 4, num(st.turned));
+  // (rings, slices cut off a long or round thing: still where it was, each standing on its edge leaning on the next –
+  // the first one cut fallen flat a little apart – as the user's reference video has a cut pepper; not lying flat in a
+  // chain)
+  if (done && (cut === 'rings' || cut === 'slices') && !loose && cutGeom(a).sec) { const m = clamp(Math.round(n || defaultCount(a, cut, st)), 3, 7); return cutSlices(g, a, P, cutGeom(a), m, m, true); } // (the video's: one fallen, six standing)
   if (done) return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
   const q = clamp(num(st.qty, 1) | 0, 1, 8);
   if (q > 1 && cut !== 'halves') return cutMany(g, a, P, cut, st, seed, wet, q, k, n);
@@ -950,15 +971,22 @@ function cutFace(g, a, P, s, x) {
 }
 // the slices cut off so far, standing against each other beside it: the
 // newest nearly upright by the knife, the older ones further over
-function cutSlices(g, a, P, C, k, n) {
+// (fallen: the left one lying flat a little apart from the rest, as the user's reference video has it)
+function cutSlices(g, a, P, C, k, n, fallen = false) {
   const skin = fm(P.c1, { rough: 0.45 }), flesh = fm(P.c2, { rough: 0.5 }), inner = fm(P.c2, { rough: 0.5, side: THREE.BackSide });
+  // (all cut, a hollow thing's rings: its thin wall's cut face as green as its skin, a few pale seeds inside – and all of a
+  // size, the middle's, as the video's pepper rings are; not tapering off toward its tip)
+  const face = fallen && a.hollow ? fm(mixHex(P.c1, P.c2, 0.25), { rough: 0.5 }) : flesh, seedM = fm(mixHex(P.c2, '#fffbe8', 0.6), { rough: 0.7 });
+  const mid0 = fallen && C.sec((C.xL + C.xR) / 2), mid = mid0 && { ...mid0, ry: mid0.ry * 1.12, rz: mid0.rz * 1.12 }; // (a little rounder than the section: rings spring open once cut)
   let px = cutAt(C, k, n) + 0.004;
+  const first = g.children.length, xs = [];
   for (let j = k - 1; j >= 0; j--) {
-    const hi = cutAt(C, j, n), lo = cutAt(C, j + 1, n), t = Math.max(0.002, (hi - lo) * 0.9);
-    const s = C.sec((hi + lo) / 2);
+    const hi = cutAt(C, j, n), lo = cutAt(C, j + 1, n), t = Math.max(0.002, (hi - lo) * (fallen ? 0.55 : 0.9)); // (all cut: thin rings, as the video's)
+    const s = mid || C.sec((hi + lo) / 2);
     if (!s || s.ry < 0.002) continue;
-    const phi = Math.min(0.85, 0.3 + 0.2 * (k - 1 - j));
-    px += j === k - 1 ? t / 2 : (t / Math.cos(phi)) * 1.08 + 0.0015;
+    const flat = fallen && j === k - 1;
+    const phi = flat ? Math.PI / 2 - 0.04 : fallen ? 0.85 + 0.06 * ((j * 7) % 3) : Math.min(0.85, 0.3 + 0.2 * (k - 1 - j));
+    px += j === k - 1 ? (flat ? s.ry : t / 2) : fallen && j === k - 2 ? s.ry * 1.9 + 0.012 : (t / Math.cos(phi)) * 1.08 + 0.0015;
     // (leaning over from its foot)
     const h = new THREE.Group();
     h.position.set(px, (Math.sin(phi) * t) / 2, 0);
@@ -971,15 +999,19 @@ function cutSlices(g, a, P, C, k, n) {
     if (a.hollow) {
       part(sl, GEO.tube, skin, 0, 0, 0, 1, 1, 1);
       part(sl, GEO.tube, inner, 0, 0, 0, 0.8, 0.999, 0.8);
-      part(sl, GEO.annulus, flesh, 0, 0.5, 0, 1, 1, 1, -Math.PI / 2, 0, 0);
-      part(sl, GEO.annulus, flesh, 0, -0.5, 0, 1, 1, 1, Math.PI / 2, 0, 0);
+      part(sl, GEO.annulus, face, 0, 0.5, 0, 1, 1, 1, -Math.PI / 2, 0, 0);
+      part(sl, GEO.annulus, face, 0, -0.5, 0, 1, 1, 1, Math.PI / 2, 0, 0);
+      if (fallen) for (let q = 0; q < 3; q++) { const an = q * 2.1 + j; part(sl, GEO.sphereLo, seedM, Math.cos(an) * 0.42, 0, Math.sin(an) * 0.42, 0.14, 0.5, 0.1); }
     } else {
       part(sl, GEO.cyl, [skin, flesh, flesh], 0, 0, 0, 1, 1, 1);
       if ((a.type === 'round' && !a.spots) || a.type === 'egg') for (const y of [0.502, -0.502]) part(sl, GEO.disc, fm(a.type === 'egg' ? mixHex(P.c3, '#f6e7a0', 0.35) : P.c3, { rough: 0.5 }), 0, y, 0, 0.55, 0.55, 0.55, y > 0 ? -Math.PI / 2 : Math.PI / 2, 0, 0);
     }
     h.add(sl);
     g.add(h);
+    xs.push(px);
   }
+  // (all cut: the row centred where the thing lay – as the video has them – not running on past its right end)
+  if (fallen && xs.length) { const mid = (Math.min(...xs) + Math.max(...xs)) / 2 - (C.xL + C.xR) / 2; for (let i = first; i < g.children.length; i++) g.children[i].position.x -= mid; }
 }
 // Cut into strips (n cuts): side by side where it was, each as tall and deep as it was there – turned (0 … 1) a
 // quarter round, as far as it's been turned to be cut across

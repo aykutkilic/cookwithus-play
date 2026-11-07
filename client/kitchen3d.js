@@ -11,7 +11,7 @@ import { FIXTURES, BAYS, glassDoor, wallUnits, counterDecor as decorOf } from '.
 import { themeOf, floorTexture, splashTexture, wallTexture, topTexture, rugTexture, clothTexture, woodTexture } from './theme.js';
 import { mat, M, C, box, rbox, cyl, lathe, ball, ring, rod, v3, bake, consolidate } from './parts3d.js';
 import { chefKnifeMesh, peelerMesh, graterMesh, crockMesh } from './props3d.js';
-import { containerNest } from './food3d.js';
+import { containerNest, bowlNest } from './food3d.js';
 
 export const COUNTER_H = 0.46;
 const SINK_DEPTH = 0.1;
@@ -144,11 +144,19 @@ export function buildKitchen3D(K) {
       g.add(nest);
       d.parts.nest = nest;
       d.anchors.nest = nest.position.clone();
+      // (and a few small glass bowls stacked at the board's back right, behind the knife – what cut-up pieces are gathered
+      // into, as the user's reference video has them fetched from there)
+      const bowls = bowlNest();
+      bowls.userData.live = true;
+      bowls.position.set(b.x + 0.15, b.y + 0.001, b.z - 0.135);
+      g.add(bowls);
+      d.parts.bowls = bowls;
+      d.anchors.bowls = bowls.position.clone();
       // (with the board stood up: the stack in the back corner the crock / bottles don't take, the knife and the
       // peeler lying along the back beside it, the grater standing by it – the middle clear)
       const side = cdecor[f.id] != null && cdecor[f.id] % 2 === 0 ? 1 : -1;
-      const ups = { nest: v3(side * 0.34, nest.position.y, -0.32), knife: v3(-side * 0.02, knife.position.y, -0.32), peeler: v3(-side * 0.16, peeler.position.y, -0.3), grater: v3(side * 0.12, grater.position.y, -0.34) };
-      for (const [k, o] of [['nest', nest], ['knife', knife], ['peeler', peeler], ['grater', grater]]) {
+      const ups = { bowls: v3(side * 0.2, nest.position.y, -0.34), nest: v3(side * 0.34, nest.position.y, -0.32), knife: v3(-side * 0.02, knife.position.y, -0.32), peeler: v3(-side * 0.16, peeler.position.y, -0.3), grater: v3(side * 0.12, grater.position.y, -0.34) };
+      for (const [k, o] of [['bowls', bowls], ['nest', nest], ['knife', knife], ['peeler', peeler], ['grater', grater]]) {
         o.userData.flat = { pos: o.position.clone(), q: o.quaternion.clone() };
         o.userData.up = { pos: ups[k], q: k === 'knife' || k === 'peeler' ? new THREE.Quaternion().setFromAxisAngle(up, Math.PI / 2).multiply(o.quaternion) : o.quaternion.clone() };
       }
