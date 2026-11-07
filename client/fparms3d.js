@@ -89,7 +89,9 @@ export function poseRig(R, curl, { fingers = null, joints = null, thumb = null }
   R.thumb.forEach((b, j) => { if (b) b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(T[j][0], 0, T[j][1]))); });
 }
 
-const HS = 0.5;
+// (a little over life size – 19 cm long – and the sleeves a little slimmer: the hands read as hands, not small
+// fists at the ends of thick sleeves; the fal.ai references draw them so – docs/work-by-buttons.md)
+const HS = 0.57;
 // arm bones (a body whose eyes are at 165 cm – the kitchen's 0.84 – by Drillis & Contini's proportions: upper arm
 // 0.186 of the height, forearm 0.146, shoulder 0.818 – here 1 is about 1.96 m); how far the (unseen) shoulder may
 // come forward, leaning in
@@ -627,11 +629,11 @@ export class FpArms {
     // of it at the wrist, whichever way it's bent)
     const top = this.sleeveTop(e, sh) || e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0)));
     if (L.rig) {
-      tube(L.upper, top, e, 0.0235);
-      tube(L.fore, e, w.clone().addScaledVector(f, 0.016), 0.021);
+      tube(L.upper, top, e, 0.022);
+      tube(L.fore, e, w.clone().addScaledVector(f, 0.016), 0.0192);
       L.elbow.position.copy(e);
-      L.elbow.scale.setScalar(0.0226); // (round over both sleeves' ends)
-      tube(L.band, w.clone().addScaledVector(f, 0.02), w.clone().addScaledVector(f, -0.003), 0.0188);
+      L.elbow.scale.setScalar(0.0211); // (round over both sleeves' ends)
+      tube(L.band, w.clone().addScaledVector(f, 0.02), w.clone().addScaledVector(f, -0.003), 0.0176);
     } else {
       tube(L.upper, top, e, 0.024);
       tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021);

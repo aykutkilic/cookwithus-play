@@ -1548,6 +1548,7 @@ export class Scene3D {
         if (ov.hide) continue;
         put(`item:${id}`, it.kind, ov.st ? { ...it, ...ov.st } : it, () => this.spriteFor(it.kind, it), ov.pos, ov.size || 0.2, ov.yaw ?? (this.work.yaw || 0), ov.box ? { ...ov.box, of: it } : null, ov.scale);
         if (fp && ov.q) this.foods.get(`item:${id}`).g.quaternion.premultiply(ov.q);
+        if (fp && ov.tilt && !ov.box) this.foods.get(`item:${id}`).g.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ov.axis || UP, ov.tilt)); // (a bottle, a jug tipped over the pot)
         // (where it is now, for where it goes next to glide from – not where it was before the work)
         this.glides.set(`i:${id}`, { sig: 'work', pos: ov.pos.clone(), from: null, t: 1 });
         continue;
@@ -2422,6 +2423,7 @@ export class Scene3D {
       // straight down)
       const side = wi === 1 ? 1 : -1;
       const dir = tool === 'masher' ? UP.clone().multiplyScalar(0.9).addScaledVector(w.N, 0.44).normalize()
+        : tool === 'shaker' ? UP.clone().multiplyScalar(0.55).addScaledVector(w.R, side * 0.75).addScaledVector(w.N, 0.35).normalize()
         : UP.clone().multiplyScalar(0.55).addScaledVector(w.R, side * 0.6).addScaledVector(w.N, 0.55).normalize();
       const grip = pos.clone().addScaledVector(dir, len);
       out.tool = { kind: tool, grip, dir, hand: wi };
@@ -2673,9 +2675,29 @@ export class Scene3D {
           const tilt = g.pouring ? 1.15 : 0.25;
           const pos = lip.clone().addScaledVector(w.R, 0.06).addScaledVector(UP, -0.08);
           const yaw = Math.atan2(w.N.x, w.N.z);
-          if (k) out.ov.set(k, { pos, size: 0.2, yaw, tilt, axis: w.N });
           const vr = k && k[0] === 'v' && this.vessels.get(k.slice(2));
           const grip = vr && GRIP3D[vr.kind];
+          const pIt = k && k[0] === 'i' && D && D.items[k.slice(2)], art = pIt && INGREDIENTS[pIt.kind] && INGREDIENTS[pIt.kind].art;
+          if (art) {
+            // A jug, a bottle, a carton (water, oil, milk, stock …): stood in my hand just right of the pot's rim, its
+            // top tipped over the rim toward the pot – the jug by its handle on the far side from its lip, a bottle
+            // or a carton round its body on that side, the fist up along it (fal.ai reference, docs/work-by-buttons.md)
+            const jug = art.type === 'jug', y2 = yaw + (jug ? Math.PI : 0);
+            // (over the pot's real rim, on my side of it and to the right – in sight, as I'd pour – else where the close-up has it)
+            const into = g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id);
+            const rimP = into && into.group.visible ? into.group.position.clone().addScaledVector(w.R, into.r * 0.55).addScaledVector(w.N, into.r * 0.45).addScaledVector(UP, into.h + 0.03) : lip;
+            const base = rimP.clone().addScaledVector(w.R, 0.1);
+            out.ov.set(k, { pos: base, size: 0.2, yaw: y2, tilt, axis: w.N });
+            const q = new THREE.Quaternion().setFromAxisAngle(w.N, tilt).multiply(new THREE.Quaternion().setFromAxisAngle(UP, y2));
+            const gl = jug ? new THREE.Vector3(-0.037, 0.055, 0) : new THREE.Vector3(-0.024, 0.05, 0).applyAxisAngle(UP, Math.PI);
+            hand(wi, base.clone().add(gl.applyQuaternion(q)), 'grab', { curl: 0.95, dir: UP.clone().applyQuaternion(q) });
+            if (g.pouring) {
+              const top = base.clone().add(new THREE.Vector3(jug ? 0.03 : 0, jug ? 0.1 : 0.13, 0).applyQuaternion(q));
+              out.stream = { from: top, to: at({ x: MAIN.x, y: MAIN.y - 60 }), color: (st.pourColor && st.pourColor()) || '#c8e4f4' };
+            }
+            break;
+          }
+          if (k) out.ov.set(k, { pos, size: 0.2, yaw, tilt, axis: w.N });
           if (grip) {
             const q = new THREE.Quaternion().setFromAxisAngle(w.N, tilt).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
             // (the fist along the handle, toward the pan)
@@ -2888,7 +2910,7 @@ export class Scene3D {
           gOv.yaw = out.yaw + Math.PI / 2;
           gOv.st = { cut: null, k: 0, n: 0 };
           gOv.scale = s;
-          hand(wi, F.clone().addScaledVector(w.R, rad * s * 0.7).addScaledVector(UP, rad * s * 0.9), 'hand', { curl: 0.7, dir: w.R.clone().negate().addScaledVector(UP, -0.6).normalize() });
+          hand(wi, F.clone().addScaledVector(w.R, rad * s * 0.7).addScaledVector(UP, rad * s * 0.9), 'hand', { curl: 0.7, dir: w.R.clone().negate().addScaledVector(w.N, -0.75).addScaledVector(UP, -0.5).normalize() }); // (the fingers toward the face and a little away: the forearm in from my right and in front, not bent square out to the side)
           if (frac > 0) out.sprites.push({ tex: null, kind: gIt.kind, st: { cut: 'grated', k: 1, n: 1, bits: frac }, pos: G.clone().addScaledVector(w.R, 0.036).addScaledVector(w.N, 0.012), size: 0.1 }); // (just out from its face, under the food)
           break;
         }
@@ -2935,12 +2957,50 @@ export class Scene3D {
             break;
           }
         }
+        // A shaker (salt, pepper, flakes): held up over the pot, its cap tipped down toward it, shaken up and down
+        // there – the stroke's back-and-forth is the shake – not pushed down into the food
+        if (tool === 'shaker') {
+          const sv0 = g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id), sd = wi === 1 ? 1 : -1;
+          // (from my working hand's side, the elbow outside the pot – not reaching in over it)
+          const P = sv0 && sv0.group.visible ? sv0.group.position.clone().addScaledVector(w.R, sd * sv0.r * 0.2).addScaledVector(w.N, sv0.r * 0.15) : at(pt);
+          const top = sv0 && sv0.group.visible ? sv0.group.position.y + sv0.h : w.O.y + 0.05;
+          const b = st.subjectBox(), shake = Math.max(-1, Math.min(1, (b.cy - pt.y) / 90));
+          P.y = top + 0.09 + 0.025 * shake;
+          toolHand(P);
+          break;
+        }
+        // Kneading, stretching dough: both hands on it side by side, the heels of the palms pushing it away from me and
+        // drawing it back with the stroke, the fingers forward over it (fal.ai reference, docs/work-by-buttons.md)
+        const dIt = g.kind === 'strokes' && tool === 'hand' && def && ['knead', 'stretch'].includes(def.do) && st.subjectItem();
+        const dOv = dIt && out.ov.get(`i:${dIt.id}`);
+        if (dOv && !dOv.hide) {
+          const b = st.subjectBox(), push = Math.max(-1, Math.min(1, (b.cy - pt.y) / 90)), hgt = this.foodHeight(dIt.kind, dIt);
+          const C0 = dOv.pos.clone().addScaledVector(w.N, -0.025 * push).addScaledVector(UP, hgt * 0.8 + 0.005);
+          const fwd = w.N.clone().negate().addScaledVector(UP, -0.35).normalize();
+          for (const [i, sd] of [[wi, wi === 1 ? 1 : -1], [oi, oi === 1 ? 1 : -1]]) hand(i, C0.clone().addScaledVector(w.R, sd * 0.032), 'hand', { curl: 0.15, dir: fwd.clone().addScaledVector(w.R, -sd * 0.15).normalize() });
+          break;
+        }
+        // Stirring, whisking round a pot, a pan, a bowl: the spoon's bowl / the whisk's wires go round down in what's
+        // in it, within its walls, as far round as the pointer has gone – and, a bowl off the heat, the other hand holds
+        // its rim on my side of it to steady it (fal.ai references, docs/work-by-buttons.md)
+        const cv = g.kind === 'circle' && !ph.turn && g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id);
+        if (cv && cv.group.visible) {
+          const a = g.lastAng || 0, C0 = cv.group.position;
+          toolHand(C0.clone().addScaledVector(w.R, Math.cos(a) * cv.r * 0.45).addScaledVector(w.N, Math.sin(a) * cv.r * 0.35).addScaledVector(UP, cv.h * 0.3));
+          const vs = D && D.vessels[g.subject.id], sd = oi === 1 ? 1 : -1, sg = GRIP3D[cv.kind];
+          if (sg) {
+            // (a pan's long handle on my other hand's side: that hand holds it steady by it)
+            const yaw = cv.group.rotation.y, off = new THREE.Vector3(sg.x * Math.cos(yaw) + sg.z * Math.sin(yaw), sg.y, -sg.x * Math.sin(yaw) + sg.z * Math.cos(yaw));
+            if (off.dot(w.R) * sd > 0) hand(oi, C0.clone().add(off), 'handle', { dir: off.clone().setY(0).negate().normalize() });
+          } else if (vs && !(vs.heat > 0)) hand(oi, C0.clone().addScaledVector(w.R, sd * cv.r * 0.92).addScaledVector(w.N, cv.r * 0.35).addScaledVector(UP, cv.h * 0.95), 'side', { curl: 0.5 });
+          break;
+        }
         // knife, peeler, grater, spoon, whisk, brush … – and the other hand on the food
         toolHand(at(pt));
         const s2 = st.steadies && st.steadies() && st.steadyAt();
         if (s2) hand(oi, at(s2).addScaledVector(UP, 0.01), 'claw');
-        // (stirring a pan with a long handle on my other hand's side: that hand holds it steady by the handle)
-        const sv = !s2 && ['circle', 'strokes'].includes(g.kind) && g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id);
+        // (mashing in a pan with a long handle on my other hand's side: that hand holds it steady by the handle)
+        const sv = !s2 && g.kind === 'strokes' && g.subject && g.subject.type === 'vessel' && this.vessels.get(g.subject.id);
         const sg = sv && GRIP3D[sv.kind];
         if (sg) {
           const yaw = sv.group.rotation.y, off = new THREE.Vector3(sg.x * Math.cos(yaw) + sg.z * Math.sin(yaw), sg.y, -sg.x * Math.sin(yaw) + sg.z * Math.cos(yaw));

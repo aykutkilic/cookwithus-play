@@ -31,6 +31,7 @@ export class PadWork {
     this.queued = 0;       // presses waiting for the beat before them
     this.active = false;   // the pad has the work's pointer (the mouse hand leaves it alone)
     this.beats = [];       // when the last beats were pressed (the rhythm)
+    this.slow = 1;         // (filming: every beat this many times slower)
   }
 
   // the gesture now, and how a press plays it
@@ -91,8 +92,8 @@ export class PadWork {
   ev(type, p) { this.cur = p; this.st.pointer(type, p, PID, 'pad'); }
   down(p) { this.ev('move', p); this.ev('down', p); this.pressed = true; }
   up(p = this.cur) { if (this.pressed && p) { this.pressed = false; this.ev('up', p); } }
-  async path(pts, ms = PACE) { for (const p of pts) { if (!this.st.on) return; this.ev('move', p); await sleep(ms); } }
-  async stroke(pts, ms = PACE) { this.down(pts[0]); await this.path(pts.slice(1), ms); this.up(pts[pts.length - 1]); await sleep(60); }
+  async path(pts, ms = PACE) { for (const p of pts) { if (!this.st.on) return; this.ev('move', p); await sleep(ms * this.slow); } }
+  async stroke(pts, ms = PACE) { this.down(pts[0]); await this.path(pts.slice(1), ms); this.up(pts[pts.length - 1]); await sleep(60 * this.slow); }
 
   async beat(kind) {
     const st = this.st, g = st.g, ph = g.ph;
@@ -118,8 +119,8 @@ export class PadWork {
         const h = ph.axis === 'h';
         const at = (s) => ({ x: b.cx + (h ? s * amp : 0), y: b.cy + (h ? 0 : s * amp) });
         if (!this.pressed) this.down(at(-1));
-        await this.path(line(at(-1), at(1), 7));
-        await this.path(line(at(1), at(-1), 7));
+        await this.path(line(at(-1), at(1), 10), 20);
+        await this.path(line(at(1), at(-1), 10), 20);
         break;
       }
       case 'circle': {
@@ -129,22 +130,24 @@ export class PadWork {
         let a = 0;
         this.down(at(a));
         do {
-          for (let i = 0; i < 24 && st.g === g; i++) { a += Math.PI * 2 / 24; this.ev('move', at(a)); await sleep(PACE + 6); }
+          for (let i = 0; i < 24 && st.g === g; i++) { a += Math.PI * 2 / 24; this.ev('move', at(a)); await sleep(40 * this.slow); } // (a turn a second)
         } while (this.held && st.g === g && st.on);
         this.up();
         break;
       }
       case 'chop': {
-        // a cut: the knife up over the food and down through it, the next cut further along
+        // a cut: the knife lifted over the food, down through it to the board, up again – about two and a half
+        // a second, as a home cook slices; the next cut further along
         const b = st.subjectBox(), n = Math.max(1, phaseTarget(ph));
         const x = b.x0 + b.w * (0.8 - 0.5 * Math.min(1, st.k / n));
-        await this.stroke([{ x, y: b.y0 - 70 }, { x, y: b.y0 - 40 }, { x, y: b.cy }, { x, y: b.y1 + 4 }, { x, y: b.y0 - 60 }], PACE + 2);
+        const top = { x, y: b.y0 - 70 }, edge = { x, y: b.y0 - 30 }, board = { x, y: b.y1 + 4 };
+        await this.stroke([...line(top, edge, 3), ...line(edge, board, 8).slice(1), ...line(board, { x, y: b.y0 - 60 }, 6).slice(1)], 22);
         break;
       }
       case 'peel': {
         const b = st.subjectBox(), o = (st.k % 3 - 1) * 20;
-        if (ph.tool === 'hand') await this.stroke(line({ x: b.cx, y: b.cy }, { x: b.cx + 160, y: b.cy - 30 }, 8));
-        else await this.stroke(line({ x: b.cx + o, y: b.y0 + 8 }, { x: b.cx + o, y: b.y1 + 2 }, 8));
+        if (ph.tool === 'hand') await this.stroke(line({ x: b.cx, y: b.cy }, { x: b.cx + 160, y: b.cy - 30 }, 14), 22);
+        else await this.stroke(line({ x: b.cx + o, y: b.y0 + 8 }, { x: b.cx + o, y: b.y1 + 2 }, 14), 22);
         break;
       }
       case 'pour': case 'fill': {
@@ -186,7 +189,7 @@ export class PadWork {
         this.ev('move', { x: rim.x, y: rim.y - 30 }); await sleep(8);
         this.ev('move', { x: rim.x, y: rim.y + 5 }); await sleep(8);
         this.up({ x: rim.x, y: rim.y + 5 });
-        await sleep(180);
+        await sleep(180 * this.slow);
         await this.stroke(line({ x: rim.x, y: rim.y - 30 }, { x: rim.x + 110, y: rim.y - 30 }, 8));
         break;
       }
