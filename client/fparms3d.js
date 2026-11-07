@@ -53,7 +53,8 @@ const SHAPES = {
   knifeFlat: () => ({ fingers: [0.45, 0.8, 0.85, 0.9], thumb: RIG_THUMB.flat }),
   pinch: (c) => ({ fingers: [0.45, 0.6, 0.8, 0.9].map((f) => f * (0.6 + 0.4 * Math.min(1, c / 0.6))), thumb: thumbAt('flat', 'pinch', Math.min(1, c / 0.6)) }),
   // (fingertips tucked under the knuckles, the thumb behind them: what the knife's blade runs along)
-  claw: () => ({ joints: [[0.45, 1.5, 0.9], [0.4, 1.55, 0.9], [0.4, 1.5, 0.85], [0.45, 1.4, 0.8]], thumb: thumbAt('flat', 'fist', 0.55) }),
+  // (draped over the food, as the fal.ai reference has it: the knuckles up, the fingers down over its far side)
+  claw: () => ({ joints: [[0.6, 1.2, 0.7], [0.55, 1.25, 0.7], [0.55, 1.2, 0.7], [0.6, 1.1, 0.65]], thumb: thumbAt('flat', 'fist', 0.55) }),
   // (open and relaxed – flat – closing toward a grasp: the thumb in along the index first, then over)
   hand: (c) => ({ thumb: c < 0.5 ? thumbAt('open', 'flat', c * 2) : thumbAt('flat', 'fist', (c - 0.5) * 2) }),
   rest: () => ({ fingers: [0.05, 0.05, 0.06, 0.07], thumb: RIG_THUMB.flat }),
@@ -227,23 +228,26 @@ export class FpArms {
     });
   }
 
-  // dressed as my cook: shirt sleeves, a white cuff, my skin
+  // dressed as my cook: shirt sleeves rolled up, my skin
   setLook(look) {
     const key = `${look.shirt}|${look.skin}`;
     if (this.lookKey === key) return;
     this.lookKey = key;
     for (const h of this.hands) if (h.limb) this.group.remove(h.limb.root);
-    const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 }), cuff = mat('#f6f2ea', { rough: 0.8 });
-    const cuffIn = cuff.clone(); cuffIn.side = THREE.DoubleSide; // (open: its inside seen round the wrist)
+    const shirt = mat(look.shirt, { rough: 0.75 }), skin = mat(look.skin, { rough: 0.55 });
     // (the rigged hand's skin: a soft warm sheen at its edges, as skin has)
     const skinRig = new THREE.MeshPhysicalMaterial({ color: look.skin, roughness: 0.55, sheen: 0.6, sheenColor: new THREE.Color('#ff9a8a'), sheenRoughness: 0.5 });
-    const tube = new THREE.CylinderGeometry(0.85, 1, 1, 18, 1, true);
-    const ball = new THREE.SphereGeometry(1, 24, 16);
+    const tube = sleeveGeo(0.85, 0), foreTube = sleeveGeo(0.86, 3);
+    const ball = new THREE.SphereGeometry(1, 32, 20);
+    // (the sleeve rolled up once: a soft thick roll of the shirt, a little lighter on its fold – and my bare forearm
+    // below it, down to the wrist: as the fal.ai reference draws a cook's arms – docs/work-by-buttons.md)
+    const rollMat = mat(`#${new THREE.Color(look.shirt).lerp(new THREE.Color('#ffffff'), 0.1).getHexString()}`, { rough: 0.8 });
+    const rollGeo = new THREE.TorusGeometry(1, 0.36, 14, 36).rotateX(Math.PI / 2);
+    const armGeo = new THREE.CylinderGeometry(0.8, 1, 1, 28, 1, true);
     for (const h of this.hands) {
       const root = new THREE.Group();
-      const upper = new THREE.Mesh(tube, shirt), fore = new THREE.Mesh(tube, shirt), elbow = new THREE.Mesh(ball, shirt);
-      // (the cuff closing in a little round the wrist – not a wide ring with its dark inside showing)
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.86, 1, 1, 18, 1, true), cuffIn);
+      const upper = new THREE.Mesh(tube, shirt), fore = new THREE.Mesh(foreTube, shirt), elbow = new THREE.Mesh(ball, shirt);
+      const band = new THREE.Mesh(rollGeo, rollMat), arm = new THREE.Mesh(armGeo, skinRig);
       const hand = new THREE.Group();
       hand.scale.set(h.s * HS, HS, HS);
       const palm = new THREE.Mesh(ball, skin);
@@ -271,10 +275,10 @@ export class FpArms {
       // the rigged hand, when it's loaded (the jointed one stays, hidden – the way back if it isn't)
       const rig = makeRig(skinRig);
       if (rig) { hand.add(rig.root); for (const m of [palm, ...bones.flat(), ...thumb, wrist]) m.visible = false; }
-      root.add(upper, fore, elbow, band, hand, wrist);
+      root.add(upper, fore, elbow, band, arm, hand, wrist);
       root.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; } });
       this.group.add(root);
-      h.limb = { root, upper, fore, elbow, band, hand, wrist, bones, thumb, palm, mitt, mFingers, mThumb, rig };
+      h.limb = { root, upper, fore, elbow, band, arm, hand, wrist, bones, thumb, palm, mitt, mFingers, mThumb, rig };
     }
     this.gloved = null; // (put on again as they're drawn)
   }
@@ -633,21 +637,28 @@ export class FpArms {
     if (this.debug) { const D = anglesAt(sh, e, A), dg = (x) => Math.round(x * 57.3); h.bend = `lean ${Math.round(h.lean * 100)} sh ${dg(D.elev)}/${dg(D.plane)} rot ${dg(D.rot)} el ${dg(D.elbow)} pro ${dg(D.pro)} wr ${dg(D.flex)}/${dg(D.dev)}${past(D).some((x) => x > 0.01) ? ' PAST ' + past(D).map((x) => dg(x)).join(',') : ''}`; }
     const up = sh.clone().sub(e).normalize();
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
-    // (a shirt sleeve over the forearm, its cuff loose round the wrist, open: the rigged hand – life size – comes out
+    // (a shirt sleeve over the forearm, rolled up above the wrist, my bare forearm below it: the rigged hand – life size – comes out
     // of it at the wrist, whichever way it's bent)
     const top = this.sleeveTop(e, sh) || e.clone().add(up.clone().multiplyScalar(UPPER + 0.04 + sh.distanceTo(sh0)));
     if (L.rig) {
       tube(L.upper, top, e, 0.022);
-      tube(L.fore, e, w.clone().addScaledVector(f, 0.016), 0.0192);
+      tube(L.fore, e, w.clone().addScaledVector(f, ROLL.at + 0.004), 0.0192);
       L.elbow.position.copy(e);
       L.elbow.scale.setScalar(0.0211); // (round over both sleeves' ends)
-      tube(L.band, w.clone().addScaledVector(f, 0.02), w.clone().addScaledVector(f, -0.003), 0.0176);
+      L.band.position.copy(w).addScaledVector(f, ROLL.at);
+      L.band.quaternion.setFromUnitVectors(v(0, 1, 0), f);
+      L.band.scale.set(ROLL.r, ROLL.r * ROLL.tall, ROLL.r);
+      tube(L.arm, w.clone().addScaledVector(f, ROLL.at), w.clone().addScaledVector(f, -0.004), ROLL.arm);
+      L.arm.visible = !L.mitt.visible;
     } else {
       tube(L.upper, top, e, 0.024);
       tube(L.fore, e, w.clone().add(f.clone().multiplyScalar(0.014)), 0.021);
       L.elbow.position.copy(e);
       L.elbow.scale.setScalar(0.0232);
-      tube(L.band, w.clone().add(f.clone().multiplyScalar(0.022)), w.clone().add(f.clone().multiplyScalar(0.008)), 0.019);
+      L.band.position.copy(w).addScaledVector(f, 0.02);
+      L.band.quaternion.setFromUnitVectors(v(0, 1, 0), f);
+      L.band.scale.set(0.019, 0.019 * ROLL.tall, 0.019);
+      L.arm.visible = false;
     }
     h.drawW = w;
     L.hand.position.copy(w);
@@ -706,6 +717,21 @@ FpArms.prototype.sleeveTop = function (e, sh) {
   return sh.clone().addScaledVector(F.back, 1.5);
 };
 
+// The sleeve rolled up (kitchen units): its roll this far up the forearm from the wrist, this round (the roll's
+// thickness a third of that, a little taller along the arm than deep); my bare forearm under it, this thick there.
+const ROLL = { at: 0.042, r: 0.0192, tall: 1.4, arm: 0.0168 };
+// A sleeve's shape, as a lathe round y from −0.5 (its top) to 0.5 (radius 1): soft cotton, a little fuller in the
+// middle, and folds bunched just above its end – where it's pushed up into the roll.
+function sleeveGeo(top, folds) {
+  const pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = i / 48;
+    let r = top + (1 - top) * t + 0.04 * Math.sin(Math.PI * t);
+    if (folds && t > 0.55) r += 0.05 * Math.sin(((t - 0.55) / 0.45) * Math.PI * folds) ** 2 * (t - 0.55) / 0.45;
+    pts.push(new THREE.Vector2(r, t - 0.5));
+  }
+  return new THREE.LatheGeometry(pts, 36);
+}
 // a sleeve (the open cylinder, narrower at its top) from a to b, this thick
 function tube(m, a, b, r) {
   const along = b.clone().sub(a);

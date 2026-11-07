@@ -58,7 +58,11 @@ const INTO = {
   dome: { look: 0.05, lookUp: 0.04, out: 0.7, up: 0.35, body: 0.5, eye: 0.2 },
   tandoor: { look: 0.05, lookUp: 0.04, out: 0.6, up: 0.45, body: 0.45, eye: 0.3 },
 };
-const CLAW_GAP = 0.05; // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
+// (the knife's blade, from its bolster – chefKnifeMesh: 20 cm long – and the gap the holding hand keeps from
+// its flat: a finger's half-thickness, half the blade's, and a few millimetres to spare)
+const CLAW_BLADE = { len: 21 * 0.46 / 90 * 1.2, gap: 0.0095 };
+const CLAW_GAP = 0.035;
+const CLAW_DIR = { away: 0.7, along: 0.6, down: 0.25, near: 0.02 }; // (which way the holding hand's fingers point: away, along the food toward the blade, down) // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
 const REST_EDGE = 0.05; // (and the wrist about this far in from the worktop's near edge)
@@ -2438,11 +2442,11 @@ export class Scene3D {
       const at = realW || doorW;
       out.body = { pos: at.clone().addScaledVector(w.N, 0.45).setY(Math.min(EYE_H, at.y + 0.45)), fwd: w.N.clone().negate() };
     } else if (inside) out.body = { pos: w.O.clone().addScaledVector(w.N, inside.body).addScaledVector(w.R, (inside.side || 0) * 0.5).addScaledVector(UP, inside.eye), fwd: w.N.clone().negate() };
-    // (at a worktop: right up to it, leaning in over the work – my eyes about 58 cm over it, 37 cm back: my elbows bent
+    // (at a worktop: right up to it, leaning in over the work – my eyes about 60 cm over it, 24 cm back: my elbows bent
     // and down at my sides, as a cook's are, not reaching out at arm's length)
     // (my eyes are the camera's – EYES_CAM – so my shoulders are just under and beside it, and I see my forearms and
     // hands come in from below, never my upper arms from behind)
-    else out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back).addScaledVector(UP, EYES_CAM.up), fwd: w.N.clone().negate() };
+    else out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back + EYES_CAM.body).addScaledVector(UP, EYES_CAM.up), fwd: w.N.clone().negate() };
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -2923,19 +2927,23 @@ export class Scene3D {
         const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
         ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14 * BRISK);
         const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lift * (C.top + 0.012));
-        const K = this.knifeAt(E, blade, 0.05 + 0.2 * Math.min(1, lift));
+        const K = this.knifeAt(E.clone().addScaledVector(ax, this.knifeFix || 0), blade, 0.05 + 0.2 * Math.min(1, lift));
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
         // (on a touch screen it's held where the second finger is – not at all without one;
         // never nearer the blade than CLAW_GAP, even at the very end of it)
-        let hold = ck.x - CLAW_GAP;
+        // (behind the next cut already as the knife goes to it – the hand moves back first, the knife after)
+        const next = Math.min(ck.x, want);
+        let hold = next - CLAW_GAP;
         if (st.touchy) { const s2 = st.steadies() && st.steadyAt(); hold = s2 ? Math.min(hold, (s2.x - MAIN.x) * w.S) : null; }
         if (hold != null) {
-          hold = Math.min(ck.x - CLAW_GAP, Math.max(C.xL - 0.03, hold));
-          const H = ov.pos.clone().addScaledVector(ax, hold).setY(ov.pos.y + C.top + 0.013);
-          // (its fingers toward the blade – a little away, the forearm coming in at a slant from my left, not square across)
-          hand(oi, H, 'claw', { dir: ax.clone().addScaledVector(blade, 0.55).addScaledVector(UP, -0.35).normalize(), curl: 0.9 });
+          hold = Math.min(next - CLAW_GAP, Math.max(C.xL - 0.03, hold)) - (this.clawPush || 0);
+          const H = ov.pos.clone().addScaledVector(ax, hold).addScaledVector(blade, -CLAW_DIR.near).setY(ov.pos.y + C.top + 0.001); // (the palm on it, toward me: the knuckles over it, the fingers down its far side)
+          // (its fingers forward over the food and a little toward the blade, arched over it, the forearm coming in from
+          // the bottom left – as the fal.ai reference has it: so the hand's side, not its long fingers, is toward the
+          // blade, and it can sit on the food close behind the cut)
+          hand(oi, H, 'claw', { dir: blade.clone().multiplyScalar(CLAW_DIR.away).addScaledVector(ax, CLAW_DIR.along).addScaledVector(UP, -CLAW_DIR.down).normalize(), curl: 0.9 });
         }
         break;
       }
@@ -3008,8 +3016,8 @@ export class Scene3D {
         if (lOv && !lOv.hide && lOv.pos) {
           const lst = lOv.st ? { ...lIt, ...lOv.st } : lIt, sdW = wi === 1 ? 1 : -1;
           const h = this.foodHeight(lIt.kind, lst), rad = Math.min(0.06, Math.max(0.02, h * 0.55));
-          // (brought in toward me as it's lifted – over the board's near half, under my eyes)
-          const C = lOv.pos.clone().addScaledVector(UP, 0.045).addScaledVector(w.N, 0.07);
+          // (lifted where it lay – my eyes are right over the board now, EYES_CAM: brought any nearer, it fills the view)
+          const C = lOv.pos.clone().addScaledVector(UP, 0.03).addScaledVector(w.N, -0.01);
           lOv.pos = C.clone();
           hand(oi, C.clone().addScaledVector(w.R, -sdW * (rad + 0.004)).addScaledVector(UP, h * 0.45).addScaledVector(w.N, 0.006), 'side', { curl: 0.62 });
           const b = st.subjectBox(), u = p.down ? Math.max(0, Math.min(1, (pt.y - b.y0) / Math.max(1, b.h))) : 0;
@@ -3169,7 +3177,7 @@ export class Scene3D {
     }
     out.rest = this.restAt.spots;
     // (through my own eyes it can hardly stand back: they're where my head is, over the work – a few cm at most)
-    if (out.cam.fov) this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen], 0.05, 0.05);
+    if (out.cam.fov) this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen], 0, 0.05);
     else this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen]);
     // (coring: the knife's tip cut round the core as far as it's gone – it's out once it's gone all the way round)
     if (def && def.do === 'core' && g.kind === 'circle' && D && D.items[def.item] && !(D.items[def.item].cored >= 1)) D.items[def.item].cored = Math.min(0.97, Math.abs(g.acc || 0) / (Math.PI * 2));
@@ -3246,6 +3254,37 @@ export class Scene3D {
     const zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
     const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, KNIFE_EDGE);
     return { xA, yA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
+  }
+  // Cutting: the hand holding the food never in the blade. Every joint and fingertip of hand i (and the middle of
+  // each finger bone), as it's drawn, is measured against the knife where it's drawn (o: its bolster, xA along the
+  // blade, yA its spine, zA square to its flat): any along the blade's length – at any height: it goes up and down
+  // through the stroke – nearer its flat than a finger's thickness pushes the hand back along the food (ax) –
+  // this.clawPush, taken off where the claw goes next
+  // frame – till there's a clear gap; with room to spare it eases back toward the blade. (Not by eye: the hand is
+  // big, its knuckles curl forward, and the arm's solver turns the knife a little from where it was asked to be.)
+  clawClear(i, o, xA, yA, zA, ax) {
+    const A = this.fpArms, L = A.hands[i] && A.hands[i].limb;
+    if (!L || !L.rig || A.hands[i].hold !== 'claw') { this.clawPush = 0; return; }
+    const pts = [], q = new THREE.Vector3();
+    for (const f of [...L.rig.fingers, L.rig.thumb]) {
+      const ch = f.filter(Boolean).map((b) => b.getWorldPosition(new THREE.Vector3()));
+      const tip = f[f.length - 1] && f[f.length - 1].children.find((c) => c.isBone);
+      if (tip) ch.push(tip.getWorldPosition(new THREE.Vector3()));
+      ch.forEach((p, j) => { pts.push(p); if (j) pts.push(p.clone().lerp(ch[j - 1], 0.5)); });
+    }
+    const wr = A.handPoint(i, new THREE.Vector3(0, 0, -0.02)), side = Math.sign(q.copy(wr).sub(o).dot(zA)) || -1;
+    let pen = -Infinity;
+    for (const p of pts) {
+      q.copy(p).sub(o);
+      const lx = q.dot(xA);
+      if (lx < -0.01 || lx > CLAW_BLADE.len) continue; // (over its spine or under its edge too: it goes up and down)
+      const pp = CLAW_BLADE.gap - side * q.dot(zA);
+      if (pp > pen) pen = pp;
+    }
+    const k = Math.max(0.3, Math.abs(zA.dot(ax))), dt = this.dt || 0.016;
+    if (pen > 0) this.clawPush = Math.min(0.08, (this.clawPush || 0) + 0.5 * pen / k); // (half each frame: the hand follows a little behind)
+    else if (pen < -0.015) this.clawPush = Math.max(0, (this.clawPush || 0) - dt * 0.005); // (slowly: it learns how far back it must be)
+    this.clawPen = pen; // (how far into the gap it came this frame: below 0, clear)
   }
   // the knife lying somewhere (the board's own): taken as it lies – its fist point, its length, its spine's way
   knifeLying(o) {
@@ -3327,6 +3366,13 @@ export class Scene3D {
         const yA = u0.addScaledVector(xA, -u0.dot(xA)).normalize(), zA = new THREE.Vector3().crossVectors(xA, yA);
         fx.tool.position.copy(this.fpArms.handPoint(T.hand, KNIFE.at));
         fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
+        if (W.cut) {
+          // (the arm's solver leaves the hand a little off where it was asked to be: the knife, as drawn, is moved
+          // onto the cut – the hand asked that much the other way next frame – and the holding hand kept clear of it)
+          const d = W.cut.at.clone().sub(fx.tool.position).dot(zA), k = zA.dot(W.cut.ax);
+          if (Math.abs(k) > 0.3) this.knifeFix = Math.max(-0.06, Math.min(0.06, (this.knifeFix || 0) + 0.25 * d / k));
+          this.clawClear(1 - T.hand, fx.tool.position, xA, yA, zA, W.cut.ax);
+        }
       } else if (T.kind === 'knife') {
         // blade along x, its edge down (or, given the spine's way – up – on its side)
         const xA = T.dir.clone().normalize();
@@ -3698,10 +3744,13 @@ export class Scene3D {
 // ======================================================================= helpers
 
 const WORK_FOV = 50; // (the camera at work sees less, closer)
-// at a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), and how wide they see
-const TUB_IN = 0.08, TUB_DOWN = 0.03;
-const PASS_T = 0.55; // (first person: how long a thing takes to change hands) // (first person: how far in from my hand a carried container's middle is)
-const EYES_CAM = { back: 0.2, up: 0.32, fov: 62 };
+const TUB_IN = 0.08, TUB_DOWN = 0.03; // (first person: how far in from my hand a carried container's middle is)
+const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
+// At a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), how wide they see – and my
+// shoulders further back than my eyes (body), as a head leans out over a board: with them right under my eyes the
+// hand on the knife was only 18 cm before them and 31 cm down, and the arm's solver could only fold the elbow up and
+// out to the side – the forearm came in level from the right. The fal.ai reference (2026-11-07) is this close.
+const EYES_CAM = { back: 0.12, up: 0.3, fov: 46, body: 0.1 };
 
 // The glow: a thing's own surfaces again, lit along the rims (where they turn
 // away from me) with a faint wash on what faces me, added over it.
