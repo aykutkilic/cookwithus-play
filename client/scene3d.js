@@ -2815,6 +2815,7 @@ export class Scene3D {
             if (t >= T.wait) ring(g.target);
             break;
           }
+          // (no target ring once they're in my hands: where they go is plain – the video shows none)
           // Taken up: first both hands to the slices, either side (palms down), then cupped round them – while the
           // pointer's still on them – then carried over to the container, a little above the board, and let go.
           const sideL = ref(GATHER_AT.sideL), sideR = ref(GATHER_AT.sideR), cup = ref(GATHER_AT.cup);
@@ -2828,7 +2829,6 @@ export class Scene3D {
             const rw = a1 < 1 ? onHandle.clone().lerp(sideR, a1) : sideR.clone().lerp(cup.clone().addScaledVector(w.R, sd * GATHER.hold), a2);
             hand(O, lw, 'hand', { curl: 0.3 + 0.4 * a2, dir: cupDir(-1) });
             hand(M, rw, 'hand', { curl: 0.3 + 0.4 * a2, dir: cupDir(1) });
-            ring(g.target);
             break;
           }
           const Q = cup.clone().add(moved);
@@ -2836,7 +2836,6 @@ export class Scene3D {
           out.ov.set(k, { pos: Q.clone().addScaledVector(UP, 0.006), yaw: out.yaw, st: { spread: 0.022 } });
           hand(M, Q.clone().addScaledVector(w.R, sd * GATHER.hold), 'hand', { curl: GATHER.cupCurl, dir: cupDir(1) });
           hand(O, Q.clone().addScaledVector(w.R, -sd * GATHER.hold), 'hand', { curl: GATHER.cupCurl, dir: cupDir(-1) });
-          ring(g.target);
           break;
         }
         if (w.kind === 'sink' && ph.to === 'underTap' && k && k[0] === 'v') {
