@@ -63,13 +63,26 @@ const INTO = {
 const CLAW_BLADE = { len: 21 * 0.46 / 90 * 1.2, gap: 0.0095 };
 const CLAW_GAP = 0.035;
 const KNIFE_ROCK = [0.06, 0.06]; // (cutting: the knife's tip down this far (rad) on the board, and this much more lifted)
+// (cutting: how high the edge goes – times the food's height, just clear of it; how far the blade slides along its
+// length through a stroke – pushed forward going down, drawn back coming up; how quickly it changes way; where along
+// the blade from its bolster it cuts – near the heel, the hand just behind and beside the food, the rest of the blade
+// on beyond it, as the reference has it; how far its spine leans away from the holding hand – a cook's knife isn't
+// held plumb, and plumb it's seen edge-on from my eyes, a grey needle, not a blade)
+const CHOP_STROKE = { lift: 1.0, slide: 0.03, rate: 9, heel: 0.075, lean: 0.12, tip: 0.2 }; // (tip: tipped no further than this – the tip comes off the board a little at the top of a stroke over a fat food: tipped steeper, the handle goes up past where the arm reaches)
+// How far a chef's knife is tipped (rad) for its edge at `at` along the blade to be h over the board with its tip's
+// edge on the board (the edge curves up toward the tip – chefKnifeMesh's belly – so even flat on the board it tips).
+const KNIFE_TIP = 20.6 * 0.46 / 90 * 1.2;
+function tipDown(h, at) {
+  const dx = KNIFE_TIP - at, dy = knifeEdgeAt(KNIFE_TIP) - knifeEdgeAt(at), R = Math.hypot(dx, dy);
+  return Math.atan2(-dy, dx) + Math.asin(Math.max(-1, Math.min(1, h / R)));
+}
 const CLAW_DIR = { away: 0.7, along: 0.6, down: 0.25, near: 0.02 }; // (which way the holding hand's fingers point: away, along the food toward the blade, down) // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
 const REST_EDGE = 0.05; // (and the wrist about this far in from the worktop's near edge)
 const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
 const REST_AFTER = 50; // (and not straight away – standing there or working at it: only once I've been there this long, s – or up to 20 s more)
-const CUT_TURN = 0.38; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
+const CUT_TURN = 0.08; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
 // how far below the fist a tool's working end is (the knife's edge, the whisk's loops …)
 const TOOL_LEN = { knife: 0.19, peeler: 0.07, spoon: 0.18, ladle: 0.18, whisk: 0.19, masher: 0.18, brush: 0.17, spatula: 0.2, tongs: 0.2, blenderStick: 0.12, shaker: 0.07, grater: 0, rollingPin: 0.02, pizzaPeel: 0.05, sponge: 0.025 };
 // where a hand holds a pan by its handle (model coordinates, see buildVessel)
@@ -2987,10 +3000,19 @@ export class Scene3D {
         const want = C.next + off * w.S;
         const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
         ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14 * BRISK);
-        const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lift * (C.top + 0.012));
+        // (as a cook slices – the fal.ai video, docs/work-by-buttons.md: the blade lifted only just clear of the food, not
+        // swung back up at me; pushed forward along its length as it goes down through it, drawn back as it comes up)
+        const dt = this.dt || 0.016, lv = Math.min(CHOP_STROKE.lift, lift), down = lv < (ck.lv ?? lv) - 1e-4, up = lv > (ck.lv ?? lv) + 1e-4;
+        ck.lv = lv;
+        if (down || up) ck.dir = down ? 1 : -1;
+        ck.slide = (ck.slide || 0) + ((ck.dir || 0) * CHOP_STROKE.slide / 2 - (ck.slide || 0)) * Math.min(1, dt * CHOP_STROKE.rate);
+        const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lv * (C.top + 0.012));
+        const Ek = E.clone().addScaledVector(blade, ck.slide);
         // (rocking only a little: the tip tipped further down as it lifts would have the thumb-up hand bent down toward
         // its little finger past what a wrist does – the arm's solver then turned the palm up and the elbow out)
-        const K = this.knifeAt(E.clone().addScaledVector(ax, this.knifeFix || 0), blade, KNIFE_ROCK[0] + KNIFE_ROCK[1] * Math.min(1, lift));
+        // (the tip stays on the board beyond the food – only the heel rises and falls: tipped just so far that the tip's
+        // edge, up the blade's curved belly, is on the board while the edge at the cut is at E)
+        const K = this.knifeAt(Ek.addScaledVector(ax, this.knifeFix || 0), blade, Math.min(CHOP_STROKE.tip, tipDown(E.y - (ov.pos.y + 0.001), CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
@@ -3317,10 +3339,13 @@ export class Scene3D {
   // The knife in my hand: its edge at E (the middle of it), the blade pointing d
   // (level), its tip rocked down by tilt – the knife's own origin (chefKnife's)
   // and my fist on its handle there; xA: along it, tip-wards.
-  knifeAt(E, d, tilt) {
+  // at: how far along the blade from its bolster E is (the middle of it, or – cutting – near its heel).
+  // lean: its spine leant over that far (rad) to the blade's right – its left face turned up toward my eyes.
+  knifeAt(E, d, tilt, at = 0.08, lean = 0) {
     const xA = d.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(UP, -Math.sin(tilt)).normalize();
-    const zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
-    const K0 = E.clone().addScaledVector(xA, -0.08).addScaledVector(yA, KNIFE_EDGE);
+    let zA = new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
+    if (lean) { yA.applyAxisAngle(xA, -lean); zA = new THREE.Vector3().crossVectors(xA, yA); }
+    const K0 = E.clone().addScaledVector(xA, -at).addScaledVector(yA, at === 0.08 ? KNIFE_EDGE : knifeEdgeAt(at));
     return { xA, yA, K0, fist: K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006) };
   }
   // Cutting: the hand holding the food never in the blade. Every joint and fingertip of hand i (and the middle of
