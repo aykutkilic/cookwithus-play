@@ -62,6 +62,7 @@ const INTO = {
 // its flat: a finger's half-thickness, half the blade's, and a few millimetres to spare)
 const CLAW_BLADE = { len: 21 * 0.46 / 90 * 1.2, gap: 0.0095 };
 const CLAW_GAP = 0.035;
+const KNIFE_ROCK = [0.06, 0.06]; // (cutting: the knife's tip down this far (rad) on the board, and this much more lifted)
 const CLAW_DIR = { away: 0.7, along: 0.6, down: 0.25, near: 0.02 }; // (which way the holding hand's fingers point: away, along the food toward the blade, down) // (cutting: the holding hand's palm is never nearer the blade than this – its curled knuckles stay clear of it)
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
@@ -1971,7 +1972,8 @@ export class Scene3D {
       // (a knife: carried in the hand as it's held to cut, its point forward and a little up, its edge down)
       const tk = k[0] === 'u' && view.C && view.C.tools && view.C.tools[k.slice(2)];
       if (h === 'tool' && tk && tk.kind === 'chefKnife') return { kind: 'knife', at: KNIFE_CARRY.at.clone(), dir: KNIFE_CARRY.dir.clone(), up: KNIFE_CARRY.up.clone() };
-      if (h !== 'side') return { kind: h };
+      // (a thing in each hand: both a little further out, as far as it takes to keep them apart – carryApart)
+      if (h !== 'side') return this.carrySpread && HOLDS[h] ? { kind: h, at: HOLDS[h].at.clone().add(new THREE.Vector3(this.carrySpread, 0, 0)) } : { kind: h };
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
       return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.21, -0.25 - r) }; // (held before me, elbows bent – not out at arm's length)
     });
@@ -2040,6 +2042,8 @@ export class Scene3D {
     }
     this.armHolds = holds; // (for test/arms.html: what my hands were asked to do)
     this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t, hideAway: (this.workCamK || 0) > 0.02, view: this.camera });
+    this.carryApart(slots, holds, dt);
+    this.handShadows();
     this.workMoved = new Set(this.work && !this.work.idle ? this.work.ov.keys() : []);
   }
 
@@ -2069,6 +2073,63 @@ export class Scene3D {
     G.root.visible = true;
   }
   // a thing's box in its own frame (as it's drawn: its vessel, its food, its tool) – or null
+  // A soft shadow under each hand at work, on the worktop it's over – darker and smaller the nearer the hand is to
+  // it: a hand on the board is seen to be on it, not hovering over it (the kitchen's key light is too broad and too
+  // high for its shadow map to draw a hand's). Only at a worktop, through my own eyes.
+  handShadows() {
+    const W = this.work, on = W && !W.idle && W.cam && W.cam.fov && this.fpArms.group.visible && !this.fpArms.gloved;
+    if (!this.handShade) {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(40,24,12,0.9)'); gr.addColorStop(0.45, 'rgba(40,24,12,0.45)'); gr.addColorStop(1, 'rgba(40,24,12,0)');
+      x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+      const tex = new THREE.CanvasTexture(c);
+      this.handShade = [0, 1].map(() => {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+        m.renderOrder = 2; m.visible = false; this.scene.add(m);
+        return m;
+      });
+    }
+    this.handShade.forEach((m, i) => {
+      m.visible = false;
+      if (!on) return;
+      const p = this.fpArms.palm(i), y0 = W.O.y + 0.0015, h = p.y - y0;
+      if (h < -0.01 || h > HAND_SHADE.high) return;
+      const k = 1 - Math.max(0, h) / HAND_SHADE.high;
+      m.visible = true;
+      m.position.set(p.x, y0, p.z);
+      m.scale.set(HAND_SHADE.size + h * 0.5, 1, (HAND_SHADE.size + h * 0.5) * 1.3);
+      m.rotation.y = Math.atan2(W.cam.look.x - W.cam.pos.x, W.cam.look.z - W.cam.pos.z);
+      m.material.opacity = HAND_SHADE.dark * k * k;
+    });
+  }
+  // Carrying a thing in each hand – a pan by its handle and the tomatoes' container, say – the two are never drawn
+  // in each other: a pan's body reaches in from its handle toward the middle, a container's from its outer end. Each
+  // frame their boxes, as drawn, are measured in my view's space – apart one way or another (across, up and down, or
+  // one in front of the other) they're clear; while they're closer than a little gap both hands go further out
+  // (carrySpread, taken by their holds next frame); with room to spare they come back in.
+  carryApart(slots, holds, dt) {
+    const hk = (i) => holds[i] && holds[i].kind;
+    const both = slots[0] && slots[1] && !this.fpPass && !(this.work && !this.work.idle) && [0, 1].every((i) => HOLDS[hk(i)] && !['side', 'knife', 'point', 'grab', 'tool'].includes(hk(i)));
+    if (!both) { this.carrySpread = Math.max(0, (this.carrySpread || 0) - dt * 0.2); return; }
+    // (each part as its own turned box – a pan's body and its handle apart, not one box round both)
+    const parts = (k) => {
+      const o = k[0] === 'v' ? this.vessels.get(k.slice(2))?.group : k[0] === 'i' ? this.foods.get(`item:${k.slice(2)}`)?.g : k[0] === 'u' ? this.tools.get(k.slice(2))?.g : null;
+      const out = [];
+      if (!o || o.visible === false) return out;
+      o.updateWorldMatrix(true, true);
+      o.traverse((c) => { if (c.isMesh && c.visible && c.geometry) { const B = obbOf(c); if (B) out.push(B); } });
+      return out;
+    };
+    const L = parts(slots[0]), R = parts(slots[1]);
+    if (!L.length || !R.length) return;
+    let sep = Infinity;
+    for (const a of L) for (const b of R) sep = Math.min(sep, obbSep(a, b));
+    const pen = CARRY_GAP - sep;
+    if (pen > 0) this.carrySpread = Math.min(0.14, (this.carrySpread || 0) + 0.25 * pen);
+    else if (pen < -0.03) this.carrySpread = Math.max(0, (this.carrySpread || 0) - dt * 0.05);
+    this.carryPen = pen;
+  }
   localBox(k) {
     const o = k[0] === 'v' ? this.vessels.get(k.slice(2))?.group : k[0] === 'i' ? this.foods.get(`item:${k.slice(2)}`)?.g : k[0] === 'u' ? this.tools.get(k.slice(2))?.g : null;
     if (!o) return null;
@@ -2446,7 +2507,7 @@ export class Scene3D {
     // and down at my sides, as a cook's are, not reaching out at arm's length)
     // (my eyes are the camera's – EYES_CAM – so my shoulders are just under and beside it, and I see my forearms and
     // hands come in from below, never my upper arms from behind)
-    else out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back + EYES_CAM.body).addScaledVector(UP, EYES_CAM.up), fwd: w.N.clone().negate() };
+    else out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back + EYES_CAM.body).addScaledVector(UP, EYES_CAM.up + EYES_CAM.bodyUp), fwd: w.N.clone().negate() };
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -2927,7 +2988,9 @@ export class Scene3D {
         const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
         ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14 * BRISK);
         const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lift * (C.top + 0.012));
-        const K = this.knifeAt(E.clone().addScaledVector(ax, this.knifeFix || 0), blade, 0.05 + 0.2 * Math.min(1, lift));
+        // (rocking only a little: the tip tipped further down as it lifts would have the thumb-up hand bent down toward
+        // its little finger past what a wrist does – the arm's solver then turned the palm up and the elbow out)
+        const K = this.knifeAt(E.clone().addScaledVector(ax, this.knifeFix || 0), blade, KNIFE_ROCK[0] + KNIFE_ROCK[1] * Math.min(1, lift));
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
@@ -3155,8 +3218,10 @@ export class Scene3D {
     }
     // the knife held at rest (between knife work: turning the strips …) – its tip on the board, at the right
     if (restTool === 'knife' && !out.tool && !out.hands[oi]) {
-      // (out on the board's right, its tip resting on it – the forearm laid along it, not drawn back to my side)
-      const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.1).addScaledVector(w.N, -0.1).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.4).normalize(), 0.3);
+      // (on the board's right, beside the work, its tip resting on it – the forearm laid along it, not drawn back to my
+      // side; no further away than the work itself: with my eyes over the board, out at its back the hand was up in the
+      // picture's corner over whatever stood there)
+      const K = this.knifeAt(w.O.clone().addScaledVector(w.R, 0.085).addScaledVector(w.N, 0.05).setY(w.O.y + 0.012), w.N.clone().negate().addScaledVector(w.R, -0.3).normalize(), 0.22);
       out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, up: K.yA, hand: oi, off: K.K0.clone().sub(K.fist) };
       hand(oi, K.fist, 'knife', { dir: K.xA, up: K.yA });
     }
@@ -3179,6 +3244,9 @@ export class Scene3D {
     // (through my own eyes it can hardly stand back: they're where my head is, over the work – a few cm at most)
     if (out.cam.fov) this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen], 0, 0.05);
     else this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen]);
+    // (cutting through my own eyes: the knife's hand is out to its side, a little nearer me than the food – looking a
+    // little that way keeps it in the picture, not cut off by its edge)
+    if (out.cam.fov && g.kind === 'chop' && !ph.flat) { const d = w.R.clone().multiplyScalar((wi === 1 ? 1 : -1) * EYES_CAM.toolSide); out.cam.look.add(d); out.cam.pos.add(d); }
     // (coring: the knife's tip cut round the core as far as it's gone – it's out once it's gone all the way round)
     if (def && def.do === 'core' && g.kind === 'circle' && D && D.items[def.item] && !(D.items[def.item].cored >= 1)) D.items[def.item].cored = Math.min(0.97, Math.abs(g.acc || 0) / (Math.PI * 2));
     // (turning the strips a quarter round to cut them across: they turn as far as I've turned them)
@@ -3743,14 +3811,47 @@ export class Scene3D {
 
 // ======================================================================= helpers
 
+// A mesh as a turned box, in the world: its middle, its three axes, how far it reaches along each (null: too small to
+// matter). And how far apart two such boxes are – the most any one direction separates them (the separating-axis
+// test: their 3 + 3 axes and the 9 square to a pair); below 0, they're in each other that deep.
+function obbOf(m) {
+  const g = m.geometry;
+  if (!g.boundingBox) g.computeBoundingBox();
+  const b = g.boundingBox, e = m.matrixWorld.elements;
+  const c = b.getCenter(new THREE.Vector3()).applyMatrix4(m.matrixWorld);
+  const h = b.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  const u = [0, 4, 8].map((i) => new THREE.Vector3(e[i], e[i + 1], e[i + 2]));
+  const r = u.map((v, i) => { const l = v.length(); v.divideScalar(l || 1); return l * [h.x, h.y, h.z][i]; });
+  return Math.max(...r) < 0.004 ? null : { c, u, r };
+}
+const SEP_AX = new THREE.Vector3();
+function obbSep(A, B) {
+  const d = B.c.clone().sub(A.c);
+  let best = -Infinity;
+  const test = (L) => {
+    const l = L.length();
+    if (l < 1e-6) return;
+    L.divideScalar(l);
+    const ra = A.r[0] * Math.abs(A.u[0].dot(L)) + A.r[1] * Math.abs(A.u[1].dot(L)) + A.r[2] * Math.abs(A.u[2].dot(L));
+    const rb = B.r[0] * Math.abs(B.u[0].dot(L)) + B.r[1] * Math.abs(B.u[1].dot(L)) + B.r[2] * Math.abs(B.u[2].dot(L));
+    best = Math.max(best, Math.abs(d.dot(L)) - ra - rb);
+  };
+  for (const a of A.u) test(SEP_AX.copy(a));
+  for (const b of B.u) test(SEP_AX.copy(b));
+  for (const a of A.u) for (const b of B.u) test(SEP_AX.crossVectors(a, b));
+  return best;
+}
+
 const WORK_FOV = 50; // (the camera at work sees less, closer)
 const TUB_IN = 0.08, TUB_DOWN = 0.03; // (first person: how far in from my hand a carried container's middle is)
+const HAND_SHADE = { high: 0.15, size: 0.07, dark: 0.75 }; // (at work: a hand's soft shadow – no higher than this over the worktop; how big, how dark right on it)
+const CARRY_GAP = 0.015; // (first person: the gap kept between the things carried in my two hands)
 const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
 // At a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), how wide they see – and my
 // shoulders further back than my eyes (body), as a head leans out over a board: with them right under my eyes the
 // hand on the knife was only 18 cm before them and 31 cm down, and the arm's solver could only fold the elbow up and
 // out to the side – the forearm came in level from the right. The fal.ai reference (2026-11-07) is this close.
-const EYES_CAM = { back: 0.12, up: 0.3, fov: 46, body: 0.1 };
+const EYES_CAM = { back: 0.12, up: 0.3, fov: 46, body: 0.1, bodyUp: 0.05, toolSide: 0.035 };
 
 // The glow: a thing's own surfaces again, lit along the rims (where they turn
 // away from me) with a faint wash on what faces me, added over it.
