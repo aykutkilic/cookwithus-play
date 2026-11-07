@@ -382,7 +382,7 @@ function onMessage(msg, ev) {
       if (S.working && S.M.cook.steps[S.working.sid] && S.M.cook.steps[S.working.sid].s === 'done') {
         const sid = S.working.sid;
         // (a moment to see it done – the pieces fallen into their container – before I step back)
-        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, 1500);
+        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, S.working.fp ? 2500 : 900);
       }
       if (S.M.cook && S.M.cook.finished && S.finishedShown !== S.M.cook.recipe) {
         S.finishedShown = S.M.cook.recipe;
