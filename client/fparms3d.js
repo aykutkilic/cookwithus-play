@@ -58,9 +58,11 @@ const SHAPES = {
   hand: (c) => ({ thumb: c < 0.5 ? thumbAt('open', 'flat', c * 2) : thumbAt('flat', 'fist', (c - 0.5) * 2) }),
   rest: () => ({ fingers: [0.05, 0.05, 0.06, 0.07], thumb: RIG_THUMB.flat }),
   palm: () => ({ fingers: [0.15, 0.15, 0.17, 0.2], thumb: thumbAt('open', 'flat', 0.6) }),
-  tub: () => ({ fingers: [0.3, 0.3, 0.32, 0.35], thumb: thumbAt('open', 'flat', 0.5) }),
+  tub: () => ({ fingers: [0.42, 0.42, 0.45, 0.48], thumb: thumbAt('open', 'along', 0.7) }),
   side: (c) => ({ fingers: [c * 0.75, c * 0.75, c * 0.78, c * 0.8], thumb: thumbAt('open', 'along', 0.5) }),
   away: () => ({ fingers: [0.25, 0.3, 0.33, 0.36], thumb: thumbAt('open', 'flat', 0.7) }),
+  // (the index out straight at what I mean to take or put down, the others curled in, the thumb on the middle one)
+  point: () => ({ fingers: [0.02, 0.95, 1, 1], thumb: thumbAt('flat', 'fist', 0.65) }),
 };
 export function shapeOf(hold, c) { const f = SHAPES[hold]; return f ? f(c) : {}; }
 const qe = new THREE.Euler(), qq = new THREE.Quaternion();
@@ -148,7 +150,7 @@ export const KNIFE = { at: v(-0.012, 0.018, -0.11), axis: v(0, 0.45, -0.89).norm
 // A knife carried, held as a cook holds it to cut (the knife hold, KNIFE): low before me on my right, its point
 // forward and a little up, its edge down – not hanging from my fist like a dagger. (The right hand's camera space:
 // where the hand holds it, which way the blade points, which way its spine)
-export const KNIFE_CARRY = { at: v(0.15, -0.2, -0.3), dir: v(-0.06, 0.55, -1).normalize(), up: v(0, 1, 0.55).normalize() };
+export const KNIFE_CARRY = { at: v(0.15, -0.165, -0.3), dir: v(-0.06, 0.55, -1).normalize(), up: v(0, 1, 0.55).normalize() };
 const KNIFE_GRIP = KNIFE.at.clone().addScaledVector(KNIFE.axis, -0.013 / 0.5).addScaledVector(KNIFE.up, -0.006 / 0.5);
 const ALONG_FIST = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), IN_FIST.clone().normalize()); // (a tool's handle up the fist)
 // fingers, index (by the thumb) to little: height on the hand, then the three bones
@@ -162,10 +164,12 @@ const THUMB = { base: v(-0.006, 0.036, -0.012), open: [v(-0.02, 0.058, -0.05), v
 // (toBody: turned round what it holds – dir – so the forearm runs back toward the shoulder, the wrist
 // hardly bent)
 export const HOLDS = {
-  handle: { at: v(0.12, -0.19, -0.24), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1, toBody: true },
-  palm: { at: v(0.1, -0.17, -0.25), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
-  // a food container on the palm, carried out in front at the waist
-  tub: { at: v(0.06, -0.25, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-0.1, 1, 0.05), c: Z, pref: v(0.2, -0.5, 1), curl: 0.35 },
+  handle: { at: v(0.14, -0.155, -0.28), grip: FIST, a: IN_FIST, b: v(-0.42, 0.1, -1), c: Z, pref: v(0.3, -0.7, 0.8), curl: 1, toBody: true },
+  palm: { at: v(0.15, -0.15, -0.3), grip: PALM, a: v(-1, 0, 0), b: v(-0.15, 1, 0.1), c: Z, pref: v(0.2, -0.5, 1), curl: 0.3 },
+  // a food container carried out in front – on my side of the view, low, held by its outer end: the fingers under
+  // it, the thumb over its rim, the hand in sight (fal.ai reference: docs/work-by-buttons.md) – not on the palm in
+  // the middle at the waist, the hand hidden under it
+  tub: { at: v(0.2, -0.13, -0.37), grip: PALM, a: v(-1, 0, 0), b: v(-0.75, 0.65, 0.05), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.45 },
   side: { at: v(0.16, -0.17, -0.34), grip: PALM, a: v(-1, 0, 0), b: v(-1, 0.35, 0), c: Z, pref: v(0.35, -0.6, 0.8), curl: 0.55 },
   grab: { at: v(0.12, -0.12, -0.35), grip: FIST, a: IN_FIST, b: v(0, 1, 0.15), c: Z, pref: v(0.3, -0.6, 0.8), curl: 0.85, toBody: true }, // a door's handle
   // at work (first person): a tool upright in the fist, or the open hand palm down
@@ -183,6 +187,8 @@ export const HOLDS = {
   // resting on the worktop near its edge: the palm flat on it, the fingers straight on from the forearm
   // coming down to it (flat: palm down whatever the view)
   rest: { at: v(0.14, -0.3, -0.25), grip: UNDER_PALM, a: v(0, 0, -1), b: v(-0.3, -0.2, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.1, flat: true },
+  // pointing: the hand up in sight on its side, the index along dir (palm down – flat), at what's meant
+  point: { at: v(0.13, -0.12, -0.33), grip: v(0, 0, -0.06), a: v(0, 0, -1), b: v(-0.1, 0, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.6, flat: true },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
 for (const H of Object.values(HOLDS)) H.at.x *= APART; // (as close together as my shoulders)
@@ -416,7 +422,9 @@ export class FpArms {
       h.toolKind = hold && hold.tool || null;
       // a little sway as you walk
       if (walk > 0 && kind !== 'away' && kind !== 'rest') want.wrist.add(v(Math.sin(t * 9 + i) * 0.004, Math.abs(Math.sin(t * 9)) * 0.006, 0).multiplyScalar(Math.min(1, walk)));
-      const r = h.reach;
+      let r = h.reach;
+      // (a reach waiting its turn – the hand passing what it held to the other first: not yet)
+      if (r && r.wait > 0) { r.wait -= dt; r = null; }
       if (r) {
         r.t += dt;
         if (!r.from) r.from = { wrist: h.wrist.clone(), q: h.q.clone(), curl: h.curl };

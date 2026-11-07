@@ -2570,7 +2570,7 @@ function buildView(now, dt) {
     const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
     station.geo = scene.workGeo(wf, subj);
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work, camAim: camAim() };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work, camAim: camAim(), fpPt: S.fp && !S.working && !S.fpDrag ? S.fpPt || null : null };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:
@@ -2609,6 +2609,8 @@ function drawTags(view) {
   // (first person: what I'm pointing at, among the cupboards and drawers and what's in them)
   const pt = $('menu').hidden && $('modal').hidden ? fpPointed() : null;
   const ptLabel = pt && fpPointLabel(pt);
+  // (for the hands: the free one points at it; what I hold shows as a ghost where it would be put)
+  S.fpPt = pt && ptLabel && pt.w ? { kind: pt.kind, w: pt.w, key: pt.key || null } : null;
   const pour = $('menu').hidden && $('modal').hidden && !touchUI ? pourTarget() : null;
   const work = $('menu').hidden && $('modal').hidden && !touchUI ? workTarget() : null;
   const pourHtml = (work ? `<span class="more"><kbd>R</kbd> ${esc(work.label)}</span>` : '') + (pour ? `<span class="more"><kbd>T</kbd> ${esc(pour.label)}</span>` : '');

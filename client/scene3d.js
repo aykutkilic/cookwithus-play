@@ -18,7 +18,7 @@ import { VESSELS, twoHanded, INGREDIENTS, TOOLS } from '../shared/ingredients.js
 import { slotOf } from '../shared/stock.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
-import { FpArms, SHOULDER, BRISK, APART, KNIFE, KNIFE_CARRY } from './fparms3d.js';
+import { FpArms, SHOULDER, BRISK, APART, KNIFE, KNIFE_CARRY, HOLDS } from './fparms3d.js';
 import { MAIN, SIDE } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts, emptyBox, emptyBoxSize } from './food3d.js';
 import { lookOf } from './figure.js';
@@ -880,7 +880,9 @@ export class Scene3D {
         this.camera.position.copy(eye);
         this.camera.quaternion.copy(this.eye.quaternion);
       }
-      const fov = 80 + (WORK_FOV - 80) * wk;
+      // (each work camera its own field of view – through my eyes wider than the others – glided to as well)
+      this.workFov = wc ? (this.workFov == null || !this.workCamK ? wc.fov || WORK_FOV : this.workFov + ((wc.fov || WORK_FOV) - this.workFov) * (1 - Math.exp(-dt * 5 * BRISK))) : this.workFov;
+      const fov = 80 + ((this.workFov || WORK_FOV) - 80) * wk;
       if (Math.abs(this.camera.fov - fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
       this.camera.updateMatrixWorld(true);
       this.camPos.copy(this.camera.position);
@@ -1141,7 +1143,9 @@ export class Scene3D {
         // (food is drawn hand-sized in the hand, and grows back to its size on the
         // counter as it goes there – on its way out of the hand, see updateItems)
         const p = r && r.key === k && r.take ? r.p : 0;
-        out.set(k, { ...this.fpAttach(k, i, meRec), sig: 'fp', fp: true, size: 0.1 + 0.14 * p });
+        // (being passed to this hand: in the other's till they meet)
+        const PS = this.fpPass, ai = PS && PS.k === k && PS.to === i && PS.t < PASS_T / 2 ? PS.from : i;
+        out.set(k, { ...this.fpAttach(k, ai, meRec), sig: 'fp', fp: true, size: 0.1 + 0.14 * p });
       }
     }
     // in someone's hands
@@ -1838,7 +1842,7 @@ export class Scene3D {
     const right = new THREE.Vector3().crossVectors(dir, UP).normalize(), up = new THREE.Vector3().crossVectors(right, dir);
     // (the view's centred in what the panels leave free – only that much of it is seen)
     const ins = this.insets || { left: 0, bottom: 0, top: 0 }, cw = this.canvas.clientWidth || 1, ch = this.canvas.clientHeight || 1;
-    const tv0 = Math.tan(THREE.MathUtils.degToRad(WORK_FOV / 2)) * 0.88;
+    const tv0 = Math.tan(THREE.MathUtils.degToRad((cam.fov || WORK_FOV) / 2)) * 0.88;
     const th = tv0 * Math.max(0.4, cw / ch) * Math.max(0.3, (cw - ins.left) / cw), tv = tv0 * Math.max(0.3, (ch - ins.top - ins.bottom) / ch);
     const xs = pts.map((p) => { const r = p.clone().sub(cam.pos); return r.dot(right) / Math.max(0.05, r.dot(dir)); });
     const dl = cam.look.clone().sub(cam.pos).length();
@@ -1893,9 +1897,21 @@ export class Scene3D {
       // (one taken out of a bunch – a new thing: the hand that took it)
       if (want == null && this.fpWantNext != null && k.includes('~p')) { want = this.fpWantNext; this.fpWantNext = null; }
       const M = this.mainHand;
-      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else { const i = want != null && slots[want] == null ? want : slots[M] == null ? M : 1 - M; slots[i] = k; came.push([i, k]); }
+      if (h === 'side') { slots[0] = slots[1] = k; came.push([0, k], [1, k]); } else {
+        let i = want != null && slots[want] == null ? want : slots[M] == null ? M : 1 - M, wait = 0;
+        // (taken with a hand that's full, the other free: what it holds is passed to the other hand first – the two meet
+        // in front of me – and then it takes the new thing, as you'd take a glass of tea with your right hand and give
+        // it to your left to have the right free)
+        const old = want != null && slots[want];
+        if (old && slots[1 - want] == null && !this.fpPass && (this.fpHold.get(old) || 'palm') !== 'side' && !(this.work && !this.work.idle)) {
+          slots[1 - want] = old;
+          this.fpPass = { k: old, from: want, to: 1 - want, t: 0 };
+          i = want; wait = PASS_T / 2;
+        }
+        slots[i] = k; came.push([i, k, wait]);
+      }
     }
-    if (!on) { this.restLean = false; this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
+    if (!on) { this.restLean = false; this.fpGhost(null); this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
     this.fpArms.setLook(lookOf(me.avatar));
     this.fpArms.setGloves(!!(view.C && glovesOn(view.C, me.id)));
     const right = new THREE.Vector3(-Math.cos(rec.yaw), 0, Math.sin(rec.yaw));
@@ -1911,12 +1927,12 @@ export class Scene3D {
       return { world: base.clone().setY(base.y + (vr ? vr.h * 0.5 : 0.04)) };
     };
     this.fpGripAt = gripAt;
-    for (const [i, k] of came) {
+    for (const [i, k, wait] of came) {
       const g = this.glides.get(k);
       if (!g) continue;
       const vr = k[0] === 'v' ? this.vessels.get(k.slice(2)) : null;
       const yaw = vr ? vr.group.rotation.y : 0;
-      this.fpArms.reach(i, { key: k, take: true, hold: this.fpHold.get(k), src: g.pos.clone(), srcYaw: yaw, ...gripAt(k, i, g.pos, yaw) });
+      this.fpArms.reach(i, { key: k, take: true, hold: this.fpHold.get(k), src: g.pos.clone(), srcYaw: yaw, wait: wait || 0, ...gripAt(k, i, g.pos, yaw) });
     }
     for (const [i, k] of gone) {
       // (what the work itself just set down – a pan I took to the tap, onto a burner – is where it goes already)
@@ -1955,6 +1971,17 @@ export class Scene3D {
       const vr = this.vessels.get(k.slice(2)), r = vr ? vr.r : 0.13;
       return { kind: 'side', at: new THREE.Vector3(r + 0.035, -0.21, -0.25 - r) }; // (held before me, elbows bent – not out at arm's length)
     });
+    // (passing a thing from one hand to the other: both come to the middle in front of me, it changes hands there)
+    const PS = this.fpPass;
+    if (PS) {
+      PS.t += dt;
+      if (PS.t >= PASS_T || slots[PS.to] !== PS.k) this.fpPass = null;
+      else {
+        const hk = this.fpHold.get(PS.k) || 'palm', off = hk === 'tub' ? TUB_IN + 0.005 : 0.035;
+        if (PS.t < PASS_T / 2) holds[PS.from] = { kind: hk, at: new THREE.Vector3(off, -0.13, -0.32) };
+        if (PS.t < PASS_T * 0.8) holds[PS.to] = { kind: hk, at: new THREE.Vector3(off, -0.13, -0.32) };
+      }
+    }
     // at work: what my hands are doing
     if (this.work && !this.work.idle) {
       this.work.hands.forEach((h, i) => {
@@ -1990,6 +2017,17 @@ export class Scene3D {
       }
     }
     this.restLean = leaning;
+    // (pointing: what E would take, open or turn – or where what my other hand holds would go – my free hand points
+    // at, up in sight, its index out; what I hold shows as a ghost where it would be put: fal.ai reference,
+    // docs/work-by-buttons.md)
+    const pt = !(this.work && !this.work.idle) && !view.camAim && view.fpPt;
+    const pi = pt ? [this.mainHand, 1 - this.mainHand].find((i) => holds[i] == null && !slots[i] && !this.fpArms.reaching(i)) : undefined;
+    if (pt && pi != null && (rec.speed || 0) < 0.6) {
+      const s = pi ? 1 : -1, base = HOLDS.point.at.clone(), T = handAt(pt.w, s);
+      const d = T.clone().sub(base);
+      if (d.z < -0.05) holds[pi] = { kind: 'point', at: base.addScaledVector(d.clone().normalize(), 0.04), dir: d.normalize() };
+    }
+    this.fpGhost(pt && pt.kind === 'surface' && pt.key && slots.includes(pt.key) ? pt : null);
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {
       const want = view.fpGrab.hand;
@@ -1999,6 +2037,45 @@ export class Scene3D {
     this.armHolds = holds; // (for test/arms.html: what my hands were asked to do)
     this.fpArms.update(dt, holds, { visible: true, walk: (rec.speed || 0) / 1.5, t: this.t, hideAway: (this.workCamK || 0) > 0.02, view: this.camera });
     this.workMoved = new Set(this.work && !this.work.idle ? this.work.ov.keys() : []);
+  }
+
+  // The ghost of what I hold where E would put it down (pt: {w, key} – or null: none): a thin white outline of its
+  // box with a faint fill, turned as it's held, standing on the spot – so I see where it goes before it goes.
+  fpGhost(pt) {
+    let G = this.ghostPut;
+    if (!pt) { if (G) G.root.visible = false; return; }
+    if (!G) {
+      const root = new THREE.Group(), box = new THREE.Group();
+      const fill = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.14, depthWrite: false }));
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
+      fill.renderOrder = edges.renderOrder = 5;
+      box.add(fill, edges);
+      root.add(box);
+      this.scene.add(root);
+      G = this.ghostPut = { root, box, key: null, size: null };
+    }
+    if (G.key !== pt.key) { G.key = pt.key; G.size = this.localBox(pt.key); }
+    if (!G.size) { G.root.visible = false; return; }
+    const b = G.size;
+    G.box.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2 - b.min.y, (b.min.z + b.max.z) / 2);
+    G.box.scale.set(Math.max(0.01, b.max.x - b.min.x), Math.max(0.01, b.max.y - b.min.y), Math.max(0.01, b.max.z - b.min.z));
+    G.root.position.set(pt.w.x, pt.w.y + 0.002, pt.w.z);
+    const yaw = this.heldYaw(pt.key);
+    G.root.rotation.set(0, yaw != null ? yaw : (this.fpCam ? this.fpCam.yaw : 0), 0);
+    G.root.visible = true;
+  }
+  // a thing's box in its own frame (as it's drawn: its vessel, its food, its tool) – or null
+  localBox(k) {
+    const o = k[0] === 'v' ? this.vessels.get(k.slice(2))?.group : k[0] === 'i' ? this.foods.get(`item:${k.slice(2)}`)?.g : k[0] === 'u' ? this.tools.get(k.slice(2))?.g : null;
+    if (!o) return null;
+    o.updateWorldMatrix(true, true);
+    const inv = o.matrixWorld.clone().invert(), box = new THREE.Box3(), m = new THREE.Matrix4();
+    o.traverse((c) => {
+      if (!c.isMesh || !c.geometry || !c.visible) return;
+      if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+      box.union(c.geometry.boundingBox.clone().applyMatrix4(m.multiplyMatrices(inv, c.matrixWorld)));
+    });
+    return box.isEmpty() ? null : box;
   }
 
   // Where a thing in my hands goes, now it's been put down (roughly: the
@@ -2063,7 +2140,11 @@ export class Scene3D {
       const c = Math.cos(th), sn = Math.sin(th);
       return { pos: A.fist(i).sub(new THREE.Vector3(g.x * c + g.z * sn, g.y, -g.x * sn + g.z * c)), yaw: th };
     }
-    return { pos: A.onPalm(i), yaw: me.yaw, ...(k[0] === 'u' ? { q: new THREE.Quaternion().setFromAxisAngle(UP, me.yaw) } : {}) }; // (an empty container: on the palm)
+    // (a food's container: held by its outer end, the rest of it in toward the middle of the view – so the hand under
+    // it is in sight, not hidden right under its middle)
+    const pos = A.onPalm(i);
+    if (h === 'tub') pos.addScaledVector(new THREE.Vector3(1, 0, 0).transformDirection(A.camera.matrixWorld).setY(0).normalize(), (i ? -1 : 1) * TUB_IN).addScaledVector(UP, -TUB_DOWN);
+    return { pos, yaw: me.yaw, ...(k[0] === 'u' ? { q: new THREE.Quaternion().setFromAxisAngle(UP, me.yaw) } : {}) }; // (an empty container: on the palm)
   }
 
   // ---------------------------------------------------------------- first person: work right there
@@ -2262,8 +2343,11 @@ export class Scene3D {
       if (hw) look.lerp(hw, hw.y < w.O.y ? 0.7 : 0.45);
       return { look, pos: look.clone().addScaledVector(w.N, into.out).addScaledVector(w.R, into.side || 0).addScaledVector(UP, into.up) };
     }
-    const look = w.O.clone().addScaledVector(UP, 0.05).addScaledVector(w.N, 0.03);
-    return { look, pos: look.clone().addScaledVector(w.N, 0.21).addScaledVector(UP, 0.5) };
+    // (at a worktop, a burner, the sink: through my own eyes, leaning over it – about 55° down, as a cook sees the
+    // board – so my forearms come in short from the bottom corners and my hands are big on the work; not from a
+    // camera a metre over it, which drew my arms as long sticks with tiny hands: docs/work-by-buttons.md)
+    const look = w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02);
+    return { look, pos: look.clone().addScaledVector(w.N, EYES_CAM.back).addScaledVector(UP, EYES_CAM.up), fov: EYES_CAM.fov };
   }
   // What a step works with, in my hand while I use it: a shaker (shaken upside down) or a bottle (tipped) of what
   // seasons it, a sack's sugar – a pinch – the lemon squeezed, the garlic rubbed on. {id, how, col} or null.
@@ -2354,9 +2438,11 @@ export class Scene3D {
       const at = realW || doorW;
       out.body = { pos: at.clone().addScaledVector(w.N, 0.45).setY(Math.min(EYE_H, at.y + 0.45)), fwd: w.N.clone().negate() };
     } else if (inside) out.body = { pos: w.O.clone().addScaledVector(w.N, inside.body).addScaledVector(w.R, (inside.side || 0) * 0.5).addScaledVector(UP, inside.eye), fwd: w.N.clone().negate() };
-    // (at a worktop: right up to it, leaning in over the work – my eyes about 63 cm over it, 24 cm back: my elbows bent
+    // (at a worktop: right up to it, leaning in over the work – my eyes about 58 cm over it, 37 cm back: my elbows bent
     // and down at my sides, as a cook's are, not reaching out at arm's length)
-    else out.body = { pos: w.O.clone().addScaledVector(w.N, 0.12).addScaledVector(UP, 0.32), fwd: w.N.clone().negate() };
+    // (my eyes are the camera's – EYES_CAM – so my shoulders are just under and beside it, and I see my forearms and
+    // hands come in from below, never my upper arms from behind)
+    else out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back).addScaledVector(UP, EYES_CAM.up), fwd: w.N.clone().negate() };
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -2914,6 +3000,31 @@ export class Scene3D {
           if (frac > 0) out.sprites.push({ tex: null, kind: gIt.kind, st: { cut: 'grated', k: 1, n: 1, bits: frac }, pos: G.clone().addScaledVector(w.R, 0.036).addScaledVector(w.N, 0.012), size: 0.1 }); // (just out from its face, under the food)
           break;
         }
+        // Peeling with the peeler: my other hand lifts the food a little off the board and holds it from its far side,
+        // fingers round it; the peeler's blade starts at its top on my working hand's side and is drawn down along it,
+        // a strip of peel curling off as it goes – not the food lying flat with my other hand hovering beside it, the
+        // arms crossed (fal.ai reference, docs/work-by-buttons.md)
+        const lIt = g.kind === 'peel' && tool === 'peeler' && st.subjectItem(), lOv = lIt && out.ov.get(`i:${lIt.id}`);
+        if (lOv && !lOv.hide && lOv.pos) {
+          const lst = lOv.st ? { ...lIt, ...lOv.st } : lIt, sdW = wi === 1 ? 1 : -1;
+          const h = this.foodHeight(lIt.kind, lst), rad = Math.min(0.06, Math.max(0.02, h * 0.55));
+          // (brought in toward me as it's lifted – over the board's near half, under my eyes)
+          const C = lOv.pos.clone().addScaledVector(UP, 0.045).addScaledVector(w.N, 0.07);
+          lOv.pos = C.clone();
+          hand(oi, C.clone().addScaledVector(w.R, -sdW * (rad + 0.004)).addScaledVector(UP, h * 0.45).addScaledVector(w.N, 0.006), 'side', { curl: 0.62 });
+          const b = st.subjectBox(), u = p.down ? Math.max(0, Math.min(1, (pt.y - b.y0) / Math.max(1, b.h))) : 0;
+          const P = C.clone().addScaledVector(w.R, sdW * rad * 0.9).addScaledVector(UP, h * (0.95 - 0.85 * u)).addScaledVector(w.N, rad * 0.3);
+          if (!p.down) P.addScaledVector(w.R, sdW * 0.025).addScaledVector(UP, 0.03);
+          const dir = w.R.clone().multiplyScalar(sdW * 0.55).addScaledVector(w.N, 0.6).addScaledVector(UP, 0.4).normalize();
+          const grip = P.clone().addScaledVector(dir, len);
+          out.tool = { kind: 'peeler', grip, dir, hand: wi };
+          hand(wi, grip, 'tool', { dir });
+          const skin = PEEL_COL[lIt.kind] || (INGREDIENTS[lIt.kind] && INGREDIENTS[lIt.kind].art.c1) || '#c98a3c';
+          if (p.down && u > 0.12) out.sprites.push({ tex: null, kind: { type: 'flake', c1: skin }, st: {}, pos: P.clone().addScaledVector(w.R, sdW * 0.012).addScaledVector(UP, -0.012), size: 0.035 });
+          const off = Math.ceil(Math.min(1, Number(lst.peeled) || 0) * 5);
+          if (off > 0) out.sprites.push({ tex: null, kind: { type: 'scraps', c1: skin, n: off }, st: {}, pos: lOv.pos.clone().setY(w.O.y + 0.004).addScaledVector(w.R, sdW * (rad + 0.06)).addScaledVector(w.N, 0.03), size: 0.08 });
+          break;
+        }
         // Peeling by hand – an egg's shell, garlic's papery skin, an onion's, a cabbage's leaves: my other hand holds
         // it from its side (its top in sight); my fingertips take hold of its edge where I pressed and pull a piece
         // off, out to where the pointer's gone; what's come off so far lies beside it
@@ -3057,7 +3168,9 @@ export class Scene3D {
       this.restAt = { g, fx: w.fx, spots, seen };
     }
     out.rest = this.restAt.spots;
-    this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen]);
+    // (through my own eyes it can hardly stand back: they're where my head is, over the work – a few cm at most)
+    if (out.cam.fov) this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen], 0.05, 0.05);
+    else this.fitCam(out.cam, [out.cam.look, ...this.restAt.seen]);
     // (coring: the knife's tip cut round the core as far as it's gone – it's out once it's gone all the way round)
     if (def && def.do === 'core' && g.kind === 'circle' && D && D.items[def.item] && !(D.items[def.item].cored >= 1)) D.items[def.item].cored = Math.min(0.97, Math.abs(g.acc || 0) / (Math.PI * 2));
     // (turning the strips a quarter round to cut them across: they turn as far as I've turned them)
@@ -3585,6 +3698,10 @@ export class Scene3D {
 // ======================================================================= helpers
 
 const WORK_FOV = 50; // (the camera at work sees less, closer)
+// at a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), and how wide they see
+const TUB_IN = 0.08, TUB_DOWN = 0.03;
+const PASS_T = 0.55; // (first person: how long a thing takes to change hands) // (first person: how far in from my hand a carried container's middle is)
+const EYES_CAM = { back: 0.2, up: 0.32, fov: 62 };
 
 // The glow: a thing's own surfaces again, lit along the rims (where they turn
 // away from me) with a faint wash on what faces me, added over it.
