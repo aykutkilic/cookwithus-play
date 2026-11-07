@@ -2425,6 +2425,9 @@ export class Scene3D {
     // board – so my forearms come in short from the bottom corners and my hands are big on the work; not from a
     // camera a metre over it, which drew my arms as long sticks with tiny hands: docs/work-by-buttons.md)
     const look = w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02);
+    // (gathering up what was cut, on the pile at the back of the board: my eyes on it, it and the container set down beside
+    // it in the middle of what I see – my eyes only: my body stays, the arms reach as they would)
+    if (g && g.kind === 'drag' && g.ph.obj === 'pieces' && g.ph.pile) look.addScaledVector(w.N, this.pileSpot(w).sub(w.O).dot(w.N) * GATHER.look);
     return { look, pos: look.clone().addScaledVector(w.N, EYES_CAM.back).addScaledVector(UP, EYES_CAM.up), fov: EYES_CAM.fov };
   }
   // What a step works with, in my hand while I use it: a shaker (shaken upside down) or a bottle (tipped) of what
@@ -2723,14 +2726,14 @@ export class Scene3D {
           // the container: reached for, lifted, carried over, set down
           const carry = sm((u - GATHER.reach) / (GATHER.down - GATHER.reach));
           const C = from.clone().lerp(into, carry).addScaledVector(UP, GATHER.lift * Math.sin(Math.PI * carry));
-          out.boxes.push([boxKey, { item: g.source.id, pos: C, yaw: out.yaw, st: null, of: { ...gIt, extra: 0, cap: gIt ? gIt.qty : 1 } }]);
+          out.boxes.push([boxKey, { item: g.source.id, pos: C, yaw: out.yaw, st: null, of: extra ? { ...gIt, extra: 0, tub: { size: 0 } } : gIt }]); // (off the stack: the smallest – shared/actions.js boxUp)
           out.gatherBox = boxKey;
           const rim = (Q) => Q.clone().addScaledVector(w.R, fs * GATHER.rim).addScaledVector(UP, 0.045);
           if (u >= r0 && u < GATHER.reach) { const a = (u - r0) / (GATHER.reach - r0); hand(F, rim(from).addScaledVector(UP, 0.05 * (1 - sm(a))), 'grab', { curl: 0.4 + 0.5 * a }); }
           else if (u >= GATHER.reach && u < 1) hand(F, rim(C), 'grab', { curl: u < GATHER.down ? 0.9 : 0.9 - 0.6 * (u - GATHER.down) / (1 - GATHER.down) });
           // the knife: laid down flat on the board, on my side – lowered there in my hand, then let go of
           if (knifeHeld) {
-            const xA = w.R.clone().multiplyScalar(-sd).addScaledVector(w.N, -0.12).normalize(), yA = new THREE.Vector3().crossVectors(UP, xA).normalize().multiplyScalar(-sd); // (lying across the board, its point toward the middle, its handle on my side)
+            const xA = w.N.clone().negate(), yA = new THREE.Vector3().crossVectors(UP, xA).normalize().multiplyScalar(-sd); // (lying flat beside the pieces, its point away from me, its handle toward me)
             const zA = new THREE.Vector3().crossVectors(xA, yA);
             const K0 = w.O.clone().addScaledVector(w.R, sd * GATHER.knifeSide).addScaledVector(w.N, GATHER.knifeNear).setY(w.O.y + 0.0025 + 0.05 * (1 - sm(u / GATHER.knife)));
             if (u < GATHER.knife) {
@@ -2741,7 +2744,7 @@ export class Scene3D {
           }
           if (!g.drag) {
             // (the pieces where they are, and my free hands coming to them either side, ready to take them up)
-            out.ov.set(k, ph.pile ? { pos: Pc.clone(), yaw: out.yaw, st: { spread: 0.035 } } : { pos: Pc.clone(), yaw: out.yaw + CUT_TURN });
+            out.ov.set(k, { pos: Pc.clone(), yaw: out.yaw + CUT_TURN }); // (in a row, as they were cut – not a heap)
             for (const [i, s2] of [[M, sd], [O, -sd]]) {
               const busy = (i === F && u < 1) || (i === M && knifeHeld && u < GATHER.knife);
               if (!busy) hand(i, Pc.clone().addScaledVector(w.R, s2 * GATHER.cup).addScaledVector(UP, 0.03), 'palm', { curl: 0.35 });
@@ -2753,8 +2756,9 @@ export class Scene3D {
           const P = at(g.pos);
           P.y = Math.max(P.y, w.O.y + 0.05);
           out.ov.set(k, { pos: P.clone().addScaledVector(UP, 0.006), yaw: out.yaw, st: { spread: 0.022 } });
-          hand(M, P.clone().addScaledVector(w.R, sd * 0.021), 'palm', { curl: GATHER.cupCurl });
-          hand(O, P.clone().addScaledVector(w.R, -sd * 0.021), 'palm', { curl: GATHER.cupCurl }); // (cupped round it)
+          // (cupped round it from either side, the palms toward each other, the fingers curled under it)
+          hand(M, P.clone().addScaledVector(w.R, sd * GATHER.hold), 'side', { curl: GATHER.cupCurl });
+          hand(O, P.clone().addScaledVector(w.R, -sd * GATHER.hold), 'side', { curl: GATHER.cupCurl });
           ring(g.target);
           break;
         }
@@ -3331,9 +3335,11 @@ export class Scene3D {
   // the board's own tools on the left and the stack of empty containers beyond its right edge)
   portionSpot(w, side) { return side < 0 ? w.O.clone().addScaledVector(w.R, -0.06).addScaledVector(w.N, -0.03) : w.O.clone().addScaledVector(w.R, 0.2).addScaledVector(w.N, 0.06); }
   // (cut pieces gathered up: where their container is set down for them – on the board, left of where they were cut)
-  gatherSpot(w, at = w.O) { return at.clone().addScaledVector(w.R, -0.13).addScaledVector(w.N, 0.03).setY(w.O.y + 0.001); }
+  gatherSpot(w, at = w.O) { return at.clone().addScaledVector(w.R, -0.115).addScaledVector(w.N, 0.1).setY(w.O.y + 0.001); } // (a little in front of them: the back corner's the grater's)
   // (several worked one at a time: where those done pile up, at the board's back right)
-  pileSpot(w) { return w.O.clone().addScaledVector(w.R, 0.13).addScaledVector(w.N, -0.085); }
+  // (at the back of the board, behind where they're cut – not in its corner: gathered up from there, my arms come to them
+  // from either side, neither reaching across me; and clear of the knife's point while the next is cut)
+  pileSpot(w) { return w.O.clone().addScaledVector(w.N, -0.105); }
   // the point on the board under this point of the work plane, as it's seen (what the pointer's over)
   boardAt(w, P) {
     const s = this.screenOf(P), ray = this.rayAt(s.x, s.y);
@@ -3912,8 +3918,9 @@ const HAND_SHADE = { high: 0.15, size: 0.07, dark: 0.75 }; // (at work: a hand's
 // the hand has the container, has set it down, has let the knife go (fractions); how high it's lifted carrying
 // it; where the knife's laid (its bolster: on the board on my side, in front of the container set down for the pieces, clear
 // of the food's own container beside the board – not near me: a hand there is right under my eyes, its arm filling them);
-// how far either side of the pieces the hands come; how closed the hands are, cupped round them)
-const GATHER = { setup: 1.8, knife: 0.22, reach: 0.5, down: 0.88, lift: 0.05, knifeSide: 0.12, knifeNear: 0.03, cup: 0.045, rim: 0.05, cupCurl: 0.72 };
+// how far either side of the pieces the hands come; how closed the hands are, cupped round them; how far toward the pile
+// at the back of the board my eyes go)
+const GATHER = { setup: 3.0, knife: 0.2, reach: 0.5, down: 0.88, lift: 0.05, knifeSide: 0.075, knifeNear: 0.0, cup: 0.045, rim: 0.05, cupCurl: 0.75, hold: 0.032, look: 0.8 };
 const CARRY_GAP = 0.015; // (first person: the gap kept between the things carried in my two hands)
 const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
 // At a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), how wide they see – and my

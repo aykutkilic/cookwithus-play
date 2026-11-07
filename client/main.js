@@ -381,7 +381,8 @@ function onMessage(msg, ev) {
       if (S.working) station.update(S.M.cook, S.K);
       if (S.working && S.M.cook.steps[S.working.sid] && S.M.cook.steps[S.working.sid].s === 'done') {
         const sid = S.working.sid;
-        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, 900);
+        // (a moment to see it done – the pieces fallen into their container – before I step back)
+        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, 1500);
       }
       if (S.M.cook && S.M.cook.finished && S.finishedShown !== S.M.cook.recipe) {
         S.finishedShown = S.M.cook.recipe;

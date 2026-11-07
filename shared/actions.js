@@ -81,7 +81,8 @@ const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', h
 // (still with the rest of its bunch: into an empty container from the stack by the board – the
 // bunch's own container, with what's left, stays there to go back in the fridge / pantry)
 const boxUp = (cut, pile = false) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
-  eff: (S, st) => { const it = item(S, st); if (it) { splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
+  // (from a bunch: into an empty container off the stack – the smallest: cut up, it takes less room than whole)
+  eff: (S, st) => { const it = item(S, st); if (it) { if (it.extra > 0) it.tub = { size: 0 }; splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
 const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
 // Several of a thing are worked one at a time: one taken out onto the board, worked
 // (its share of the cuts, strokes …), and moved to the side of the board – pushed
