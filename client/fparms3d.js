@@ -86,6 +86,8 @@ const SHAPES = {
   // (the index out straight at what I mean to take or put down, the others curled in, the thumb on the middle one)
   point: () => ({ fingers: [0.02, 0.95, 1, 1], thumb: thumbAt('flat', 'fist', 0.65) }),
 };
+// a tracked hand's shape (mocap): each finger joint's bend as tracked (rad), the thumb from open to closed
+export function mocapShape(j, th) { return { joints: j, thumb: thumbAt('open', 'fist', Math.max(0, Math.min(1, th))) }; }
 export function shapeOf(hold, c) { const f = SHAPES[hold]; return f ? f(c) : {}; }
 const qe = new THREE.Euler(), qq = new THREE.Quaternion();
 // a hand of its own, skinned in this skin
@@ -211,6 +213,10 @@ export const HOLDS = {
   rest: { at: v(0.14, -0.3, -0.25), grip: UNDER_PALM, a: v(0, 0, -1), b: v(-0.3, -0.2, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.1, flat: true },
   // pointing: the hand up in sight on its side, the index along dir (palm down – flat), at what's meant
   point: { at: v(0.13, -0.12, -0.33), grip: v(0, 0, -0.06), a: v(0, 0, -1), b: v(-0.1, 0, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.6, flat: true },
+  // a hand as motion capture has it (scripts/refloop/mocap*.mjs): turned exactly onto the fingers' way (dir: the wrist to
+  // the middle finger's knuckle) and the thumb's side (up: the little finger's knuckle to the index's) – grip: the palm's
+  // middle, among its knuckles and the wrist; the fingers as tracked (hold.shape)
+  mocap: { at: v(0.1, -0.1, -0.4), grip: v(-0.012, 0, -0.052), a: v(0, 0, -1), b: v(0, 0, -1), c: v(-1, 0, 0), pref: v(0, -1, 0), curl: 0.3, frame: { axis: v(0, 0, -1), up: v(0, 1, 0) } },
   away: { at: v(0.13, -0.42, 0.02), grip: PALM, a: v(0, 0, -1), b: v(0, 0.4, -1), c: v(-1, 0, 0), pref: v(-0.3, -1, 0), curl: 0.35 },
 };
 for (const H of Object.values(HOLDS)) H.at.x *= APART; // (as close together as my shoulders)
@@ -489,6 +495,7 @@ export class FpArms {
         h.curl += (want.curl - h.curl) * k;
       }
       h.hold = kind;
+      h.shape = kind === 'mocap' && hold && hold.shape ? hold.shape : null; // (its fingers as tracked)
       if (h.limb) h.limb.root.visible = !(hideAway && kind === 'away' && !h.reach && h.wrist.distanceTo(want.wrist) < 0.12);
       if (visible && h.limb) this.draw(h);
       if (h.limb) this.drawTool(h, visible);
@@ -712,7 +719,7 @@ export class FpArms {
     L.wrist.quaternion.setFromUnitVectors(v(0, 1, 0), wdir);
     // the fingers close as far as curl says
     const c = h.curl;
-    if (L.rig) poseRig(L.rig, c, shapeOf(h.reach ? h.reach.hold || h.hold : h.hold, c));
+    if (L.rig) poseRig(L.rig, c, !h.reach && h.shape ? h.shape : shapeOf(h.reach ? h.reach.hold || h.hold : h.hold, c));
     if (!L.rig) FINGERS.forEach(([y, ...ls], i) => {
       let p = v(0.002, y, -0.084), A = 0;
       ls.forEach((l, j) => {

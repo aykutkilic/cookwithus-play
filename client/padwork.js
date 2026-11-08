@@ -104,7 +104,7 @@ export class PadWork {
         const a = st.grabPoint(), t = g.target;
         if (!t) break;
         // (cut pieces: cupped together in both hands a moment first, then carried over at a cook's pace)
-        if (g.ph.obj === 'pieces') { this.down(a); await sleep(420 * this.slow); await this.path(line(a, t, 24).slice(1), 40); this.up(t); await sleep(60 * this.slow); break; }
+        if (g.ph.obj === 'pieces') { this.down(a); await sleep(300 * this.slow); await this.path(line(a, t, 24).slice(1), 24); this.up(t); await sleep(60 * this.slow); break; }
         await this.stroke(line(a, { x: t.x + a.x - g.pos.x, y: t.y + a.y - g.pos.y }, 16));
         break;
       }
