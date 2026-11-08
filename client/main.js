@@ -382,8 +382,15 @@ function onMessage(msg, ev) {
       if (S.working) station.update(S.M.cook, S.K);
       if (S.working && S.M.cook.steps[S.working.sid] && S.M.cook.steps[S.working.sid].s === 'done') {
         const sid = S.working.sid;
-        // (a moment to see it done – the pieces fallen into their container – before I step back)
-        setTimeout(() => { if (S.working && S.working.sid === sid) closeStation(true); }, S.working.fp ? 5000 : 900);
+        // (a moment to see it done – and whatever it ends with played out, in the game's own time, however slowly frames
+        // come – before I step back)
+        const t0 = performance.now();
+        const leave = () => {
+          if (!S.working || S.working.sid !== sid) return;
+          if (performance.now() - t0 < 900 || (scene.settling() && performance.now() - t0 < 20000)) { setTimeout(leave, 100); return; }
+          closeStation(true);
+        };
+        setTimeout(leave, 900);
       }
       if (S.M.cook && S.M.cook.finished && S.finishedShown !== S.M.cook.recipe) {
         S.finishedShown = S.M.cook.recipe;

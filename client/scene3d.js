@@ -2146,19 +2146,24 @@ export class Scene3D {
     for (const [track, i] of [['L', 1 - M], ['R', M]]) {
       const A = Mc.frames[a][track], B = Mc.frames[b][track] || A;
       if (!A || keep.includes(i)) continue;
-      const j = A.j.map((r, x) => r.map((v, y) => v + (B.j[x][y] - v) * u)), at = w.O.clone().add(vec(mix(A, B, 'p')));
+      const j = A.j ? A.j.map((r, x) => r.map((v, y) => v + (B.j[x][y] - v) * u)) : null, at = w.O.clone().add(vec(mix(A, B, 'p')));
       // (the two hands round the slices – cupping them, carrying them, letting them go: there the tracking can't tell a
       // hand's tilt, they hide each other; where they are and which way they point, as tracked – turned as the video
       // plainly has them: palm down cupped over them, then opened beside the bowl palms toward each other)
       const flat = vec(mix(A, B, 'd')).setY(0);
-      if (vt >= MOCAP_T.take && vt < MOCAP_T.open && flat.lengthSq() > 1e-6) { hands[i] = { w: at, kind: 'hand', dir: flat.normalize().addScaledVector(UP, -0.3).normalize(), curl: GATHER.cupCurl }; n++; continue; }
-      if (vt >= MOCAP_T.open && vt < MOCAP_T.apart && flat.lengthSq() > 1e-6) { hands[i] = { w: at, kind: 'side', dir: flat.normalize().addScaledVector(UP, 0.4).normalize(), curl: 0.25 }; n++; continue; }
-      hands[i] = { w: at, kind: 'mocap', dir: vec(mix(A, B, 'd')).normalize(), up: vec(mix(A, B, 't')).normalize(), shape: mocapShape(j, A.th + (B.th - A.th) * u), curl: 0.3 };
+      if (!Mc.fixed && vt >= MOCAP_T.take && vt < MOCAP_T.open && flat.lengthSq() > 1e-6) { hands[i] = { w: at, kind: 'hand', dir: flat.normalize().addScaledVector(UP, -0.3).normalize(), curl: GATHER.cupCurl }; n++; continue; }
+      if (!Mc.fixed && vt >= MOCAP_T.open && vt < MOCAP_T.apart && flat.lengthSq() > 1e-6) { hands[i] = { w: at, kind: 'side', dir: flat.normalize().addScaledVector(UP, 0.4).normalize(), curl: 0.25 }; n++; continue; }
+      // (bones as fixed in Blender: each one's turn, eased from frame to frame)
+      let q = null;
+      if (A.q) { q = {}; const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(); for (const n2 of Object.keys(A.q)) q[n2] = qa.fromArray(A.q[n2]).slerp(qb.fromArray((B.q || A.q)[n2] || A.q[n2]), u).toArray(); }
+      hands[i] = { w: at, kind: 'mocap', dir: vec(mix(A, B, 'd')).normalize(), up: vec(mix(A, B, 't')).normalize(), shape: mocapShape(j, (A.th || 0) + ((B.th || 0) - (A.th || 0)) * u, q), curl: 0.3 };
       n++;
     }
     return n;
   }
   workRight(W) { return new THREE.Vector3(Math.cos(W.yaw || 0), 0, -Math.sin(W.yaw || 0)); }
+  // (a step's end still playing out – the gathered bowl carried to the back: the work view stays till it's done)
+  settling() { const S2 = this.work && this.work.settled; return !!(S2 && S2.G && S2.box && S2.t < GATHER.end.away + 0.6); }
   // A soft shadow under each hand at work, on the worktop it's over – darker and smaller the nearer the hand is to
   // it: a hand on the board is seen to be on it, not hovering over it (the kitchen's key light is too broad and too
   // high for its shadow map to draw a hand's). Only at a worktop, through my own eyes.

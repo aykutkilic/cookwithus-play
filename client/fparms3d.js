@@ -87,7 +87,7 @@ const SHAPES = {
   point: () => ({ fingers: [0.02, 0.95, 1, 1], thumb: thumbAt('flat', 'fist', 0.65) }),
 };
 // a tracked hand's shape (mocap): each finger joint's bend as tracked (rad), the thumb from open to closed
-export function mocapShape(j, th) { return { joints: j, thumb: thumbAt('open', 'fist', Math.max(0, Math.min(1, th))) }; }
+export function mocapShape(j, th, quats = null) { return quats ? { quats } : { joints: j, thumb: thumbAt('open', 'fist', Math.max(0, Math.min(1, th))) }; }
 export function shapeOf(hold, c) { const f = SHAPES[hold]; return f ? f(c) : {}; }
 const qe = new THREE.Euler(), qq = new THREE.Quaternion();
 // a hand of its own, skinned in this skin
@@ -106,7 +106,9 @@ export function makeRig(skin) {
 }
 // posed: curl 0 open … 1 a fist (the little finger a little ahead); fingers: a curl each (else curl); joints: each
 // joint's bend (rad) instead; thumb: its bones' turns – else from open to the fist as curl says
-export function poseRig(R, curl, { fingers = null, joints = null, thumb = null } = {}) {
+// quats: each bone's own turn, as fixed by hand in Blender ({ name: [x, y, z, w] }) – taken as it is
+export function poseRig(R, curl, { fingers = null, joints = null, thumb = null, quats = null } = {}) {
+  if (quats) { for (const [n, b] of Object.entries(R.bones)) if (quats[n]) b.quaternion.fromArray(quats[n]); return; }
   R.fingers.forEach((f, i) => {
     const c = Math.max(0, Math.min(1.1, fingers ? fingers[i] : curl * (1 + 0.06 * i)));
     f.forEach((b, j) => { if (b) b.quaternion.copy(b.userData.rest).multiply(qq.setFromEuler(qe.set(0, 0, RIG_SIGN * (joints ? joints[i][j] : 0.06 + c * RIG_BEND[j])))); });
