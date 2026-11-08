@@ -942,6 +942,12 @@ function fpPointed(hand = S.mainHand) {
   if (oi && oi.kind === 'surface') return { ...oi, key: k };
   // (on a worktop – not into an open drawer, a cupboard, the crock: the board's own places for its knife … are on it)
   // (the stack of containers beside a board too – unless it's an empty one I hold: that goes on the stack)
+  // (a knife, a peeler, a grater in this hand, aimed at a food: working it – slicing the lemon, not putting the knife
+  // down beside it)
+  if (k && boardKind(k) && res && (res.kind === 'thing' || res.kind === 'piece') && res.key[0] === 'i') {
+    const wt = workTarget(hand);
+    if (wt && wt.sid) return { kind: 'work', sid: wt.sid, fx: wt.fx, w: wt.w || res.w, label: wt.label, food: res.key };
+  }
   const boxIn = k && k[0] === 'u' && S.M.cook.tools[k.slice(2)] && S.M.cook.tools[k.slice(2)].kind === 'box';
   const onTop = !res || ((res.kind === 'thing' || res.kind === 'bay' || res.kind === 'bayIn') && (!res.fx.includes('/') || res.fx.endsWith('/board') || (res.fx.endsWith('/nest') && !boxIn)));
   // (not at the fridge, the pantry – its door, its shelves, what's on them: that's taking from it, putting in it)
@@ -1693,11 +1699,12 @@ async function toggleCam(on = !cam.active) {
 canvas.addEventListener('mousedown', (e) => {
   if (!locked()) return;
   e.preventDefault();
-  if (e.button === 0) handDown(S.mainHand); else if (e.button === 2) handDown(1 - S.mainHand);
+  // (the left button is my left hand, the right button my right – whichever is my main hand; E and Q go by that)
+  if (e.button === 0) handDown(0); else if (e.button === 2) handDown(1);
 });
 canvas.addEventListener('mouseup', (e) => {
   if (!locked()) return;
-  if (e.button === 0) handUp(S.mainHand); else if (e.button === 2) handUp(1 - S.mainHand);
+  if (e.button === 0) handUp(0); else if (e.button === 2) handUp(1);
 });
 canvas.addEventListener('contextmenu', (e) => { if (S.fp) e.preventDefault(); });
 
@@ -1735,7 +1742,7 @@ function toggleView() {
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
   if (!touchUI) { if (S.fp) lockMouse(); else unlockMouse(); }
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), E or left click your main hand, Q or right click the other (hold to hold on), R use what you hold (at work: R does the work – a press a beat, held it goes on), T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen; a gamepad works too'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), left click your left hand, right click your right (hold to hold on), E your main hand, Q the other, R use what you hold (at work: R does the work – a press a beat, held it goes on), T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen; a gamepad works too'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
   sfx.play('whoosh', 0.4);
 }
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
@@ -2184,7 +2191,7 @@ function openProfile() {
           <div class="lab">Apron</div>${sw('apron', APRONS)}
           <div class="lab">Shirt</div>${sw('shirt', SHIRTS)}
           <div class="lab">Face</div>${tx('facial', FACIAL)}${tx('extra', EXTRAS)}
-          <div class="lab">Main hand <span class="hint">(E · left click)</span></div><div class="pick">${['Left', 'Right'].map((n, i) => `<button class="${hand === i ? 'on' : ''}" data-hand="${i}">${n}</button>`).join('')}</div>
+          <div class="lab">Main hand <span class="hint">(E)</span></div><div class="pick">${['Left', 'Right'].map((n, i) => `<button class="${hand === i ? 'on' : ''}" data-hand="${i}">${n}</button>`).join('')}</div>
         </div>
       </div>
       <div class="end"><button class="btn" data-close>Cancel</button><button class="btn sun" id="pSave">Save</button></div>`);
@@ -2642,9 +2649,10 @@ function drawTags(view) {
   const pt = $('menu').hidden && $('modal').hidden ? fpPointed() : null;
   const ptLabel = pt && fpPointLabel(pt);
   // (for the scene: what's pointed at glows; what I hold shows as a ghost of itself where – and how – it would be put)
-  S.fpPt = pt && ptLabel && pt.w ? { kind: pt.kind, w: pt.w, key: (pt.kind === 'bayIn' ? fpPutWhat(-1) : pt.key) || null, fx: pt.fx || null, slot: pt.slot ?? null, spot: pt.spot || null, sink: !!pt.sink, inside: !!pt.inside } : null;
+  S.fpPt = pt && ptLabel && pt.w ? { kind: pt.kind, w: pt.w, key: (pt.kind === 'bayIn' ? fpPutWhat(-1) : pt.kind === 'work' ? pt.food : pt.key) || null, fx: pt.fx || null, slot: pt.slot ?? null, spot: pt.spot || null, sink: !!pt.sink, inside: !!pt.inside } : null;
   const pour = $('menu').hidden && $('modal').hidden && !touchUI ? pourTarget() : null;
-  const work = $('menu').hidden && $('modal').hidden && !touchUI ? workTarget() : null;
+  const work0 = $('menu').hidden && $('modal').hidden && !touchUI ? workTarget() : null;
+  const work = work0 && !(pt && pt.kind === 'work' && pt.sid === work0.sid) ? work0 : null; // (not said twice: E does it already)
   const pourHtml = (work ? `<span class="more"><kbd>R</kbd> ${esc(work.label)}</span>` : '') + (pour ? `<span class="more"><kbd>T</kbd> ${esc(pour.label)}</span>` : '');
   if (!ptLabel && (pour || work)) {
     const p = scene.screenOf((pour || work).w || scene.rayPoint(scene.viewCenter().x, scene.viewCenter().y, 0.6));

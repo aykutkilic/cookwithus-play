@@ -2191,7 +2191,7 @@ export class Scene3D {
   fpPointGlow(pt) {
     let o = null;
     if (pt) {
-      if (pt.kind === 'thing' || pt.kind === 'piece') {
+      if (pt.kind === 'thing' || pt.kind === 'piece' || pt.kind === 'work') {
         o = this.thingObj(pt.key);
         // (the board's own knife, peeler, grater lying in their places: the kitchen's own meshes)
         const bk = !(o && o.visible) && this.boardKindOf(pt.key), F = bk && this.k3.fx[splitPlace(pt.fx || '')[0]];
