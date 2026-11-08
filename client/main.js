@@ -2452,8 +2452,18 @@ addEventListener('resize', layout);
 const FRAME_MS = params.has('fps') ? 1000 / Math.max(1, Number(params.get('fps'))) : LITE ? 90 : 0;
 const STATS = params.has('stats') ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'stats' })) : null;
 let lastT = performance.now(), statsAt = 0, jsMs = 0;
+// (the next frame asked for first: a frame that throws is one frame lost, never the game stopped – the error's said once,
+// in the console and on screen, so it can be reported)
+const frameErrors = new Set();
 function frame(now) {
-  if (FRAME_MS && now - lastT < FRAME_MS) { requestAnimationFrame(frame); return; }
+  requestAnimationFrame(frame);
+  if (FRAME_MS && now - lastT < FRAME_MS) return;
+  try { frameBody(now); } catch (err) {
+    const m = String(err && err.message || err);
+    if (!frameErrors.has(m)) { frameErrors.add(m); console.error(err); toast(`⚠️ Something went wrong (${m}) – the game carries on`, 5000); }
+  }
+}
+function frameBody(now) {
   const gap = now - lastT;
   const dt = Math.min(FRAME_MS ? 0.12 : 0.05, gap / 1000);
   lastT = now;
@@ -2487,7 +2497,6 @@ function frame(now) {
     jsMs += (performance.now() - t0 - jsMs) * 0.05;
     if (STATS && now - statsAt > 500) { statsAt = now; STATS.textContent = `${scene.fps || '…'} fps · ${jsMs.toFixed(1)} ms script · ${scene.quality}`; }
   }
-  requestAnimationFrame(frame);
 }
 
 function buildView(now, dt) {

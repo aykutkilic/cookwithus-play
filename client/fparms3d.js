@@ -484,7 +484,7 @@ export class FpArms {
           r.p = 1;
         } else {
           if (!r.at) { r.at = true; if (r.take) r.grabbed = true; else r.released = true; }
-          const u = motion.progress;
+          const u = ease((r.t - hold) / BACK);
           h.wrist.lerpVectors(far.wrist, want.wrist, u);
           h.q.slerpQuaternions(far.q, want.q, u);
           h.curl += ((r.take ? want.curl : 0.3) - h.curl) * Math.min(1, dt * 16 * BRISK);
