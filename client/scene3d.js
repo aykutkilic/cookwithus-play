@@ -2244,6 +2244,7 @@ export class Scene3D {
     const mix = (A, B, key) => A[key].map((x, i) => x + (B[key][i] - x) * u);
     let n = 0;
     for (const [track, i] of [['L', 1 - M], ['R', M]]) {
+    this.trackSounds(name, vt);
       const A = Mc.frames[a][track], B = Mc.frames[b][track] || A;
       if (!A || keep.includes(i)) continue;
       const j = A.j ? A.j.map((r, x) => r.map((v, y) => v + (B.j[x][y] - v) * u)) : null, at = (name === 'slices-into-bowl' && this.trackPalm(w, vt, track)) || w.O.clone().add(vec(mix(A, B, 'p')));
@@ -2283,6 +2284,14 @@ export class Scene3D {
   // A soft shadow under each hand at work, on the worktop it's over – darker and smaller the nearer the hand is to
   // it: a hand on the board is seen to be on it, not hovering over it (the kitchen's key light is too broad and too
   // high for its shadow map to draw a hand's). Only at a worktop, through my own eyes.
+  // The reference video's own sounds, each heard as the motion passes the moment the video has it (MOCAP_SOUNDS) – once:
+  // a motion played again (its time back to the start) hears them again; a skip of more than half a second, not
+  trackSounds(name, vt) {
+    const S = MOCAP_SOUNDS[name], last = this.soundAt && this.soundAt.name === name ? this.soundAt.vt : null;
+    this.soundAt = { name, vt };
+    if (!S || !this.sfx || last == null || vt <= last || vt - last > 0.5) return;
+    for (const [at, snd, vol] of S) if (at > last && at <= vt) this.sfx(snd, vol);
+  }
   handShadows() {
     const W = this.work, on = W && !W.idle && W.cam && W.cam.fov && this.fpArms.group.visible && !this.fpArms.gloved;
     if (!this.handShade) {
@@ -4206,6 +4215,10 @@ const CARRY_GAP = 0.015; // (first person: the gap kept between the things carri
 const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
 // At a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), how wide they see – and my
 // shoulders further back than my eyes (body), as a head leans out over a board: with them right under my eyes the
+// (s on the video's clock: [when, sound, volume] – when each sample starts, as cut from refs/slices-into-box/sound)
+const MOCAP_SOUNDS = {
+  'slices-into-bowl': [[0.175, 'knifeTap', 0.3], [0.437, 'knifeTap', 0.2], [2.458, 'bowlDown', 0.6], [3.98, 'slicesSlide', 0.35], [5.6, 'slicesDrop', 0.55], [8.408, 'bowlDown', 0.75]],
+};
 // hand on the knife was only 18 cm before them and 31 cm down, and the arm's solver could only fold the elbow up and
 // out to the side – the forearm came in level from the right. The fal.ai reference (2026-11-07) is this close.
 const EYES_CAM = { back: 0.12, up: 0.3, fov: 46, body: 0.1, bodyUp: 0.05, toolSide: 0.035 };

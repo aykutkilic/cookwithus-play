@@ -1,4 +1,4 @@
-// Kitchen sounds, all synthesised live with WebAudio (no samples): knife
+// Kitchen sounds, synthesised live with WebAudio – and a few recorded ones (SAMPLES): knife
 // thunks, scrubbing, running water, sizzling pans, bubbling pots, the oven
 // ding, the serving bell … plus a gentle generative tune in the colour of
 // the kitchen's cuisine (a Turkish hicaz, a Spanish phrygian, an Indian raga …).
@@ -10,6 +10,15 @@ const SCALES = {
   italian: [0, 2, 4, 5, 7, 9, 11, 12],      // major, mandolin-ish
   french: [0, 2, 3, 5, 7, 8, 10, 12],       // a little musette minor
   english: [0, 2, 4, 7, 9, 12, 14, 16],     // pentatonic folk
+};
+
+// Recorded sounds (client/sounds/), cut from the reference video they were matched to (refs/…/sound): each name one or
+// more takes, one picked at random each time
+const SAMPLES = {
+  knifeTap: ['knife-tap-1', 'knife-tap-2'], // the knife's handle let go on the board
+  bowlDown: ['bowl-down-1', 'bowl-down-2'], // a glass bowl set down on a wooden board, a little bounce after
+  slicesSlide: ['slices-slide'], // cut pieces swept across the board by hand
+  slicesDrop: ['slices-drop'], // pieces falling into a glass bowl
 };
 
 export class Sfx {
@@ -45,6 +54,26 @@ export class Sfx {
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.startMusic();
+    this.loadSamples();
+  }
+
+  loadSamples() {
+    this.buffers = {};
+    for (const files of Object.values(SAMPLES)) for (const f of files) {
+      fetch(new URL(`./sounds/${f}.mp3`, import.meta.url)).then((r) => r.arrayBuffer()).then((a) => this.ctx.decodeAudioData(a))
+        .then((b) => { this.buffers[f] = b; }).catch(() => { /* (no sample: that sound's just not heard) */ });
+    }
+  }
+  sample(name, vol) {
+    const takes = (SAMPLES[name] || []).filter((f) => this.buffers && this.buffers[f]);
+    if (!takes.length) return false;
+    const c = this.ctx, src = c.createBufferSource(), g = c.createGain();
+    src.buffer = this.buffers[takes[Math.floor(Math.random() * takes.length)]];
+    src.playbackRate.value = 0.96 + Math.random() * 0.08; // (never quite the same twice)
+    g.gain.value = vol;
+    src.connect(g); g.connect(this.master);
+    src.start();
+    return true;
   }
 
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : this.vol; this.save(); }
@@ -84,6 +113,7 @@ export class Sfx {
     if (now - (this.last[name] || 0) < 35) return;
     this.last[name] = now;
     const v = vol;
+    if (SAMPLES[name]) { this.sample(name, v); return; }
     switch (name) {
       case 'chop': this.hiss(0.05, 2400, 1.2, 0.5 * v); this.tone(150, 0.09, 'sine', 0.5 * v, 0.6); break;
       case 'thud': this.tone(110, 0.14, 'sine', 0.55 * v, 0.5); this.hiss(0.06, 600, 1, 0.25 * v); break;

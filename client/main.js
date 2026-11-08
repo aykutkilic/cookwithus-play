@@ -75,6 +75,7 @@ store.set('profile', S.profile);
 const scene = new Scene3D($('world'));
 scene.mainHand = S.mainHand;
 const sfx = new Sfx();
+scene.sfx = (n, v) => sfx.play(n, v); // (sounds the scene's motions make: client/scene3d.js MOCAP_SOUNDS)
 const station = new Station($('stCanvas'), {
   act: (m) => { send(m); pickedAtWork(m); },
   // (a board's tool – the knife, the peeler, the grater – in one of my hands)
