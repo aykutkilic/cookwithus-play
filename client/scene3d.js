@@ -19,6 +19,7 @@ import { slotOf } from '../shared/stock.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
 import { FpArms, SHOULDER, BRISK, APART, KNIFE, KNIFE_CARRY, HOLDS, mocapShape } from './fparms3d.js';
+import { contactOffset, planAlongRay, handSpheres, clearance } from './reachplan.js';
 // (motion capture off reference videos – scripts/refloop/mocap*.mjs – played back by the hands; loaded once, as it's there)
 const MOCAP = {};
 for (const name of ['slices-into-bowl']) fetch(new URL(`./mocap/${name}.json`, import.meta.url)).then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) MOCAP[name] = m; }).catch(() => {});
@@ -2105,8 +2106,8 @@ export class Scene3D {
     if (c >= 1) B.pos.copy(to);
     // (carried in the tracked hand – left where the video's hand leaves it, on the board)
     const vt = MOCAP_T.drop + t, w3 = { O: W.O, R: this.workRight(W), N: new THREE.Vector3().crossVectors(this.workRight(W), UP) };
-    const Lp = vt > MOCAP_T.grab2 ? this.mocapPalm(w3, Math.min(vt, MOCAP_T.set2), 'L') : null;
-    if (Lp) { B.pos = Lp.sub(this.bowlHeld(w3, sd)); B.pos.y = Math.max(W.O.y + 0.001, B.pos.y); B.pos.lerp(to, sm((vt - (MOCAP_T.set2 - 0.35)) / 0.35)); } // (eased onto where the video sets it down)
+    const Bm = this.bowlAt(w3, vt);
+    if (Bm) B.pos = Bm; // (in the hand only while it's held: met at its grasp point, set down where it goes)
     const Rw = this.workRight(W), Nw = new THREE.Vector3().crossVectors(Rw, UP); // (toward me)
     const rim = (Q) => Q.clone().addScaledVector(Rw, -sd * GATHER.rim).addScaledVector(Nw, GATHER.rimNear).addScaledVector(UP, GATHER.rimUp);
     let L;
@@ -2120,6 +2121,103 @@ export class Scene3D {
     const besideR = from.clone().addScaledVector(Rw, sd * GATHER.release).addScaledVector(UP, 0.03);
     W.hands[M] = { w: besideR.lerp(G.restR, seg(T.letGo, T.grab + 0.3)), kind: 'hand', curl: 0.3 + 0.15 * seg(T.letGo, T.grab) };
     this.mocapHands(W.frame || { O: W.O, R: Rw, N: Nw }, MOCAP_T.drop + t, W.hands);
+  }
+  // The gathering's contacts: the left hand takes the bowl off the stack and sets it down by the slices, takes it again and
+  // sets it at the back – at its grasp point (its left side, bowlHeld) each time
+  gatherContacts() {
+    const X = this.gatherCtx;
+    return [{ grab: MOCAP_T.grab1, set: MOCAP_T.set1, Pg: X.from.clone().add(X.held), Ps: X.into.clone().add(X.held) },
+      { grab: MOCAP_T.grab2, set: MOCAP_T.set2, Pg: X.into.clone().add(X.held), Ps: X.back.clone().add(X.held) }];
+  }
+  // a tracked palm as played: the recording, bent to meet its contacts (the left hand's), pushed clear of what's in the way
+  trackPalm(w, vt, track) {
+    const raw = this.mocapPalm(w, vt, track), X = this.gatherCtx;
+    if (!raw || !X || !X.from) return raw;
+    if (track === 'L') raw.add(contactOffset(vt, this.gatherContacts(), (t) => this.mocapPalm(w, t, 'L')));
+    const D = X.plan && X.plan[track], Mc = MOCAP['slices-into-bowl'];
+    if (D) { const f = Math.max(0, Math.min(D.length - 1, vt * Mc.fps)), a = Math.floor(f), b = Math.min(D.length - 1, a + 1); raw.add(D[a].clone().lerp(D[b], f - a)); }
+    return raw;
+  }
+  // the fingers' way, as tracked (unit; null if not tracked)
+  trackDir(w, vt, track) {
+    const Mc = MOCAP['slices-into-bowl'], f = Math.max(0, Math.min(Mc.frames.length - 1, Math.round(vt * Mc.fps))), A = Mc.frames[f][track];
+    if (!A) return null;
+    const sd = this.mainHand === 1 ? 1 : -1;
+    return w.R.clone().multiplyScalar(sd * A.d[0]).addScaledVector(UP, A.d[1]).addScaledVector(w.N, A.d[2]).normalize();
+  }
+  // Where the bowl is at vt: on the stack till it's taken, in the left hand (at its grasp point) while carried, where it was
+  // set down after – never moving by itself toward a hand that isn't there yet
+  bowlAt(w, vt) {
+    const X = this.gatherCtx;
+    if (!X || !X.from || !MOCAP['slices-into-bowl']) return null;
+    if (vt < MOCAP_T.grab1) return X.from.clone();
+    const carried = vt <= MOCAP_T.set1 || (vt >= MOCAP_T.grab2 && vt <= MOCAP_T.set2);
+    if (carried) {
+      const h = this.trackPalm(w, vt, 'L');
+      if (!h) return null;
+      const b = h.sub(X.held);
+      b.y = Math.max(X.w.O.y + 0.001, b.y);
+      return b;
+    }
+    return (vt < MOCAP_T.grab2 ? X.into : X.back).clone();
+  }
+  // The gathering's paths pushed clear, once: both hands as spheres (palm, fingers, wrist, forearm) against the boxes of what's
+  // near – the food's own container, the stacks, the bowl wherever it is then (not for the hand that carries it) – a small
+  // CHOMP over the whole track (client/reachplan.js); the contacts' frames kept as they are
+  planGather() {
+    const X = this.gatherCtx, Mc = MOCAP['slices-into-bowl'], w = X.w, n = Mc.frames.length, F = this.k3.fx[w.fx];
+    X.plan = null;
+    // (what's seen of it – not its hidden parts: a container's water box, scaled to nothing, spans a metre)
+    const box = (o) => {
+      if (!o) return null;
+      const b = new THREE.Box3(), mb = new THREE.Box3();
+      o.updateWorldMatrix(true, true);
+      // (from its vertices: a box of a turned shape – the container's walls, a four-sided cylinder turned 45° – is 40% too
+      // big from its own bounds)
+      o.traverse((m) => { if (m.isMesh && m.visible && m.geometry && (m.parent ? m.parent.visible !== false : true)) { mb.makeEmpty(); mb.expandByObject(m, true); const sz = mb.getSize(new THREE.Vector3()); if (Math.max(sz.x, sz.y, sz.z) < 0.6) b.union(mb); } });
+      if (b.isEmpty()) return null;
+      b.min.y -= 1; // (standing on the worktop: nothing gets under it)
+      return b;
+    };
+    const food = box(this.foods.get(`box:${X.uId}`) && this.foods.get(`box:${X.uId}`).g), stack = box(F && F.parts.bowls), nest = box(F && F.parts.nest);
+    const bowlObj = this.foods.get(`box:${X.boxKey}`), bowl0 = box(bowlObj && bowlObj.g), bowlAt0 = bowlObj && bowlObj.g.getWorldPosition(new THREE.Vector3());
+    const M = this.mainHand, sd = M === 1 ? 1 : -1;
+    const shoulder = (track) => X.body && X.body.clone().addScaledVector(w.R, (track === 'R' ? sd : -sd) * SHOULDER.x).addScaledVector(UP, SHOULDER.y).addScaledVector(w.N, SHOULDER.z);
+    const plan = {}, info = {};
+    for (const track of ['L', 'R']) {
+      const at = (k) => { const P = this.trackPalm(w, k / Mc.fps, track), d = this.trackDir(w, k / Mc.fps, track); return P && d ? { P, d, sh: shoulder(track) } : null; };
+      const boxes = (k) => {
+        const B = [food, nest].filter(Boolean);
+        if (track === 'R') {
+          if (stack) B.push(stack);
+          const bp = this.bowlAt(w, k / Mc.fps);
+          if (bowl0 && bp && bowlAt0) B.push(bowl0.clone().translate(bp.clone().sub(bowlAt0)));
+        }
+        return B;
+      };
+      const fixed = new Set();
+      if (track === 'L') for (const c of this.gatherContacts()) for (const t of [c.grab, c.set]) for (let o = -1; o <= 1; o++) fixed.add(Math.round(t * Mc.fps) + o);
+      const names = (k) => ['food', 'nest', ...(track === 'R' ? ['stack', 'bowl'] : [])];
+      const worst = (D) => {
+        let m = Infinity, at2 = null;
+        for (let k = 0; k < n; k++) {
+          const a = at(k);
+          if (!a) continue;
+          const B = boxes(k), sp = handSpheres(a.P.clone().add(D ? D[k] : new THREE.Vector3()), a.d, a.sh);
+          sp.forEach((s2, si) => B.forEach((b, bi) => { const v = clearance([s2], [b]); if (v < m) { m = v; at2 = { t: +(k / Mc.fps).toFixed(2), sphere: si, box: names(k)[bi], fixed: fixed.has(k) }; } }));
+        }
+        return { m: +m.toFixed(4), ...at2 };
+      };
+      const before = worst(null);
+      // (along each frame's ray from the camera that's looking – the reference was filmed from where it stands)
+      const D = planAlongRay(n, at, boxes, this.camera.getWorldPosition(new THREE.Vector3()), { fixed });
+      plan[track] = D;
+      info[track] = { before, after: worst(D) };
+    }
+    const bx = (b) => b && { min: b.min.clone().sub(w.O).toArray().map((x) => +x.toFixed(3)), max: b.max.clone().sub(w.O).toArray().map((x) => +x.toFixed(3)) };
+    info.boxes = { food: bx(food), nest: bx(nest), stack: bx(stack), bowl: bx(bowl0) };
+    X.planInfo = info;
+    return plan;
   }
   // where the tracked hand's palm is at vt (track 'L' / 'R', mirrored for a left-handed cook) – null if it isn't tracked
   mocapPalm(w, vt, track, name = 'slices-into-bowl') {
@@ -2146,7 +2244,7 @@ export class Scene3D {
     for (const [track, i] of [['L', 1 - M], ['R', M]]) {
       const A = Mc.frames[a][track], B = Mc.frames[b][track] || A;
       if (!A || keep.includes(i)) continue;
-      const j = A.j ? A.j.map((r, x) => r.map((v, y) => v + (B.j[x][y] - v) * u)) : null, at = w.O.clone().add(vec(mix(A, B, 'p')));
+      const j = A.j ? A.j.map((r, x) => r.map((v, y) => v + (B.j[x][y] - v) * u)) : null, at = (name === 'slices-into-bowl' && this.trackPalm(w, vt, track)) || w.O.clone().add(vec(mix(A, B, 'p')));
       // (the two hands round the slices – cupping them, carrying them, letting them go: there the tracking can't tell a
       // hand's tilt, they hide each other; where they are and which way they point, as tracked – turned as the video
       // plainly has them: palm down cupped over them, then opened beside the bowl palms toward each other)
@@ -2811,6 +2909,10 @@ export class Scene3D {
           const back = ref(GATHER_AT.boxBack), bn = back.clone().sub(w.O).dot(w.N);
           if (bn < -GATHER.backMax) back.addScaledVector(w.N, -GATHER.backMax - bn);
           this.boxing = { id: g.source.id, fx: w.fx, pos: into.clone(), rest: extra ? { id: `${g.source.id}~rest`, fx: w.fx, pos: this.boxSpot(w) } : null, back, key: boxKey };
+          // (what the hands' paths are planned against – the bowl's places, its grasp point, what's in the way)
+          if (!this.gatherCtx || this.gatherCtx.g !== g) this.gatherCtx = { g, plan: null };
+          Object.assign(this.gatherCtx, { w: { O: w.O.clone(), R: w.R.clone(), N: w.N.clone(), fx: w.fx }, from: from.clone(), into: into.clone(), back: back.clone(), held: this.bowlHeld(w, sd), boxKey, uId: g.source.id, body: out.body ? out.body.pos.clone() : null });
+          if (!this.gatherCtx.plan && MOCAP['slices-into-bowl'] && this.foods.get(`box:${boxKey}`)) this.gatherCtx.plan = this.planGather();
           if (st.k > 0) { this.commitBoxing(); break; }
           // (the setup's own clock, from when this came up – hurried along once the slices are taken; and the gesture's)
           const G = this.gather && this.gather.g === g ? this.gather : (this.gather = { g, t: 0, d: 0, real: 0 });
@@ -2825,9 +2927,9 @@ export class Scene3D {
           // the container: reached for, lifted, carried over, set down
           const carry = seg(T.grab, T.set);
           const C = from.clone().lerp(into, carry).addScaledVector(UP, GATHER.lift * Math.sin(Math.PI * carry));
-          // (carried in the tracked hand, where the video's hand has it – set down exactly where it ends)
-          const vt0 = Math.min(G.real, MOCAP_T.wait);
-          if (vt0 > MOCAP_T.grab1 && vt0 < MOCAP_T.set1) { const Lp = this.mocapPalm(w, vt0, 'L'); if (Lp) { const k2 = sm((vt0 - MOCAP_T.grab1) / 0.25) * (1 - sm((vt0 - (MOCAP_T.set1 - 0.25)) / 0.25)); const P2 = Lp.sub(this.bowlHeld(w, sd)); P2.y = Math.max(w.O.y + 0.001, P2.y); C.lerp(P2, k2); } }
+          // (as tracked: where it is, moving only while it's in the hand – the hand meets it at its grasp point)
+          const Cm = this.bowlAt(w, Math.min(G.real, MOCAP_T.wait));
+          if (Cm) C.copy(Cm);
           out.boxes.push([boxKey, { item: g.source.id, pos: C, yaw: out.yaw, st: null, of: extra ? { ...gIt, extra: 0, tub: { size: -1 } } : gIt }]);
           out.gatherBox = boxKey;
           // the knife: laid flat along the board's right, point away – lowered there in my hand, then my hand on its handle
@@ -4079,7 +4181,7 @@ const GATHER_AT = {
 const t0Ready = (G) => G.t >= GATHER.t.wait;
 // (the reference video's times, s: the left hand waiting by the bowl for the slices to be taken; the two hands come to
 // them and cup them; carry them over; let them fall in)
-const MOCAP_T = { wait: 3.5, take: 3.6, cup: 0.5, carry: 1.3, drop: 5.5, open: 5.3, apart: 6.3, grab1: 1.3, set1: 2.15, grab2: 6.6, set2: 8.45 };
+const MOCAP_T = { wait: 3.5, take: 3.6, cup: 0.5, carry: 1.3, drop: 5.5, open: 5.3, apart: 6.3, grab1: 1.3, set1: 2.35, grab2: 6.7, set2: 8.4 }; // (the contacts: off FAH's left hand, nearest the bowl)
 const GATHER = { t: { knife: 0.4, reach: 0.35, grab: 1.1, set: 2.6, wait: 3.0 }, end: { letGo: 0.6, grab: 1.3, set: 3.3, away: 4.1 }, toSides: 0.25, cupIn: 0.3, lift: 0.03, rim: 0.042, hold: 0.04, cupCurl: 0.7, inward: 0.6, backMax: 0.115, rimNear: 0.036, rimUp: 0.012, gripCurl: 0.6, release: 0.07, sideAt: 0.45 };
 const CARRY_GAP = 0.015; // (first person: the gap kept between the things carried in my two hands)
 const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
