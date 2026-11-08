@@ -15,7 +15,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildKitchen, FIXTURES, walkable, splitPlace } from '../shared/kitchens.js';
 import { VESSELS, twoHanded, INGREDIENTS, TOOLS } from '../shared/ingredients.js';
-import { slotOf } from '../shared/stock.js';
+import { slotOf, freeSpot } from '../shared/stock.js';
 import { buildKitchen3D, COUNTER_H } from './kitchen3d.js';
 import { buildCook, poseCook, fadeCook, toolMesh } from './cook3d.js';
 import { FpArms, SHOULDER, BRISK, APART, KNIFE, KNIFE_CARRY, HOLDS, mocapShape } from './fparms3d.js';
@@ -29,7 +29,7 @@ import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt, KNIFE_HANG } from './props3d.js';
 import { ACTIONS, BOARD_TOOLS, boardUnits } from '../shared/actions.js';
-import { SAKIR, phaseTarget, glovesOn } from '../shared/cook.js';
+import { SAKIR, phaseTarget, glovesOn, BOARD_X } from '../shared/cook.js';
 import { drawIngredient, drawPieces, liquidColor } from './art.js';
 import { themeOf } from './theme.js';
 
@@ -1934,7 +1934,7 @@ export class Scene3D {
         slots[i] = k; came.push([i, k, wait]);
       }
     }
-    if (!on) { this.restLean = false; this.fpGhost(null); this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
+    if (!on) { this.restLean = false; this.fpGhost(null); this.fpPointGlow(null); this.fpArms.cancel(); this.fpArms.update(dt, [null, null], { visible: false }); return; }
     this.fpArms.setLook(lookOf(me.avatar));
     this.fpArms.setGloves(!!(view.C && glovesOn(view.C, me.id)));
     const right = new THREE.Vector3(-Math.cos(rec.yaw), 0, Math.sin(rec.yaw));
@@ -2041,17 +2041,11 @@ export class Scene3D {
       }
     }
     this.restLean = leaning;
-    // (pointing: what E would take, open or turn – or where what my other hand holds would go – my free hand points
-    // at, up in sight, its index out; what I hold shows as a ghost where it would be put: fal.ai reference,
-    // docs/work-by-buttons.md)
+    // (what E would take, open or turn glows a little – no finger pointing at it; what I hold shows as a ghost of
+    // itself just as it will be put: where it will stand, lie, or sit on the stack)
     const pt = !(this.work && !this.work.idle) && !view.camAim && view.fpPt;
-    const pi = pt ? [this.mainHand, 1 - this.mainHand].find((i) => holds[i] == null && !slots[i] && !this.fpArms.reaching(i)) : undefined;
-    if (pt && pi != null && (rec.speed || 0) < 0.6) {
-      const s = pi ? 1 : -1, base = HOLDS.point.at.clone(), T = handAt(pt.w, s);
-      const d = T.clone().sub(base);
-      if (d.z < -0.05) holds[pi] = { kind: 'point', at: base.addScaledVector(d.clone().normalize(), 0.04), dir: d.normalize() };
-    }
-    this.fpGhost(pt && pt.kind === 'surface' && pt.key && slots.includes(pt.key) ? pt : null);
+    this.fpPointGlow(pt);
+    this.fpGhost(pt && (pt.kind === 'surface' || pt.kind === 'bayIn') && pt.key && slots.includes(pt.key) ? pt : null);
     // a free hand on a door's handle
     if (view.fpGrab && !view.fpGrab.key) {
       const want = view.fpGrab.hand;
@@ -2065,30 +2059,160 @@ export class Scene3D {
     this.workMoved = new Set(this.work && !this.work.idle ? this.work.ov.keys() : []);
   }
 
-  // The ghost of what I hold where E would put it down (pt: {w, key} – or null: none): a thin white outline of its
-  // box with a faint fill, turned as it's held, standing on the spot – so I see where it goes before it goes.
+  // The ghost of what I hold where E would put it down (pt: {kind: 'surface' | 'bayIn', key, …} – or null: none):
+  // a see-through copy of the thing itself – its own shapes and colours, a faint rim of light – posed as it will be
+  // drawn once it's down (landPose): standing on the worktop, lying flat, on the burner, on top of the stack of
+  // containers, in its drawer's spot – so I see where it goes, and how, before it goes.
   fpGhost(pt) {
-    let G = this.ghostPut;
-    if (!pt) { if (G) G.root.visible = false; return; }
-    if (!G) {
-      const root = new THREE.Group(), box = new THREE.Group();
-      const fill = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.14, depthWrite: false }));
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
-      fill.renderOrder = edges.renderOrder = 5;
-      box.add(fill, edges);
-      root.add(box);
-      this.scene.add(root);
-      G = this.ghostPut = { root, box, key: null, size: null };
+    const G = this.ghostPut;
+    const pose = pt && this.landPose(pt);
+    const src = pose && this.thingObj(pt.key);
+    if (!src) { if (G) G.root.visible = false; return; }
+    // (a pot's own lid stays on while it's carried or put away – it comes off as it's set down to cook)
+    const vr = pt.key[0] === 'v' && this.vessels.get(pt.key.slice(2));
+    const skip = vr && vr.stowed && !pose.stowed && vr.lid && !(this.lastD && this.lastD.vessels[pt.key.slice(2)] && this.lastD.vessels[pt.key.slice(2)].lid) ? vr.lid : null;
+    const sig = `${pt.key}|${src.uuid}|${skip ? 'nolid' : ''}`;
+    if (!G || G.sig !== sig || this.t - G.made > 1) this.buildGhost(src, sig, skip);
+    const R = this.ghostPut.root;
+    R.position.copy(pose.pos);
+    R.quaternion.copy(pose.q);
+    R.scale.setScalar(pose.scale || 1);
+    R.visible = true;
+  }
+  // (a see-through copy of a thing's meshes, made afresh as it changes – cut, filled – shapes shared, not copied)
+  buildGhost(src, sig, skip = null) {
+    const old = this.ghostPut;
+    if (old) { this.scene.remove(old.root); for (const m of old.mats) m.dispose(); }
+    const mats = [], seeThrough = new Map();
+    const look = (m) => {
+      if (Array.isArray(m)) return m.map(look);
+      if (!seeThrough.has(m)) {
+        let g;
+        if (m.isShaderMaterial || m.isSpriteMaterial || !m.clone) g = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        else g = m.clone();
+        g.transparent = true; g.opacity = GHOST_OPACITY * (m.opacity ?? 1); g.depthWrite = false;
+        if (g.emissive) { g.emissive.set(0xffffff); g.emissiveIntensity = 0.12; }
+        mats.push(g); seeThrough.set(m, g);
+      }
+      return seeThrough.get(m);
+    };
+    const copy = (o) => {
+      if (o === skip || o.userData.glow || !o.visible || o.isSprite || o.isLine || o.isPoints) return null;
+      let c;
+      if (o.isInstancedMesh) { c = new THREE.InstancedMesh(o.geometry, look(o.material), o.count); c.instanceMatrix.copy(o.instanceMatrix); }
+      else if (o.isMesh) c = new THREE.Mesh(o.geometry, look(o.material));
+      else c = new THREE.Group();
+      c.position.copy(o.position); c.quaternion.copy(o.quaternion); c.scale.copy(o.scale);
+      if (o.isMesh) {
+        c.renderOrder = 5;
+        c.castShadow = c.receiveShadow = false;
+        c.raycast = () => {};
+        if (!o.isInstancedMesh) { const rim = new THREE.Mesh(o.geometry, GLOW_GHOST); rim.renderOrder = 6; rim.raycast = () => {}; c.add(rim); }
+      }
+      for (const ch of o.children) { const cc = copy(ch); if (cc) c.add(cc); }
+      return c;
+    };
+    const root = new THREE.Group();
+    const body = copy(src) || new THREE.Group();
+    body.position.set(0, 0, 0); body.quaternion.identity(); body.scale.set(1, 1, 1); // (posed by the root, as the thing's own root is)
+    root.add(body);
+    root.visible = false;
+    this.scene.add(root);
+    this.ghostPut = { root, mats, sig, made: this.t };
+  }
+  // the object a thing is drawn as: a pot's group, a food (in its container), a tool – or null
+  thingObj(k) {
+    if (!k) return null;
+    if (k[0] === 'v') return this.vessels.get(k.slice(2))?.group || null;
+    if (k[0] === 'i') return this.foods.get(`item:${k.slice(2)}`)?.g || null;
+    if (k[0] === 'u') return this.tools.get(k.slice(2))?.g || null;
+    return null;
+  }
+
+  // Where what I hold (pt.key) would be, put down at pt – as it will be drawn there: {pos, q, scale} of its own
+  // frame – or null (nowhere to be seen / no room there). The same rules the drawing of it lying about follows
+  // (updateTools, updateVessels, updateItems, updateStash) and the same choices the room makes putting it down
+  // (shared putDown: a drawer's free spot, the stack, the burner) – so the ghost is where it lands.
+  landPose(pt) {
+    const k = pt.key, C = this.lastC, D = this.lastD;
+    const t = k[0] === 'v' ? D && D.vessels[k.slice(2)] : k[0] === 'u' ? this.toolsNow && this.toolsNow[k.slice(2)] : D && D.items[k.slice(2)];
+    if (!t) return null;
+    const yawQ = (y) => new THREE.Quaternion().setFromAxisAngle(UP, y || 0);
+    const up = k[0] === 'u' && (!!(TOOLS[t.kind] && TOOLS[t.kind].upright) || t.kind === 'grater');
+    const toolG = k[0] === 'u' && this.tools.get(k.slice(2))?.g;
+    const lift = (lie) => (!toolG ? 0 : up ? toolG.userData.foot || 0 : lie === 'crock' ? 0 : (toolG.userData.under || 0) + 0.0008);
+    if (pt.kind === 'bayIn') {
+      // into a drawer, a cupboard, the crock – or onto the stack of containers: the spot the room will give it
+      const P = this.placeSpots(pt.fx);
+      if (!P || !C || !this.K) return null;
+      if (P.lie === 'nest') {
+        // (on the stack: in its place by size among the others – a little higher for each under it)
+        const n = this.nestOf(pt.fx).concat([[k, t]]).sort((a, b) => emptyBoxSize(b[1]) - emptyBoxSize(a[1]) || a[0].localeCompare(b[0]));
+        const pos = P.at().setY(P.at().y + Math.max(0, n.findIndex(([q]) => q === k)) * 0.006 + lift('nest'));
+        return { pos, q: yawQ(Math.atan2(P.out.x, P.out.z)) };
+      }
+      const board = P.spec.bay === 'board' && TOOLS[t.kind] && TOOLS[t.kind].board;
+      const sp = freeSpot(C, this.K, pt.fx, board ? { r: 0, x: BOARD_X[TOOLS[t.kind].board] } : pt.spot, k);
+      if (!sp) return null; // (full: it won't go in)
+      const sl = slotOf(P.spec, sp);
+      const pos = P.at(sl.r, sl.i);
+      if (!pos) return null;
+      if (k[0] === 'u') return { pos: pos.setY(pos.y + lift(P.lie)), q: this.lieQuat(P.lie, P.out, up, P.lie === 'flat' && pt.fx.endsWith('/dr') ? 1 : sl.i) };
+      const handleBack = k[0] === 'v' && GRIP3D[t.kind] ? Math.atan2(P.out.z, -P.out.x) : Math.atan2(P.out.x, P.out.z);
+      return { pos, q: yawQ(handleBack), scale: k[0] === 'v' ? 0.8 : 1, stowed: true };
     }
-    if (G.key !== pt.key) { G.key = pt.key; G.size = this.localBox(pt.key); }
-    if (!G.size) { G.root.visible = false; return; }
-    const b = G.size;
-    G.box.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2 - b.min.y, (b.min.z + b.max.z) / 2);
-    G.box.scale.set(Math.max(0.01, b.max.x - b.min.x), Math.max(0.01, b.max.y - b.min.y), Math.max(0.01, b.max.z - b.min.z));
-    G.root.position.set(pt.w.x, pt.w.y + 0.002, pt.w.z);
-    const yaw = this.heldYaw(pt.key);
-    G.root.rotation.set(0, yaw != null ? yaw : (this.fpCam ? this.fpCam.yaw : 0), 0);
-    G.root.visible = true;
+    // on a worktop, the board, a table, a burner, in the sink, into the oven
+    const F = this.k3.fx[pt.fx];
+    if (!F) return null;
+    const A = F.anchors, f = F.f, caps = f.caps || [];
+    const held = this.heldYaw(k);
+    if (k[0] === 'u') {
+      if (pt.sink || pt.inside) {
+        const n = Object.values(this.toolsNow || {}).filter((o) => o !== t && o.held == null && o.at === pt.fx && !(o.lay && o.lay.fx === o.at)).length;
+        const pos = this.toolLie(F, n);
+        return { pos: pos.setY(pos.y + lift('flat')), q: this.lieQuat('flat', F.front, up, n) };
+      }
+      return { pos: pt.w.clone().setY(pt.w.y + lift('flat')), q: this.lieQuat('flat', F.front, up, 0) };
+    }
+    if (k[0] === 'v') {
+      const surface = caps.includes('board') || caps.includes('plate') || caps.includes('sink');
+      if (pt.inside && A.inside) return { pos: A.inside.clone(), q: yawQ(0) };
+      if (A.burners && !surface && caps.includes('hob') && A.burners[pt.slot]) return { pos: A.burners[pt.slot].clone(), q: yawQ(0) };
+      if (A.basin && f.type === 'sink') return { pos: (A.spout || A.basin).clone().setY(A.basin.y + 0.02), q: yawQ(this.sinkYaw(F)) };
+      return { pos: pt.w.clone(), q: yawQ(held) };
+    }
+    // food (in its container): lying just there – in the sink, on its spot there
+    if (pt.sink) { const p = (A.spots && A.spots[0]) || A.top; return p ? { pos: p.clone(), q: yawQ(Math.atan2(F.front.x, F.front.z)) } : null; }
+    return { pos: pt.w.clone(), q: yawQ(held) };
+  }
+
+  // What E would take, open or turn – the thing, the drawer's or door's front, the knob, the oven's door – glows
+  // a little, steady (the recipe's next thing breathes; this one doesn't)
+  fpPointGlow(pt) {
+    let o = null;
+    if (pt) {
+      if (pt.kind === 'thing' || pt.kind === 'piece') {
+        o = this.thingObj(pt.key);
+        // (the board's own knife, peeler, grater lying in their places: the kitchen's own meshes)
+        const bk = !(o && o.visible) && this.boardKindOf(pt.key), F = bk && this.k3.fx[splitPlace(pt.fx || '')[0]];
+        if (bk) o = F && F.parts.tools ? F.parts.tools[bk] : null;
+        if (!o && pt.fx && pt.fx.endsWith('/nest')) { const F2 = this.k3.fx[splitPlace(pt.fx)[0]]; o = F2 && F2.parts.nest; }
+      } else if (pt.kind === 'bay') {
+        const [fid, b] = splitPlace(pt.fx), F = this.k3.fx[fid];
+        o = F && F.bays && F.bays[b] ? F.bays[b].obj : null;
+      } else if (pt.kind === 'knob') {
+        const P = this.k3.fx[pt.fx] && this.k3.fx[pt.fx].parts;
+        o = P && P.knobs ? P.knobs[pt.slot] || P.knobs[0] : null;
+      } else if (pt.kind === 'ovenDoor') {
+        const P = this.k3.fx[pt.fx] && this.k3.fx[pt.fx].parts;
+        o = P && P.drop;
+      }
+    }
+    if (o && !o.visible) o = null;
+    if (o === (this.ptGlowOn || null)) return;
+    if (this.ptGlowOn) setGhost(this.ptGlowOn, false, GLOW_POINT, 'ptGhost');
+    if (o) setGhost(o, true, GLOW_POINT, 'ptGhost');
+    this.ptGlowOn = o;
   }
   // a thing's box in its own frame (as it's drawn: its vessel, its food, its tool) – or null
   // Gathered in: as the reference video goes on – my hands let go, the left one takes the container by its side and
@@ -4236,19 +4360,25 @@ void main() { float f = 1.0 - abs(dot(normalize(vN), normalize(vV))); gl_FragCol
   polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
 });
 const GLOW_MAT = glowMat(0.5, 0.06), GLOW_THING = glowMat(0.85, 0.14);
-// lit or not: a mesh's glowing copy rides along as its child (doors, knobs, a pan all move)
-function setGhost(o, on, mat = GLOW_MAT) {
+// (what's pointed at: a soft warm-white rim, steady; the ghost of what I hold: its rim of light, white)
+const GLOW_POINT = glowMat(1.0, 0.2), GLOW_GHOST = glowMat(0.7, 0.05);
+GLOW_POINT.uniforms.uColor.value.set('#ffd98a'); GLOW_POINT.uniforms.uK.value = 0.9;
+GLOW_GHOST.uniforms.uColor.value.set('#ffffff'); GLOW_GHOST.uniforms.uK.value = 0.6;
+const GHOST_OPACITY = 0.45;
+// lit or not: a mesh's glowing copy rides along as its child (doors, knobs, a pan all move) – each kind of
+// glow its own copy (slot), so the recipe's breathing glow and the pointed-at one don't trade materials
+function setGhost(o, on, mat = GLOW_MAT, slot = 'ghost') {
   if (o.userData.glow) { o.visible = on; return; }
   o.traverse((m) => {
     if (!m.isMesh || m.isInstancedMesh || m.userData.glow) return;
-    let g = m.userData.ghost;
+    let g = m.userData[slot];
     if (!g) {
       if (!on) return;
       g = new THREE.Mesh(m.geometry, mat);
       g.userData.glow = true;
       g.renderOrder = 4;
       g.raycast = () => {};
-      m.userData.ghost = g;
+      m.userData[slot] = g;
       m.add(g);
     }
     g.visible = on;

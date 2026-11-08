@@ -2641,8 +2641,8 @@ function drawTags(view) {
   // (first person: what I'm pointing at, among the cupboards and drawers and what's in them)
   const pt = $('menu').hidden && $('modal').hidden ? fpPointed() : null;
   const ptLabel = pt && fpPointLabel(pt);
-  // (for the hands: the free one points at it; what I hold shows as a ghost where it would be put)
-  S.fpPt = pt && ptLabel && pt.w ? { kind: pt.kind, w: pt.w, key: pt.key || null } : null;
+  // (for the scene: what's pointed at glows; what I hold shows as a ghost of itself where – and how – it would be put)
+  S.fpPt = pt && ptLabel && pt.w ? { kind: pt.kind, w: pt.w, key: (pt.kind === 'bayIn' ? fpPutWhat(-1) : pt.key) || null, fx: pt.fx || null, slot: pt.slot ?? null, spot: pt.spot || null, sink: !!pt.sink, inside: !!pt.inside } : null;
   const pour = $('menu').hidden && $('modal').hidden && !touchUI ? pourTarget() : null;
   const work = $('menu').hidden && $('modal').hidden && !touchUI ? workTarget() : null;
   const pourHtml = (work ? `<span class="more"><kbd>R</kbd> ${esc(work.label)}</span>` : '') + (pour ? `<span class="more"><kbd>T</kbd> ${esc(pour.label)}</span>` : '');

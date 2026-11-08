@@ -845,7 +845,7 @@ export function putDown(C, x, K, m, fx, only = null, spot = null, lay = null, sl
   return '';
 }
 
-const BOARD_X = { knife: 0, peeler: 0.5, grater: 1 }; // (where each lies on its board)
+export const BOARD_X = { knife: 0, peeler: 0.5, grater: 1 }; // (where each lies on its board)
 
 // "Bring the eggs here first – they’re in the fridge"
 function bringMsg(C, x, K, miss) {
