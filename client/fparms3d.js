@@ -484,7 +484,7 @@ export class FpArms {
           r.p = 1;
         } else {
           if (!r.at) { r.at = true; if (r.take) r.grabbed = true; else r.released = true; }
-          const u = ease((r.t - hold) / BACK);
+          const u = motion.progress;
           h.wrist.lerpVectors(far.wrist, want.wrist, u);
           h.q.slerpQuaternions(far.q, want.q, u);
           h.curl += ((r.take ? want.curl : 0.3) - h.curl) * Math.min(1, dt * 16 * BRISK);
@@ -492,9 +492,21 @@ export class FpArms {
           if (u >= 1) h.reach = null;
         }
       } else {
-        h.wrist.lerp(want.wrist, k);
-        h.q.slerp(want.q, k);
-        h.curl += (want.curl - h.curl) * k;
+        // (into or out of a played-back motion – the tracked hands somewhere else entirely than the keyed ones: a blend over
+        // a moment, eased at both ends, not the usual follow – that leaps 12–15 cm in its first frame)
+        if (h.hold && h.hold !== kind && (kind === 'mocap' || h.hold === 'mocap' || h.blend)) h.blend = { wrist: h.wrist.clone(), q: h.q.clone(), t: 0 };
+        if (h.blend) {
+          h.blend.t += dt;
+          const x = Math.min(1, h.blend.t / MOCAP_BLEND), u = x * x * (3 - 2 * x);
+          h.wrist.lerpVectors(h.blend.wrist, want.wrist, u);
+          h.q.slerpQuaternions(h.blend.q, want.q, u);
+          h.curl += (want.curl - h.curl) * k;
+          if (x >= 1) h.blend = null;
+        } else {
+          h.wrist.lerp(want.wrist, k);
+          h.q.slerp(want.q, k);
+          h.curl += (want.curl - h.curl) * k;
+        }
       }
       h.hold = kind;
       h.shape = kind === 'mocap' && hold && hold.shape ? hold.shape : null; // (its fingers as tracked)
@@ -570,6 +582,7 @@ export class FpArms {
     const ringAt = (lean) => {
       let sh = sh0.clone().addScaledVector(toward, lean).addScaledVector(F.up, -0.3 * Math.max(0, lean));
       let d = w.distanceTo(sh), short = 0;
+      if (lean > 0) lean = Math.min(lean, 0.5 * across); // (never leaning past my hand – the eased lean too, not only the search's)
       if (d > reach) { sh = sh.clone().add(w.clone().sub(sh).normalize().multiplyScalar(Math.min(d - reach, SLIDE))); d = w.distanceTo(sh); short = Math.max(0, d - reach); }
       d = Math.max(Math.min(d, reach), Math.abs(UPPER - FORE) + 0.02);
       const u = w.clone().sub(sh).normalize();
@@ -647,13 +660,21 @@ export class FpArms {
       h.lean += (best.lean - h.lean) * 0.25;
     }
     const RF = ringAt(h.lean), sh = RF.sh;
-    if (RF.short > 0) w.copy(sh).addScaledVector(w.clone().sub(sh).normalize(), reach); // (never a stretched arm)
-    const e = RF.elbowAt(h.swivel);
+    // (never a stretched arm: the wrist brought in to the arm's reach, along the way it was – that way taken before w moves)
+    const inReach = (S) => { const u = w.clone().sub(S).normalize(); w.copy(S).addScaledVector(u, reach); };
+    if (RF.short > 0) inReach(sh);
+    let e = RF.elbowAt(h.swivel);
     if (this.debug) (this.debug[s] ||= []).push([+best.lean.toFixed(2), +best.a.toFixed(2), +bc.toFixed(2)]);
     let f = e.clone().sub(w).normalize();
     // (the hand asked past what the forearm can turn, the wrist bend: it gives – turned round what it's holding)
     const H = HOLDS[h.hold] || HOLDS.palm, gripW = () => v(s * H.grip.x * HS, H.grip.y * HS, H.grip.z * HS).applyQuaternion(h.drawQ).add(w);
-    const turnHand = (R) => { const g = gripW(); w.copy(g).sub(g.clone().sub(w).applyQuaternion(R)); h.drawQ.premultiply(R); A = axes(h.drawQ); };
+    // (a little give turns it round what it holds; a big one – an arm stretched out, asked a hand it can't have – round the
+    // wrist itself: swung round its grip that far, the wrist would be thrown halfway back up the arm)
+    const turnHand = (R) => {
+      const ang = 2 * Math.acos(Math.min(1, Math.abs(R.w))), f = Math.max(0, Math.min(1, (ang - 0.35) / 0.7));
+      const pv = gripW().lerp(w, f * f * (3 - 2 * f));
+      w.copy(pv).sub(pv.clone().sub(w).applyQuaternion(R)); h.drawQ.premultiply(R); A = axes(h.drawQ);
+    };
     // (the wrist first – the hand turned toward the forearm, round what it holds; then the forearm's turn, about its
     // own length through the wrist)
     let J = anglesAt(sh, e, A);
@@ -663,6 +684,9 @@ export class FpArms {
       turnHand(new THREE.Quaternion().setFromUnitVectors(want, f));
       f = e.clone().sub(w).normalize();
       J = anglesAt(sh, e, A);
+      // (turned round what it holds, the wrist's moved: the elbow found again for where it is now – else the forearm's drawn
+      // from the old elbow to the new wrist, folded right back for a frame)
+      { const R2 = ringAt(h.lean); if (R2.short > 0) inReach(R2.sh); e = R2.elbowAt(h.swivel); }
     }
     const proLim = J.pro > ARM.pro ? ARM.pro : J.pro < -ARM.sup ? -ARM.sup : null;
     if (proLim != null) {
@@ -673,7 +697,16 @@ export class FpArms {
     }
     h.fore = w.clone().sub(e);
     if (this.debug) { const D = anglesAt(sh, e, A), dg = (x) => Math.round(x * 57.3); h.bend = `lean ${Math.round(h.lean * 100)} sh ${dg(D.elev)}/${dg(D.plane)} rot ${dg(D.rot)} el ${dg(D.elbow)} pro ${dg(D.pro)} wr ${dg(D.flex)}/${dg(D.dev)}${past(D).some((x) => x > 0.01) ? ' PAST ' + past(D).map((x) => dg(x)).join(',') : ''}`; }
+    // (a frame whose arm comes out folded past what an elbow does – the solve caught in between two ways of holding it –
+    // isn't drawn: the arm as it last was stays a frame, rather than flicking across the picture and back)
+    if (anglesAt(sh, e, A).elbow > ARM.elbow + 0.05 && h.lastGood && (h.badRun = (h.badRun || 0) + 1) < 6) {
+      h.drawQ.copy(h.lastGood.q); h.drawW = h.lastGood.w.clone(); h.fore = h.lastGood.fore.clone();
+      if (this.debug) h.bend = 'held (folded)';
+      return;
+    }
+    h.badRun = 0;
     const up = sh.clone().sub(e).normalize();
+    h.lastGood = { q: h.drawQ.clone(), w: w.clone(), fore: h.fore.clone() };
     // (the sleeve runs on past the shoulder – out of sight – as far as the shoulder came forward)
     // (a shirt sleeve over the forearm, rolled up above the wrist, my bare forearm below it: the rigged hand – life size – comes out
     // of it at the wrist, whichever way it's bent)

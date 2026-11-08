@@ -2105,7 +2105,9 @@ export class Scene3D {
     B.pos = from.clone().lerp(to, c).addScaledVector(UP, GATHER.lift * Math.sin(Math.PI * c));
     if (c >= 1) B.pos.copy(to);
     // (carried in the tracked hand – left where the video's hand leaves it, on the board)
-    const vt = MOCAP_T.drop + t, w3 = { O: W.O, R: this.workRight(W), N: new THREE.Vector3().crossVectors(this.workRight(W), UP) };
+    // (the track goes on from where the gathering left it – however long the hold was – not from a fixed moment: a skip there
+    // is the hands leaping a few tenths of their motion in a frame)
+    const vt = S2.vt0 + t, w3 = { O: W.O, R: this.workRight(W), N: new THREE.Vector3().crossVectors(this.workRight(W), UP) };
     const Bm = this.bowlAt(w3, vt);
     if (Bm) B.pos = Bm; // (in the hand only while it's held: met at its grasp point, set down where it goes)
     const Rw = this.workRight(W), Nw = new THREE.Vector3().crossVectors(Rw, UP); // (toward me)
@@ -2120,7 +2122,7 @@ export class Scene3D {
     // (the right hand: opened beside the bowl as the slices fall in, then back to the knife's handle)
     const besideR = from.clone().addScaledVector(Rw, sd * GATHER.release).addScaledVector(UP, 0.03);
     W.hands[M] = { w: besideR.lerp(G.restR, seg(T.letGo, T.grab + 0.3)), kind: 'hand', curl: 0.3 + 0.15 * seg(T.letGo, T.grab) };
-    this.mocapHands(W.frame || { O: W.O, R: Rw, N: Nw }, MOCAP_T.drop + t, W.hands);
+    this.mocapHands(W.frame || { O: W.O, R: Rw, N: Nw }, vt, W.hands);
   }
   // The gathering's contacts: the left hand takes the bowl off the stack and sets it down by the slices, takes it again and
   // sets it at the back – at its grasp point (its left side, bowlHeld) each time
@@ -2247,14 +2249,30 @@ export class Scene3D {
       const j = A.j ? A.j.map((r, x) => r.map((v, y) => v + (B.j[x][y] - v) * u)) : null, at = (name === 'slices-into-bowl' && this.trackPalm(w, vt, track)) || w.O.clone().add(vec(mix(A, B, 'p')));
       // (the two hands round the slices – cupping them, carrying them, letting them go: there the tracking can't tell a
       // hand's tilt, they hide each other; where they are and which way they point, as tracked – turned as the video
-      // plainly has them: palm down cupped over them, then opened beside the bowl palms toward each other)
-      const flat = vec(mix(A, B, 'd')).setY(0);
-      if (!Mc.fixed && vt >= MOCAP_T.take && vt < MOCAP_T.open && flat.lengthSq() > 1e-6) { hands[i] = { w: at, kind: 'hand', dir: flat.normalize().addScaledVector(UP, -0.3).normalize(), curl: GATHER.cupCurl }; n++; continue; }
-      if (!Mc.fixed && vt >= MOCAP_T.open && vt < MOCAP_T.apart && flat.lengthSq() > 1e-6) { hands[i] = { w: at, kind: 'side', dir: flat.normalize().addScaledVector(UP, 0.4).normalize(), curl: 0.25 }; n++; continue; }
+      // plainly has them: palm down cupped over them, then opened beside the bowl palms toward each other. Still the same
+      // hold, its fingers' way and thumb's side steered, eased in and out over a few tenths: a change of hold would turn
+      // the hand half round in a frame)
+      let dir = vec(mix(A, B, 'd')).normalize(), thumb = vec(mix(A, B, 't')).normalize();
+      const flat = dir.clone().setY(0);
+      if (!Mc.fixed && flat.lengthSq() > 1e-6) {
+        flat.normalize();
+        const ramp = (a, b) => Math.max(0, Math.min(1, (vt - a) / (b - a))), E = MOCAP_T.ease;
+        const wf = ramp(MOCAP_T.take - E, MOCAP_T.take + E) * (1 - ramp(MOCAP_T.apart - E, MOCAP_T.apart + E));
+        if (wf > 0) {
+          const right = i === M, toOther = right ? -1 : 1; // (the other hand: to my left of the right one)
+          // cupping: palm down, fingers forward and a little down, the thumb toward the other hand
+          const dCup = flat.clone().addScaledVector(UP, -0.3).normalize(), tCup = R.clone().multiplyScalar(sd * toOther);
+          // opened beside the bowl: on its side, palms toward each other, thumb up
+          const dOpen = flat.clone().addScaledVector(UP, 0.4).normalize(), tOpen = UP.clone();
+          const o = ramp(MOCAP_T.open - E, MOCAP_T.open + E);
+          const dF = dCup.lerp(dOpen, o).normalize(), tF = tCup.lerp(tOpen, o).normalize();
+          dir = dir.lerp(dF, wf).normalize(); thumb = thumb.lerp(tF, wf).normalize();
+        }
+      }
       // (bones as fixed in Blender: each one's turn, eased from frame to frame)
       let q = null;
       if (A.q) { q = {}; const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(); for (const n2 of Object.keys(A.q)) q[n2] = qa.fromArray(A.q[n2]).slerp(qb.fromArray((B.q || A.q)[n2] || A.q[n2]), u).toArray(); }
-      hands[i] = { w: at, kind: 'mocap', dir: vec(mix(A, B, 'd')).normalize(), up: vec(mix(A, B, 't')).normalize(), shape: mocapShape(j, (A.th || 0) + ((B.th || 0) - (A.th || 0)) * u, q), curl: 0.3 };
+      hands[i] = { w: at, kind: 'mocap', dir, up: thumb, shape: mocapShape(j, (A.th || 0) + ((B.th || 0) - (A.th || 0)) * u, q), curl: 0.3 };
       n++;
     }
     return n;
@@ -2684,7 +2702,8 @@ export class Scene3D {
       // being moved)
       if (st.done && prev && !prev.idle && !prev.settled && prev.cam) {
         const G = prev.gatherEnd;
-        this.work = { ...prev, ov: new Map(), sprites: [], rings: [], boxes: [], stream: null, cut: null, hands: G ? G.hands.slice() : prev.hands, tool: G ? G.tool : prev.tool, settled: { t: 0, G, box: G && this.boxedAt && this.boxedAt.get(G.id) } };
+        this.work = { ...prev, ov: new Map(), sprites: [], rings: [], boxes: [], stream: null, cut: null, hands: G ? G.hands.slice() : prev.hands, tool: G ? G.tool : prev.tool, settled: { t: 0, G, vt0: G && G.real != null ? G.real : MOCAP_T.drop, box: G && this.boxedAt && this.boxedAt.get(G.id) } };
+        this.settleGather(this.work); // (this frame too: not a frame of the hands where they were keyed, between)
         return;
       }
       if (st.done && prev && prev.settled) { this.work = prev; this.settleGather(prev); return; }
@@ -4181,7 +4200,7 @@ const GATHER_AT = {
 const t0Ready = (G) => G.t >= GATHER.t.wait;
 // (the reference video's times, s: the left hand waiting by the bowl for the slices to be taken; the two hands come to
 // them and cup them; carry them over; let them fall in)
-const MOCAP_T = { wait: 3.5, take: 3.6, cup: 0.5, carry: 1.3, drop: 5.5, open: 5.3, apart: 6.3, grab1: 1.3, set1: 2.35, grab2: 6.7, set2: 8.4 }; // (the contacts: off FAH's left hand, nearest the bowl)
+const MOCAP_T = { wait: 3.5, take: 3.6, cup: 0.5, carry: 1.3, drop: 5.5, open: 5.3, apart: 6.3, ease: 0.25, grab1: 1.3, set1: 2.35, grab2: 6.7, set2: 8.4 }; // (the contacts: off FAH's left hand, nearest the bowl)
 const GATHER = { t: { knife: 0.4, reach: 0.35, grab: 1.1, set: 2.6, wait: 3.0 }, end: { letGo: 0.6, grab: 1.3, set: 3.3, away: 4.1 }, toSides: 0.25, cupIn: 0.3, lift: 0.03, rim: 0.042, hold: 0.04, cupCurl: 0.7, inward: 0.6, backMax: 0.115, rimNear: 0.036, rimUp: 0.012, gripCurl: 0.6, release: 0.07, sideAt: 0.45 };
 const CARRY_GAP = 0.015; // (first person: the gap kept between the things carried in my two hands)
 const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
