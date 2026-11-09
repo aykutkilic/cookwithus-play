@@ -662,7 +662,9 @@ function moveMe(dt) {
   const me = S.me;
   const v = me.v;
   let wx = 0, wy = 0;
-  const still = S.working || !$('modal').hidden || !$('menu').hidden;
+  // (first person at work I can still step back from it – and up to it again – unless the keys turn a knob)
+  const atWork = !!(S.working && S.working.fp && S.fp);
+  const still = (S.working && !atWork) || (atWork && (S.workGo || pad.style() === 'dir')) || !$('modal').hidden || !$('menu').hidden;
   const d = still ? { mag: 0 } : controls.dir();
   // (first person: turning gets up to speed and settles rather than starting and stopping dead)
   let turn = still ? 0 : -controls.turnDir() * TURN;
@@ -685,6 +687,8 @@ function moveMe(dt) {
         if (Math.abs(square - me.yaw) < 0.6) me.yaw += (square - me.yaw) * (1 - Math.exp(-dt * 5));
       }
     } else turn = -d.x * TURN * Math.min(1, d.mag + 0.2);
+    // (at work: only back and forth, facing it – the work stays where it is on the bench)
+    if (atWork) { const f2 = -d.y * d.mag * SPEED * 0.6; wx = Math.sin(me.yaw) * f2; wy = Math.cos(me.yaw) * f2; turn = 0; }
   } else if (d.mag) {
     // the stick / keys are in screen space: turn them into kitchen directions
     const ax = scene.screenAxes();
@@ -721,6 +725,38 @@ function moveMe(dt) {
   if (v.x) { const k = upTo(v.x * dt, 0); me.x += v.x * dt * k; if (k < 1) v.x = 0; }
   if (v.y) { const k = upTo(0, v.y * dt); me.y += v.y * dt * k; if (k < 1) v.y = 0; }
   me.walk = v.x || v.y ? 0 : -1;
+  benchView(dt);
+}
+
+// First person, one view from the room to the close-up – no switching between them: the nearer I am to the bench in
+// front of me, the more I lean in over it and look down at it (S.benchNear, 0 … 1 – the tilt put into my pitch as I
+// come nearer, taken out as I go back: the mouse still looks round as ever). At work, the work's own camera comes in as
+// I step up to where I stand for it (S.workNear) and goes as I step back; stepped back BENCH.leave from it, the work's
+// left (the user, 2026-11-09: "esc transitions between a closeup view and room view. let's remove it. the closer I get
+// into the bench I should get into the close view … a continuous transition instead of separate modes").
+const BENCH = { far: 1.0, tilt: 0.42, leave: 0.55 };
+function benchView(dt) {
+  const me = S.me, K = S.K;
+  if (!S.fp) { S.benchNear = 0; S.benchTilt = 0; S.workNear = 0; return; }
+  // (how far the bench is, straight ahead where I face)
+  let dist = BENCH.far;
+  for (let r = 0.02; r < BENCH.far; r += 0.02) {
+    const tx = Math.floor(me.x + Math.sin(me.yaw) * r), ty = Math.floor(me.y + Math.cos(me.yaw) * r);
+    if (tx < 0 || ty < 0 || tx >= K.w || ty >= K.h) break;
+    if (K.solid[ty][tx]) { dist = r; break; }
+  }
+  const u = Math.max(0, Math.min(1, (BENCH.far - dist) / (BENCH.far - FIX_R - 0.03)));
+  // (eased: turning to face a counter doesn't snap my head down)
+  S.benchNear = (S.benchNear || 0) + (u * u * (3 - 2 * u) - (S.benchNear || 0)) * (1 - Math.exp(-dt * 6));
+  const tilt = S.benchNear * BENCH.tilt;
+  S.pitch = Math.max(-1.1, Math.min(0.6, S.pitch - (tilt - (S.benchTilt || 0))));
+  S.benchTilt = tilt;
+  // at work: how near the place I stand for it (along the way it faces me)
+  const W = S.working && S.working.fp && S.workSpot;
+  if (!W) { S.workNear = 0; return; }
+  const back = Math.max(0, (me.x - W.x) * W.nx + (me.y - W.y) * W.nz);
+  S.workNear = Math.max(0, 1 - back / BENCH.leave);
+  if (!S.workGo && back >= BENCH.leave) closeStation();
 }
 
 // Is a counter (any fixture) just in front of me, where I face?
@@ -1248,7 +1284,7 @@ function openWork(sid, fx) {
   $('fpWork').hidden = false;
   $('fwKeys').hidden = touchUI && !cam.active;
   // (hands by camera: how it goes with them)
-  if (cam.active !== !!$('fwKeys').dataset.cam) { $('fwKeys').dataset.cam = cam.active ? '1' : ''; if (!$('fwKeys').dataset.keys) $('fwKeys').dataset.keys = $('fwKeys').innerHTML; $('fwKeys').innerHTML = cam.active ? 'your hands move over the work · close a hand to press with it, open it to let go · knife strokes: down and back up · walk off to step away' : $('fwKeys').dataset.keys; }
+  if (cam.active !== !!$('fwKeys').dataset.cam) { $('fwKeys').dataset.cam = cam.active ? '1' : ''; if (!$('fwKeys').dataset.keys) $('fwKeys').dataset.keys = $('fwKeys').innerHTML; $('fwKeys').innerHTML = cam.active ? 'your hands move over the work · close a hand to press with it, open it to let go · knife strokes: down and back up · step back from the bench to leave it' : $('fwKeys').dataset.keys; }
   document.body.classList.add('fpwork');
   station.open({ sid, def: s, st, phases: phasesOf(s, bakeKind(f)), f, bk: bakeKind(f), pal: K.palette, C, x, K, me: S.myId, look: lookOf(S.profile.avatar) });
   // step right up to it (a counter is a square deep: from the middle of the
@@ -1258,6 +1294,8 @@ function openWork(sid, fx) {
     let gx = S.me.x, gy = S.me.y;
     if (Math.abs(w.N.z) > 0.5) { gy = f.y + (w.N.z > 0 ? f.h + FIX_R + 0.03 : -FIX_R - 0.03); gx = Math.max(f.x + 0.25, Math.min(f.x + f.w - 0.25, w.O.x)); } else { gx = f.x + (w.N.x > 0 ? f.w + FIX_R + 0.03 : -FIX_R - 0.03); gy = Math.max(f.y + 0.25, Math.min(f.y + f.h - 0.25, w.O.z)); }
     if (!blocked(K, gx, gy) && Math.hypot(gx - S.me.x, gy - S.me.y) < 1.2) S.workGo = { x: gx, y: gy };
+    else { gx = S.me.x; gy = S.me.y; } // (can't step up: where I am is where I work from)
+    S.workSpot = { x: gx, y: gy, nx: w.N.x, nz: w.N.z };
     S.me.yaw = Math.atan2(w.O.x - gx, w.O.z - gy);
     const ex = gx - Math.sin(S.me.yaw) * (0.04 - 0.18), ez = gy - Math.cos(S.me.yaw) * (0.04 - 0.18);
     S.pitch = Math.max(-1.1, Math.atan2(w.O.y + 0.06 - 0.84, Math.hypot(w.O.x - ex, w.O.z - ez)));
@@ -1296,6 +1334,7 @@ function closeStation(silent = false) {
   const st = sid && S.M.cook && S.M.cook.steps[sid];
   if (st && st.s === 'active' && st.by === S.myId) send({ t: 'close', sid });
   S.working = null;
+  S.workSpot = null;
   S.pose = null;
   station.close();
   $('station').hidden = true;
@@ -1721,7 +1760,8 @@ const controls = new Controls({
   onHand: (i, down) => { const h = i ? S.mainHand : 1 - S.mainHand; return down ? handDown(h) : handUp(h); },
   // first person at work: walking off steps away from it
   // (at work, a direction the work has a use for – a knob up or down – is that; else first person steps away)
-  onStep: (d) => { if (S.working && pad.wantsDir(d)) { pad.dir(d); return; } if (S.working && S.working.fp && $('modal').hidden) closeStation(); },
+  // (first person, walking back from it ends it – benchView)
+  onStep: (d) => { if (S.working && pad.wantsDir(d)) pad.dir(d); },
   onView: () => toggleView(),
   onPour: (down) => { S.pour = down ? { t: 0 } : null; },
   // (R, □: at work the gesture it needs, played – a press a beat, held it goes on)
@@ -2437,7 +2477,8 @@ addEventListener('keydown', (e) => {
     if (locked() || performance.now() - unlockT < 400) return;
     if (!$('modal').hidden) closeModal();
     else if (!$('menu').hidden) closeMenu();
-    else if (S.working) closeStation();
+    // (not the work: walking back from the bench is what ends it – the view goes from the close-up back to the room as
+    // I go, not in a jump: benchView)
     return;
   }
   if ((e.key === 'f' || e.key === 'F') && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { toggleFullscreen(); return; }
@@ -2610,12 +2651,13 @@ function buildView(now, dt) {
       const at = S.workGo || S.me;
       S.me.yaw = Math.atan2(look.x - at.x, look.z - at.y);
       const e = scene.eyeAt(at.x, at.y, S.me.yaw, S.eyeOff || 0, scene.workLeanAt(wf.O, at.x, at.y, !!real));
-      S.pitch = Math.max(-1.1, Math.min(0.3, Math.atan2(look.y - e.y, Math.hypot(look.x - e.x, look.z - e.z))));
+      // (less the bench's tilt still to come as I finish stepping up – benchView puts it in: there, it's this)
+      S.pitch = Math.max(-1.1, Math.min(0.3, Math.atan2(look.y - e.y, Math.hypot(look.x - e.x, look.z - e.z)) + (S.workGo ? BENCH.tilt - (S.benchTilt || 0) : 0)));
     }
     const g = station.g, subj = g && (g.subject && g.subject.type === 'vessel' ? g.subject.id : null);
     station.geo = scene.workGeo(wf, subj);
   }
-  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work, camAim: camAim(), fpPt: S.fp && !S.working && !S.fpDrag ? S.fpPt || null : null };
+  return { C, D, x, cooks, guide, busy, activeAt, activeItems, activeVessels, inHand, doors, pitch: S.pitch, eyeOff: S.eyeOff || 0, benchNear: S.benchNear || 0, workNear: S.workSpot ? S.workNear : 1, working: !!S.working, target: S.target ? S.target.id : null, fpGrab, work, camAim: camAim(), fpPt: S.fp && !S.working && !S.fpDrag ? S.fpPt || null : null };
 }
 
 // Name tags, what each cook is doing, chat bubbles, and the "E · …" prompt:

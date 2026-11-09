@@ -95,6 +95,8 @@ const CLAW_DIR = { away: 0.7, along: 0.6, down: 0.25, near: 0.02 }; // (which wa
 const BENCHES = ['counter', 'dishwasher', 'sink', 'stove', 'table']; // (worktops an idle hand rests on)
 const REST_TURN = 0.25; // (resting there: the fingers turned in this far from the line down from my shoulder – the elbow's out)
 const REST_EDGE = 0.05; // (and the wrist about this far in from the worktop's near edge)
+const WORK_OFF_HAND = new THREE.Vector3(0.17, -0.4, -0.3); // (stepped back from the work: where a hand comes away to – my right's camera space)
+const BENCH_LEAN = 0.1; // (first person, up at a bench: leaning in over it this far)
 const REST_LEAN = 0.14; // (standing at a counter, my hands on it: leaning in this far)
 const REST_AFTER = 50; // (and not straight away – standing there or working at it: only once I've been there this long, s – or up to 20 s more)
 const CUT_TURN = 0.08; // (cutting: the food lies turned this far from square, its right end away – the knife comes in from the front right, across it)
@@ -873,7 +875,11 @@ export class Scene3D {
       // (and a little closer while working at something)
       // (further in for something at the back – the back burner, the middle of the sink)
       const wo = this.work && !this.work.idle && this.work.O;
-      const wantLean = wo ? this.workLeanAt(wo, me.x, me.y, this.work.real) : 0;
+      // (as near the bench as I am: leaning in over it – view.benchNear, client/main.js benchView – and at work, leaning on
+      // toward the work only as near as I've stepped up to it)
+      const wn = view.workNear ?? 1, wn2 = wn * wn * (3 - 2 * wn);
+      this.workNearK = wn2;
+      const wantLean = Math.max(wo ? this.workLeanAt(wo, me.x, me.y, this.work.real) * wn2 : 0, (view.benchNear || 0) * BENCH_LEAN);
       this.workLean = (this.workLean || 0) + (wantLean - (this.workLean || 0)) * (1 - Math.exp(-dt * 4 * BRISK));
       // (and over a counter, my hands resting on it)
       this.restLeanK = (this.restLeanK || 0) + ((this.restLean ? REST_LEAN : 0) - (this.restLeanK || 0)) * (1 - Math.exp(-dt * 3 * BRISK));
@@ -897,7 +903,8 @@ export class Scene3D {
       }
       this.workCamK = (this.workCamK || 0) + ((wc ? 1 : 0) - (this.workCamK || 0)) * (1 - Math.exp(-dt * 6 * BRISK));
       if (!wc && this.workCamK < 0.003) this.workCamK = 0;
-      const wk = this.workCamK * this.workCamK * (3 - 2 * this.workCamK);
+      // (the work's camera as far as it's come in – and as near as I am to where I stand for it: stepping back, it goes)
+      const wk = this.workCamK * this.workCamK * (3 - 2 * this.workCamK) * wn2;
       this.eye.position.copy(eye);
       this.camTarget.copy(eye).add(dir);
       this.eye.lookAt(this.camTarget);
@@ -2033,6 +2040,10 @@ export class Scene3D {
         let up = null;
         if (h.up) { up = h.up.clone().transformDirection(this.eye.matrixWorldInverse); if (!i) up.x = -up.x; }
         holds[i] = { kind: h.kind, at: handAt(h.w, i ? 1 : -1), curl: h.curl, tool: h.tool, dir, up, shape: h.shape };
+        // (stepping back from it: my hands come away with me – what they hold with them – to before me, low; else my arms
+        // stretched a metre to stay on the work)
+        const off = 1 - (this.workNearK ?? 1);
+        if (off > 0) holds[i].at.lerp(WORK_OFF_HAND, off);
       });
       // (a hand with nothing to do rests on the worktop beside it, as the mood takes me – once I've been at it a
       // while, not straight away – or hangs at my side out of sight; so does one whose thing the work has
