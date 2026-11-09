@@ -28,6 +28,7 @@ import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, has
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { setOutline, outlineCopy, setOutlineRes } from './outline3d.js';
+import { rapier, SlicePhysics } from './slicephys.js';
 import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt, KNIFE_HANG } from './props3d.js';
 import { ACTIONS, BOARD_TOOLS, boardUnits } from '../shared/actions.js';
 import { SAKIR, phaseTarget, glovesOn, BOARD_X } from '../shared/cook.js';
@@ -3481,6 +3482,18 @@ export class Scene3D {
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
+        // (cut in slices or rings, one thing: the slices fall aside and stack under physics – client/slicephys.js – once
+        // its engine's loaded; the thing drawn without its row of them meanwhile)
+        // (several cut one after another: the one being cut – its own cuts, k of n – each its own phase, so its own slices)
+        if (aimed && !C.score && dIt && (dIt.cut === 'slices' || dIt.cut === 'rings') && rapier()) {
+          const key = `${it.id}|${st.ph}`;
+          if (this.slicer && (this.slicer.key !== key || this.slicer.count > (dIt.k | 0))) { this.slicer.dispose(); this.slicer = null; }
+          if (!this.slicer) this.slicer = new SlicePhysics(key, this.dynamic);
+          ov.st = { ...(ov.st || {}), sliceSim: true };
+          const sec = C.sec && C.sec((C.xL + C.face) / 2);
+          this.slicer.update(this.dt || 0.016, { pos: ov.pos, yaw: ov.yaw, face: C.face, xL: C.xL, top: C.top, rz: sec ? sec.rz : 0.02 }, it.kind, { ...dIt, k: C.k, n: C.n }, { K0: K.K0, xA: K.xA, yA: K.yA, edge: KNIFE_EDGE, on: !!(S && S.t < CUT_T.down) });
+          this.slicerT = this.t;
+        }
         if (aimed) {
           // (the outline of the knife as it will be at the bottom of the stroke there – seen through the food – and a line
           // round the food where it goes through; not while it's going down)
@@ -4019,6 +4032,8 @@ export class Scene3D {
       } else fx.tool.quaternion.setFromUnitVectors(UP, T.dir); // (hanging from the fist, leaning toward me)
       }
     }
+    // (the slices under physics: gone once the cutting's over – the thing's drawn with them in their row again)
+    if (this.slicer && this.t - (this.slicerT || 0) > 0.15) { this.slicer.dispose(); this.slicer = null; }
     // aimed cutting: the knife's outline where it will go down, a line round the food there
     const CG = W && W.cutGhost && this.firstPerson ? W.cutGhost : null;
     if (CG && !fx.cutGhost) {

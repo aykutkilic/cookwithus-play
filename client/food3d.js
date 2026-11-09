@@ -110,7 +110,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units', 'cuts', 'scored', 'skinned']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units', 'cuts', 'scored', 'skinned', 'sliceSim']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -943,7 +943,7 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
       g.add(wholeG);
       cutFace(g, a, P, C.sec(xc), xc);
     }
-    if (row) return cutSlices(g, a, P, C, k, n, false, cuts);
+    if (row) return st.sliceSim ? undefined : cutSlices(g, a, P, C, k, n, false, cuts); // (sliceSim: client/slicephys.js has them)
     const pg = new THREE.Group();
     pieces(pg, a, P, cut, cnt, seed, st);
     pg.position.x = xc + 0.006 + heapGap(a, cut, cnt, st);
@@ -1009,21 +1009,8 @@ function cutSlices(g, a, P, C, k, n, fallen = false, cuts = null) {
     h.position.set(px, (Math.sin(phi) * t) / 2, 0);
     h.rotation.z = -phi;
     if (!fallen && j === k - 1) Object.assign(h.userData, { fresh: { phi, t }, keep: true }); // (kept a group of its own: it moves)
-    // (the slice standing on its edge, its cut faces to the sides: built round y, turned)
-    const sl = new THREE.Group();
+    const sl = sliceShape(a, P, s, t, { skin, flesh, inner, face, seedM, seeds: fallen ? j : null });
     sl.position.y = s.ry;
-    sl.rotation.z = Math.PI / 2;
-    sl.scale.set(s.ry, t, s.rz);
-    if (a.hollow) {
-      part(sl, GEO.tube, skin, 0, 0, 0, 1, 1, 1);
-      part(sl, GEO.tube, inner, 0, 0, 0, 0.8, 0.999, 0.8);
-      part(sl, GEO.annulus, face, 0, 0.5, 0, 1, 1, 1, -Math.PI / 2, 0, 0);
-      part(sl, GEO.annulus, face, 0, -0.5, 0, 1, 1, 1, Math.PI / 2, 0, 0);
-      if (fallen) for (let q = 0; q < 3; q++) { const an = q * 2.1 + j; part(sl, GEO.sphereLo, seedM, Math.cos(an) * 0.42, 0, Math.sin(an) * 0.42, 0.14, 0.5, 0.1); }
-    } else {
-      part(sl, GEO.cyl, [skin, flesh, flesh], 0, 0, 0, 1, 1, 1);
-      if ((a.type === 'round' && !a.spots) || a.type === 'egg') for (const y of [0.502, -0.502]) part(sl, GEO.disc, fm(a.type === 'egg' ? mixHex(P.c3, '#f6e7a0', 0.35) : P.c3, { rough: 0.5 }), 0, y, 0, 0.55, 0.55, 0.55, y > 0 ? -Math.PI / 2 : Math.PI / 2, 0, 0);
-    }
     h.add(sl);
     g.add(h);
     xs.push(px);
@@ -1141,6 +1128,40 @@ function melonCut(g, a, P, cut, st, wet) {
     }
     g.add(h);
   });
+}
+// One slice, standing on its edge, its cut faces to the sides – built round y, turned so its thickness is along x; its
+// middle at the group's origin (s: its section, t: its thickness; M: its materials; seeds: a ring's pale seeds)
+function sliceShape(a, P, s, t, M) {
+  const sl = new THREE.Group();
+  sl.rotation.z = Math.PI / 2;
+  sl.scale.set(s.ry, t, s.rz);
+  if (a.hollow) {
+    part(sl, GEO.tube, M.skin, 0, 0, 0, 1, 1, 1);
+    part(sl, GEO.tube, M.inner, 0, 0, 0, 0.8, 0.999, 0.8);
+    part(sl, GEO.annulus, M.face, 0, 0.5, 0, 1, 1, 1, -Math.PI / 2, 0, 0);
+    part(sl, GEO.annulus, M.face, 0, -0.5, 0, 1, 1, 1, Math.PI / 2, 0, 0);
+    if (M.seeds != null) for (let q = 0; q < 3; q++) { const an = q * 2.1 + M.seeds; part(sl, GEO.sphereLo, M.seedM, Math.cos(an) * 0.42, 0, Math.sin(an) * 0.42, 0.14, 0.5, 0.1); }
+  } else {
+    part(sl, GEO.cyl, [M.skin, M.flesh, M.flesh], 0, 0, 0, 1, 1, 1);
+    if ((a.type === 'round' && !a.spots) || a.type === 'egg') for (const y of [0.502, -0.502]) part(sl, GEO.disc, fm(a.type === 'egg' ? mixHex(P.c3, '#f6e7a0', 0.35) : P.c3, { rough: 0.5 }), 0, y, 0, 0.55, 0.55, 0.55, y > 0 ? -Math.PI / 2 : Math.PI / 2, 0, 0);
+  }
+  return sl;
+}
+// The j-th slice cut off a thing being cut into slices or rings (st: its state – k, n, cuts), on its own – for the
+// slices falling aside under physics (client/slicephys.js): {g (its middle at the origin, its thickness along x), r
+// (half its height), rz (half its depth), t, x and y (where its middle was in the thing, as buildFood lays it out)} – or
+// null (not a thing cut in slices)
+export function sliceModel(kind, st, j) {
+  const a = artOf(kind), C = a && cutGeom(a);
+  if (!C || !C.sec) return null;
+  const n = num(st.n, 0), cuts = Array.isArray(st.cuts) ? st.cuts : null, P = artPal(a, st);
+  const hi = cutAt(C, j, n, cuts), lo = cutAt(C, j + 1, n, cuts), t = Math.max(0.002, (hi - lo) * 0.9), s = C.sec((hi + lo) / 2);
+  if (!s || s.ry < 0.002) return null;
+  const M = { skin: fm(P.c1, { rough: 0.45 }), flesh: fm(P.c2, { rough: 0.5 }), inner: fm(P.c2, { rough: 0.5, side: THREE.BackSide }), face: fm(P.c2, { rough: 0.5 }), seedM: null, seeds: null };
+  const g = new THREE.Group();
+  g.add(sliceShape(a, P, s, t, M));
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return { g, r: s.ry, rz: s.rz, t, x: (hi + lo) / 2, y: s.y };
 }
 // Cut into strips (n cuts): side by side where it was, each as tall and deep as it was there – turned (0 … 1) a
 // quarter round, as far as it's been turned to be cut across
