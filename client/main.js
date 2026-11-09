@@ -1779,19 +1779,35 @@ const controls = new Controls({
 });
 const touchUI = isTouchDevice() || params.has('touch');
 
-// F2 / 👁: through my own eyes, or the whole room
+// First person is the game. The whole room seen from above (isometric) is kept for a future variant – hidden and off
+// (the user, 2026-11-09: "let's make the 3d mode default and hide the isometric mode and disable it. it will be a
+// future variant") – only with ?iso in the address is it there, with F2 / 👁 switching between them.
+const ISO = params.has('iso');
+// F2 / 👁 (?iso only): through my own eyes, or the whole room
 function toggleView() {
+  if (!ISO && S.fp) return;
+  setView(!S.fp);
+}
+function setView(fp, quiet = false) {
   if (S.working) closeStation(true); // (the close-up and the 3D work are each their view's)
-  S.fp = !S.fp;
+  S.fp = fp;
   scene.setFirstPerson(S.fp);
   controls.setFirstPerson(S.fp);
   $('viewBtn').classList.toggle('on', S.fp);
   $('viewBtn').textContent = S.fp ? '🏠' : '👁';
+  if (quiet) return;
   if (!touchUI) { if (S.fp) lockMouse(); else unlockMouse(); }
-  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), left click your left hand, right click your right (hold to hold on), E your main hand, Q the other, R use what you hold (at work: R does the work – a press a beat, held it goes on), T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen; a gamepad works too'} · ${touchUI ? '🏠' : 'F2'} for the room` : '🏠 The whole room', touchUI ? 3200 : 5200);
+  viewHelp();
   sfx.play('whoosh', 0.4);
 }
+// how the view I'm in works: the keys, the mouse, the stick
+function viewHelp() {
+  toast(S.fp ? `👁 First person – ${touchUI ? 'the stick walks and turns (steps sideways along a counter), drag to look, ⬇ ⬆ crouch / up on your toes' : 'W A S D walk, the mouse looks round (click to capture it, Esc frees it), left click your left hand, right click your right (hold to hold on), E your main hand, Q the other, R use what you hold (at work: R does the work – a press a beat, held it goes on), T tip it in, Tab every option, Ctrl crouch, Space up on your toes, F full screen; a gamepad works too'}${ISO ? ` · ${touchUI ? '🏠' : 'F2'} for the room` : ''}` : '🏠 The whole room', touchUI ? 3200 : 5200);
+}
 $('viewBtn').onclick = () => { sfx.unlock(); toggleView(); };
+// (through my own eyes from the start – the mouse's captured with a click on the kitchen, as ever)
+$('viewBtn').hidden = !ISO;
+if (!ISO) setView(true, true);
 $('camBtn').onclick = () => toggleCam();
 controls.setTouch(touchUI);
 if (touchUI) lockZoom();
@@ -2203,7 +2219,7 @@ function openWelcome() {
   };
   $('wName').oninput = () => { $('wErr').textContent = isProfane($('wName').value) ? 'Let’s keep the kitchen friendly – pick another name 🙂' : ''; };
   $('wLook').onclick = () => { if (saveName()) openProfile(); };
-  $('wCook').onclick = () => { if (saveName()) closeModal(); };
+  $('wCook').onclick = () => { if (saveName()) { closeModal(); viewHelp(); } };
   $('wBook').onclick = () => { if (saveName()) openBook(); };
   $('wFriends').onclick = () => { if (saveName()) openInvite(true); };
 }
