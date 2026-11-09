@@ -150,7 +150,7 @@ export class Station {
     // where the subject (the thing worked on) and the source (the thing brought in) are
     const vId = s.vessel || s.into || null;
     g.subject = null; g.source = null; g.target = null;
-    const isItemStep = ['wash', 'rinse', 'peel', 'skin', 'shell', 'slice', 'dice', 'mince', 'chop', 'slit', 'grate', 'tear', 'crush', 'core', 'separate', 'knead', 'roll', 'stretch', 'shape', 'spread', 'brush', 'top', 'wrap'].includes(s.do);
+    const isItemStep = ['wash', 'rinse', 'peel', 'skin', 'shell', 'slice', 'dice', 'mince', 'chop', 'cube', 'slit', 'grate', 'tear', 'crush', 'core', 'separate', 'knead', 'roll', 'stretch', 'shape', 'spread', 'brush', 'top', 'wrap'].includes(s.do);
     if (isItemStep && s.item) g.subject = { type: 'item', id: s.item };
     else if (vId) g.subject = { type: 'vessel', id: vId };
     else if (s.target) g.subject = { type: 'item', id: s.target };

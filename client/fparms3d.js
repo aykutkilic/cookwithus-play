@@ -124,6 +124,7 @@ const HS = 0.57;
 // 0.186 of the height, forearm 0.146, shoulder 0.818 – here 1 is about 1.96 m); how far the (unseen) shoulder may
 // come forward, leaning in
 const UPPER = 0.167, FORE = 0.135, SLIDE = 0.3;
+const MOCAP_BLEND = 0.4; // (s: into and out of a played-back motion)
 const REACH = (UPPER + FORE) * 0.985 + SLIDE;  // further than that, the hand stops (and the thing comes to it)
 const LEAN = 0.16; // how far you lean in toward something out of reach
 export const APART = 0.9; // how far apart my arms are (1: as they were first made – a little wide)

@@ -238,7 +238,7 @@ function choreBlocked(C, x, K, d, memberId) {
     if (d.do === 'wash') return f.caps.includes('sink') ? '' : 'Wash it at the sink';
     if (!f.caps.includes('board')) return 'That’s done on a board';
     if (it.at !== d.fx && !heldBy(C, memberId).includes(`i:${d.item}`)) return 'Bring it here first';
-    if (['slice', 'dice', 'mince', 'chop'].includes(d.do) && it.cut) return 'It’s cut already';
+    if (['slice', 'dice', 'mince', 'chop', 'cube'].includes(d.do) && it.cut) return 'It’s cut already';
     return '';
   }
   const sc = C.scraps[d.fx];
@@ -1275,7 +1275,7 @@ function completePhase(C, x, K, s, st, ph, v, f, ev) {
   if (ph.eff) ph.eff(C, s, v, fxState(C, st.fx), ph, st.extra);
   // (sliced: as good as the slices are even)
   if (ph.g === 'chop' && ph.mode === 'slice' && !ph.flat) {
-    const q = evenQ(cutsOf(st.extra));
+    const q = evenQ(cutsOf(st.extra), !!ph.whole);
     if (q != null) { st.q = Math.min(st.q, q); ev.push({ k: 'even', sid: s.id, q }); }
   }
   if (ph.g === 'tap' && ph.hot === 'gloves') wearGloves(C, st.by, st.fx);
@@ -1658,15 +1658,18 @@ export function displayState(C, x, K) {
 
 // How even slices are: the spread of their thicknesses over their mean (0: all alike) – cuts as cutsOf gives them; null
 // for fewer than two
-export function cutSpread(cuts) {
-  if (!cuts || cuts.length < 2) return null;
-  const t = cuts.map((c, i) => c - (i ? cuts[i - 1] : 0)), m = t.reduce((a, b) => a + b, 0) / t.length;
+// (whole: cut right through – what's past the last cut is a piece as well)
+export function cutSpread(cuts, whole = false) {
+  if (!cuts || cuts.length < (whole ? 1 : 2)) return null;
+  const t = cuts.map((c, i) => c - (i ? cuts[i - 1] : 0));
+  if (whole) t.push(1 - cuts[cuts.length - 1]);
+  const m = t.reduce((a, b) => a + b, 0) / t.length;
   if (!(m > 0)) return null;
   return Math.sqrt(t.reduce((a, b) => a + (b - m) ** 2, 0) / t.length) / m;
 }
 // …and the step's quality for it: a tenth's spread is a cook's hand (1), half again as thick as each other about 0.75
-export function evenQ(cuts) {
-  const cv = cutSpread(cuts);
+export function evenQ(cuts, whole = false) {
+  const cv = cutSpread(cuts, whole);
   return cv == null ? null : Math.max(0.5, Math.min(1, 1 - Math.max(0, cv - 0.1) * 1.2));
 }
 
@@ -1692,7 +1695,7 @@ export function validateRecipe(r) {
     if (s.do === 'wait' && !s.dur) errs.push(`${s.id}: wait without dur`);
     if (['add', 'pour', 'crack', 'season', 'squeeze'].includes(s.do) && !s.into && !s.target) errs.push(`${s.id}: ${s.do} without into`);
     if (['heat', 'adjust', 'off', 'remove', 'stir', 'whisk', 'saute', 'flip', 'blend', 'mash', 'cover', 'uncover', 'bakeIn', 'bakeOut', 'turn', 'chillIn', 'chillOut', 'fill', 'drain'].includes(s.do) && !s.vessel) errs.push(`${s.id}: ${s.do} without vessel`);
-    if (['wash', 'rinse', 'peel', 'skin', 'shell', 'slice', 'dice', 'mince', 'chop', 'slit', 'grate', 'tear', 'crush', 'core', 'separate', 'knead', 'roll', 'stretch', 'shape', 'spread', 'brush', 'top', 'wrap', 'dip', 'stuff'].includes(s.do) && !s.item) errs.push(`${s.id}: ${s.do} without item`);
+    if (['wash', 'rinse', 'peel', 'skin', 'shell', 'slice', 'dice', 'mince', 'chop', 'cube', 'slit', 'grate', 'tear', 'crush', 'core', 'separate', 'knead', 'roll', 'stretch', 'shape', 'spread', 'brush', 'top', 'wrap', 'dip', 'stuff'].includes(s.do) && !s.item) errs.push(`${s.id}: ${s.do} without item`);
     if (s.split && !s.n) errs.push(`${s.id}: split without n`);
   }
   for (const [id, i] of Object.entries(x.ing)) if (!INGREDIENTS[i.kind]) errs.push(`ingredient ${id}: unknown kind ${i.kind}`);

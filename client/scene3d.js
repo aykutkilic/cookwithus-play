@@ -24,7 +24,7 @@ import { contactOffset, planAlongRay, handSpheres, clearance } from './reachplan
 const MOCAP = {};
 for (const name of ['slices-into-bowl']) fetch(new URL(`./mocap/${name}.json`, import.meta.url)).then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) MOCAP[name] = m; }).catch(() => {});
 import { MAIN, SIDE, CUT_T } from './station.js';
-import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts, emptyBox, emptyBoxSize } from './food3d.js';
+import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts, emptyBox, emptyBoxSize, melonBoats } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
 import { setOutline, outlineCopy, setOutlineRes } from './outline3d.js';
@@ -2736,8 +2736,15 @@ export class Scene3D {
     // (at a worktop, a burner, the sink: through my own eyes, leaning over it – about 55° down, as a cook sees the
     // board – so my forearms come in short from the bottom corners and my hands are big on the work; not from a
     // camera a metre over it, which drew my arms as long sticks with tiny hands: docs/work-by-buttons.md)
-    const look = w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02);
-    return { look, pos: look.clone().addScaledVector(w.N, EYES_CAM.back).addScaledVector(UP, EYES_CAM.up), fov: EYES_CAM.fov };
+    // (a big thing worked on – a melon: my head further back and up over it, as far as it's bigger than a lemon or a
+    // pepper – else it fills the view and the arm sawing at it crosses my eyes)
+    const look = w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02), z = this.workZoom(st);
+    return { look, pos: look.clone().addScaledVector(w.N, EYES_CAM.back * z).addScaledVector(UP, EYES_CAM.up * z), fov: EYES_CAM.fov };
+  }
+  // how much further back my eyes are over the work (1: a lemon's, a pepper's – about 10 cm long – or smaller)
+  workZoom(st) {
+    const it = st && st.subjectItem && st.subjectItem(), C = it && cutLine(it.kind, 0, 1);
+    return C ? Math.max(1, Math.min(1.8, (C.xR - C.xL) / 0.11)) : 1;
   }
   // What a step works with, in my hand while I use it: a shaker (shaken upside down) or a bottle (tipped) of what
   // seasons it, a sack's sugar – a pinch – the lemon squeezed, the garlic rubbed on. {id, how, col} or null.
@@ -2847,7 +2854,7 @@ export class Scene3D {
     // and down at my sides, as a cook's are, not reaching out at arm's length)
     // (my eyes are the camera's – EYES_CAM – so my shoulders are just under and beside it, and I see my forearms and
     // hands come in from below, never my upper arms from behind)
-    else out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back + EYES_CAM.body).addScaledVector(UP, EYES_CAM.up + EYES_CAM.bodyUp), fwd: w.N.clone().negate() };
+    else { const z = this.workZoom(st); out.body = { pos: w.O.clone().addScaledVector(UP, 0.02).addScaledVector(w.N, 0.02 + EYES_CAM.back * z + EYES_CAM.body).addScaledVector(UP, EYES_CAM.up * z + EYES_CAM.bodyUp), fwd: w.N.clone().negate() }; }
     // washing is done in the food's container, in the basin: it fills while the tap runs, and is tipped out at the end
     const washing = st.c && st.c.def && st.c.def.do === 'wash';
     const F0 = this.k3.fx[w.fx];
@@ -3386,7 +3393,15 @@ export class Scene3D {
         // over the board (as the close-up has it); off to the side of the food, it
         // goes that way.
         const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
-        const C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty, D && D.items[it.id] && D.items[it.id].cuts);
+        const dIt = it && D && D.items[it.id];
+        let C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty, dIt && dIt.cuts, dIt && dIt.cut);
+        // (a melon's slices stood on their rinds, each cut down into at its middle: the knife over the next one – the
+        // last one cut where it rests – food3d melonBoats)
+        const boat = C && ph.mode === 'score' && dIt ? melonBoats(it.kind, dIt.cuts, dIt.n || phaseTarget(ph) - 1) : null;
+        if (boat && boat.length) {
+          const b = boat[Math.min(st.k, boat.length - 1)], b0 = st.k > 0 ? boat[Math.min(st.k, boat.length) - 1] : null;
+          C = { ...C, top: b.ry, face: b0 ? b0.x : b.x + b.rz + 0.02, xL: b.x - b.rz, xOf: () => b.x, sec: () => ({ y: 0, ry: b.ry, rz: b.t / 2 }), score: b, z: b.z };
+        }
         if (!ov || !C) { toolHand(at(pt)); break; }
         if (ph.flat) {
           // Crushing (cardamom pods, a garlic clove): the knife on its side over the food, its edge away from
@@ -3416,8 +3431,8 @@ export class Scene3D {
         // over to the place, down through it pushed forward along its length, the slice tipping over as it comes up
         const aimed = !!(st.aimed && st.aimed()), S = aimed ? g.stroke : null;
         let aim = null;
-        if (aimed) { this.cutFrame = { id: it.id, pos: ov.pos.clone(), ax: ax.clone(), C, at }; aim = this.cutAimX(C, ax.dot(at(pt).sub(ov.pos))); }
-        const want = !aimed ? C.next + off * w.S : S && S.f != null ? C.xOf(S.f) : aim.x;
+        if (aimed && C.score) { this.cutFrame = null; aim = { x: C.score.x, f: null }; } else if (aimed) { this.cutFrame = { id: it.id, pos: ov.pos.clone(), ax: ax.clone(), C, at }; aim = this.cutAimX(C, ax.dot(at(pt).sub(ov.pos))); }
+        const want = !aimed ? C.next + off * w.S : S && S.f != null && !C.score ? C.xOf(S.f) : aim.x;
         const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
         const dt = this.dt || 0.016;
         // (aimed: between cuts the knife rests on the board at the cut face, as the reference's does – the outline shows
@@ -3448,7 +3463,8 @@ export class Scene3D {
           if (down || up) ck.dir = down ? 1 : -1;
           ck.slide = (ck.slide || 0) + ((ck.dir || 0) * CHOP_STROKE.slide / 2 - (ck.slide || 0)) * Math.min(1, dt * CHOP_STROKE.rate);
         }
-        const E = ov.pos.clone().addScaledVector(ax, ck.x + (aimed ? ck.push || 0 : 0)).setY(ov.pos.y + 0.001 + lv * (C.top + 0.012));
+        const zOff = C.z || 0; // (a melon's slices one behind another: the one cut, toward me)
+        const E = ov.pos.clone().addScaledVector(ax, ck.x + (aimed ? ck.push || 0 : 0)).addScaledVector(blade, -zOff).setY(ov.pos.y + 0.001 + lv * (C.top + 0.012));
         const Ek = E.clone().addScaledVector(blade, ck.slide);
         // (rocking only a little: the tip tipped further down as it lifts would have the thumb-up hand bent down toward
         // its little finger past what a wrist does – the arm's solver then turned the palm up and the elbow out)
@@ -3465,9 +3481,9 @@ export class Scene3D {
           // (the outline of the knife as it will be at the bottom of the stroke there – seen through the food – and a line
           // round the food where it goes through; not while it's going down)
           if (!S || S.t < CUT_T.set) {
-            const G = this.knifeAt(ov.pos.clone().addScaledVector(ax, aim.x + (this.knifeFix || 0)).setY(ov.pos.y + 0.001), bladeK, Math.min(CHOP_STROKE.tip, tipDown(0, CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
+            const G = this.knifeAt(ov.pos.clone().addScaledVector(ax, aim.x + (this.knifeFix || 0)).addScaledVector(blade, -zOff).setY(ov.pos.y + 0.001), bladeK, Math.min(CHOP_STROKE.tip, tipDown(0, CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
             const sec = C.sec && C.sec(aim.x);
-            out.cutGhost = { K0: G.K0, xA: G.xA, yA: G.yA, ring: sec && sec.ry > 0.002 ? { pos: ov.pos.clone().addScaledVector(ax, aim.x).addScaledVector(UP, sec.y), yaw: ov.yaw, ry: sec.ry, rz: sec.rz } : null };
+            out.cutGhost = { K0: G.K0, xA: G.xA, yA: G.yA, ring: sec && sec.ry > 0.002 ? { pos: ov.pos.clone().addScaledVector(ax, aim.x).addScaledVector(blade, -zOff).addScaledVector(UP, sec.y), yaw: ov.yaw, ry: sec.ry, rz: sec.rz } : null };
           }
           this.tipFresh(`item:${it.id}`);
         }
@@ -3479,7 +3495,7 @@ export class Scene3D {
         if (st.touchy) { const s2 = st.steadies() && st.steadyAt(); hold = s2 ? Math.min(hold, (s2.x - MAIN.x) * w.S) : null; }
         if (hold != null) {
           hold = Math.min(next - CLAW_GAP, Math.max(C.xL - 0.03, hold)) - (this.clawPush || 0);
-          const H = ov.pos.clone().addScaledVector(ax, hold).addScaledVector(blade, -CLAW_DIR.near).setY(ov.pos.y + C.top + 0.001); // (the palm on it, toward me: the knuckles over it, the fingers down its far side)
+          const H = ov.pos.clone().addScaledVector(ax, hold).addScaledVector(blade, -CLAW_DIR.near - zOff).setY(ov.pos.y + C.top + 0.001); // (the palm on it, toward me: the knuckles over it, the fingers down its far side)
           // (its fingers forward over the food and a little toward the blade, arched over it, the forearm coming in from
           // the bottom left – as the fal.ai reference has it: so the hand's side, not its long fingers, is toward the
           // blade, and it can sit on the food close behind the cut)
@@ -3526,6 +3542,30 @@ export class Scene3D {
             out.sprites.push({ tex: null, kind: it.kind, st: { cut: pieceCut(it.kind, it), k: 1, n: 1, bits: 0.01 }, pos: P, size: 0.06 });
             pinch(P, 0.7);
           }
+          break;
+        }
+        // A melon sawn in half (ph.saw) – as the user's video: the knife level, its flat to the board, in from the left at half
+        // its height, as far in as it's been sawn, to and fro along its length with the pointer; my other hand flat on top,
+        // holding it. Its flesh run off each slice's rind (ph.skin): the knife level just over the rind, through the slice.
+        const mIt = g.kind === 'strokes' && (ph.saw || ph.skin) && st.subjectItem(), mOv = mIt && out.ov.get(`i:${mIt.id}`), mC = mOv && cutLine(mIt.kind, 0, 1);
+        if (mC) {
+          mOv.yaw = out.yaw + CUT_TURN;
+          const ax = new THREE.Vector3(Math.cos(mOv.yaw), 0, -Math.sin(mOv.yaw)), toMe = new THREE.Vector3().crossVectors(ax, UP).normalize();
+          const R = mC.xR, n = Math.max(1, phaseTarget(ph)), b = st.subjectBox(), saw = p.seen ? Math.max(-1, Math.min(1, (p.x - b.cx) / 120)) * 0.025 : 0;
+          // (in from my knife hand's side – the right for a right-handed cook – its blade pointing across, level: held as
+          // for crushing, palm down on the handle, the blade on its side; in from the other side both my arms crossed my eyes)
+          const sd = wi === 1 ? 1 : -1, xA = ax.clone().multiplyScalar(-sd), yA = toMe.clone();
+          let tip, top;
+          if (ph.saw) { tip = mOv.pos.clone().addScaledVector(ax, sd * (R * 1.05 - 2 * R * Math.min(1, st.k / n) - 0.015) - saw).addScaledVector(UP, mC.top / 2); top = mOv.pos.clone().addScaledVector(ax, -sd * R * 0.3).addScaledVector(UP, mC.top + 0.004); }
+          else {
+            const dIt = D && D.items[mIt.id], B = melonBoats(mIt.kind, dIt && dIt.cuts, (dIt && dIt.n) || 3), bt = B[Math.min(st.k, B.length - 1)] || { x: 0, z: 0, ry: 0.05, rz: 0.06 };
+            tip = mOv.pos.clone().addScaledVector(ax, bt.x - sd * bt.rz * 0.6 - saw).addScaledVector(toMe, bt.z).addScaledVector(UP, bt.ry * 0.3);
+            top = mOv.pos.clone().addScaledVector(ax, bt.x - sd * bt.rz * 0.4).addScaledVector(toMe, bt.z).addScaledVector(UP, bt.ry + 0.004);
+          }
+          const K0 = tip.clone().addScaledVector(xA, -KNIFE_TIP).addScaledVector(yA, 0.02), fist = K0.clone().addScaledVector(xA, -0.013).addScaledVector(yA, -0.006).addScaledVector(UP, 0.006);
+          out.tool = { kind: 'knife', grip: fist, dir: xA, up: yA, hand: wi, off: K0.clone().sub(fist) };
+          hand(wi, fist, 'knifeFlat', { dir: xA });
+          hand(oi, top, 'hand', { curl: 0.25 });
           break;
         }
         // Grating: the box grater stands on the board, left of the food, my left hand on its
@@ -3811,7 +3851,8 @@ export class Scene3D {
   // Aimed cutting: where the knife would go for a point x along the food (cutLine's frame) – no thinner a slice than a
   // third of an even one, and leaving room for the cuts still to make: {f (0 … 1, cutLine's), x, len (m)}
   cutAimX(C, x) {
-    const minF = 0.35 / Math.max(1, C.n), lo = C.faceF + minF, hi = Math.max(lo, 1 - (C.n - C.k - 1) * minF);
+    // (cut right through – a melon's half: the last piece is one of them too, not what's left over)
+    const minF = 0.35 / Math.max(1, C.n + (C.whole ? 1 : 0)), lo = C.faceF + minF, hi = Math.max(lo, 1 - (C.n - C.k - (C.whole ? 0 : 1)) * minF);
     const f = Math.max(lo, Math.min(hi, C.fOf(x)));
     return { f, x: C.xOf(f), len: C.span };
   }

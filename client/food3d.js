@@ -110,7 +110,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units', 'cuts']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units', 'cuts', 'scored', 'skinned']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -387,6 +387,7 @@ function foodLocal(g, kind, st) {
     if (q > 1 && st.shape !== 'flat') return cluster(g, a, q, (h) => dough(h, a, P, { ...st, qty: 1 }, seed, wet));
     return dough(g, a, P, st, seed, wet);
   }
+  if (a.net && (cut === 'halving' || cut === 'halves' || cut === 'moons' || cut === 'chunks')) return melonCut(g, a, P, cut, st, wet);
   if (a.type === 'egg' && (cut === 'cracked' || cut === 'beaten' || st.cracked)) return pieces(g, a, P, cut === 'beaten' ? 'beaten' : 'cracked', defaultCount(a, 'cracked', st), seed, st);
   if (cut && cut !== 'whole') return cutProgress(g, a, P, cut, st, seed, wet);
   const q = clamp((num(st.qty, 1) + num(st.extra, 0)) | 0, 1, 8); // (a bunch: what the recipe takes and the rest)
@@ -460,6 +461,7 @@ function whole(g, a, P, st, seed, wet) {
         part(g, GEO.sphere, m, 0, H, 0, R, H, H * 0.98);
         for (const sx of [-1, 1]) part(g, GEO.cone, m, sx * (R + 0.006), H, 0, H * 0.22, 0.016, H * 0.22, 0, 0, -sx * Math.PI / 2);
       } else part(g, GEO.sphere, m, 0, H, 0, R, H, R * 0.97);
+      if (a.net) melonStripes(g, R, H);
       if (part0 && !a.lobes && !a.segments) skinLeft(new THREE.SphereGeometry(1, 20, 14, 0, TAU * (1 - pf)), fm(P.c1, { rough }), 0, H, 0, R * 1.015, H * 1.015, R * 0.985);
       if (a.tip && !a.segments) part(g, GEO.cone, fm(st.peeled ? skin : P.c3, { rough }), 0, H * 2 + 0.006, 0, H * 0.18, 0.018, H * 0.18);
       // (cored – or being: the knife's cut round the stem as far as it's gone; then a hole where it was)
@@ -834,7 +836,7 @@ function cutGeom(a) {
 }
 // the k-th of n cuts' line (k = 0: the right end) – where it was made (cuts: each one's place, 0 the right end … 1
 // as far as it's cut, shared/actions.js cutsOf), else where it would be cutting evenly
-const cutSpan = (C) => { const L = C.xR - C.xL; return L - clamp(0.032, L * KEEP, L * 0.4); };
+const cutSpan = (C) => { const L = C.xR - C.xL; return L - (C.keep ?? clamp(0.032, L * KEEP, L * 0.4)); };
 const cutF = (k, n, cuts) => (k <= 0 ? 0 : cuts && Number.isFinite(cuts[k - 1]) ? clamp(cuts[k - 1], 0, 1) : clamp(k / Math.max(1, n), 0, 1));
 const cutAt = (C, k, n, cuts) => C.xR - cutSpan(C) * cutF(k, n, cuts);
 // Several of a thing are cut one after the other, the n cuts shared out among
@@ -851,14 +853,14 @@ function unitOf(k, n, q) {
 // as buildFood lays it out), and how tall it is.
 // (cuts: where those made went – see cutAt; fOf / xOf: a place along it as a cut's 0 … 1 and back; sec: its section
 // there, as cutGeom has it)
-export function cutLine(kind, k, n, qty = 1, cuts = null) {
+export function cutLine(kind, k, n, qty = 1, cuts = null, form = null) {
   const a = artOf(kind);
   if (!a) return null;
-  const C = cutGeom(a);
+  const C = a.net && form === 'moons' ? domeGeom(a) : cutGeom(a);
   const q = clamp(num(qty, 1) | 0, 1, 8);
   if (q > 1) { const U = unitOf(k, n, q); k = U.kk; n = U.nn; }
   const span = cutSpan(C);
-  return { next: cutAt(C, Math.min(n, k + 1), n, cuts), face: cutAt(C, k, n, cuts), faceF: cutF(k, n, cuts), k, n, xL: C.xL, xR: C.xR, top: C.top, span,
+  return { next: cutAt(C, Math.min(n, k + 1), n, cuts), face: cutAt(C, k, n, cuts), faceF: cutF(k, n, cuts), k, n, xL: C.xL, xR: C.xR, top: C.top, span, whole: C.keep === 0,
     fOf: (x) => (C.xR - x) / span, xOf: (f) => C.xR - span * f, sec: C.sec };
 }
 
@@ -1028,6 +1030,117 @@ function cutSlices(g, a, P, C, k, n, fallen = false, cuts = null) {
   }
   // (all cut: the row centred where the thing lay – as the video has them – not running on past its right end)
   if (fallen && xs.length) { const mid = (Math.min(...xs) + Math.max(...xs)) / 2 - (C.xL + C.xR) / 2; for (let i = first; i < g.children.length; i++) g.children[i].position.x -= mid; }
+}
+// ------------------------------------------------------------------ a melon
+// Cut up as the user's reference video does it (refs/melon, shared/actions.js cube): sawn in half level, left to right;
+// one half, its cut face down, sliced into 4; each slice stood on its rind, cut down to it, and its flesh run off it.
+const MELON = {
+  stripe: new THREE.TorusGeometry(1, 0.012, 4, 48),
+  halfX: new THREE.CylinderGeometry(1, 1, 1, 24, 1, false, -Math.PI / 2, Math.PI), // (a half disc, z ≥ 0, its thickness along y)
+  rindX: new THREE.CylinderGeometry(1, 1, 1, 24, 1, true, -Math.PI / 2, Math.PI),
+  halfFace: new THREE.CircleGeometry(1, 24, 0, Math.PI), // (a half disc in xy, y ≥ 0)
+};
+// (its green stripes, end to end)
+function melonStripes(g, R, H) {
+  const m = fm('#8ea25c', { rough: 0.7 });
+  for (let i = 0; i < 6; i++) part(g, MELON.stripe, m, 0, H, 0, R * 1.004, H * 1.004, H * 1.004, (i * Math.PI) / 6, 0, 0);
+}
+// the half lying on its cut face, as cutGeom has a thing for the knife: along x, its section at x (from the board up)
+function domeGeom(a) {
+  const { rx, ry } = roundDims(a), R = rx * K, H = ry * K;
+  return { xL: -R, xR: R, top: H, keep: 0, sec: (x) => { const f = Math.sqrt(Math.max(0, 1 - (x / R) ** 2)); return { y: 0, ry: H * f, rz: R * 0.97 * f }; } };
+}
+// The slices of the half, all cut, each stood on its rind (as a boat, as the video has them), one behind the other – the
+// first cut furthest back – their thickness toward me: where each one is (z, toward me), how thick (t), how tall (ry)
+// and wide (rz) – from where the cuts went. (Side by side, four were 60 cm across.)
+export function melonBoats(kind, cuts, n) { const a = artOf(kind); return a ? boatsOf(a, cuts, n) : []; }
+function boatsOf(a, cuts, n) {
+  const C = domeGeom(a), xs = [C.xR];
+  for (let j = 1; j <= n; j++) xs.push(cutAt(C, j, n, cuts));
+  xs.push(C.xL);
+  const out = [];
+  for (let j = 0; j <= n; j++) { const hi = xs[j], lo = xs[j + 1], s = C.sec((hi + lo) / 2); out.push({ t: Math.max(0.006, hi - lo), ry: s.ry * 1.04, rz: s.rz }); }
+  const gap = 0.012, W = out.reduce((q, b) => q + b.t, 0) + gap * (out.length - 1);
+  let z = -W / 2;
+  for (const b of out) { b.x = 0; b.z = z + b.t / 2; z += b.t + gap; }
+  return out;
+}
+function melonCut(g, a, P, cut, st, wet) {
+  const { rx, ry } = roundDims(a), R = rx * K, H = ry * K;
+  const rind = fm(P.c1, { rough: wet ? 0.3 : 0.75 }), flesh = fm(P.c2, { rough: 0.45 }), seedM = fm(P.c3, { rough: 0.55 });
+  const n = num(st.n, 0), k = num(st.k, 0), cuts = Array.isArray(st.cuts) ? st.cuts : null;
+  if (cut === 'halving') {
+    // sawn in as far as it's gone: the flesh showing in a line round it there
+    part(g, GEO.sphere, rind, 0, H, 0, R, H, R * 0.97);
+    melonStripes(g, R, H);
+    const band = new THREE.Group();
+    part(band, GEO.cyl, flesh, 0, H, 0, R * 1.008, 0.007, R * 0.978);
+    band.userData.clipX = -R + 2 * R * clamp(n ? k / n : 0, 0, 1);
+    band.scale.x = -1; // (from the right, where the knife comes in: the knife hand's side)
+    g.add(band);
+    return;
+  }
+  // a half, its cut face down (a dome) – from xL as far as the knife's cut it, its cut face there
+  const dome = (h, xc = R) => {
+    const d = new THREE.Group();
+    part(d, GEO.hemi, rind, 0, 0.001, 0, R, H, R * 0.97);
+    if (xc < R) d.userData.clipX = xc;
+    h.add(d);
+    if (xc < R) {
+      const s = domeGeom(a).sec(xc);
+      if (s.ry > 0.002) { part(h, MELON.halfFace, flesh, xc, 0.001, 0, s.rz, s.ry, 1, 0, Math.PI / 2, 0); part(h, MELON.halfFace, seedM, xc + 0.0005, 0.001, 0, s.rz * 0.5, s.ry * 0.45, 1, 0, Math.PI / 2, 0); }
+    }
+  };
+  // the other half, set to the back, its cut face up: the flesh, the hollow of seeds
+  const other = () => {
+    const h = new THREE.Group();
+    part(h, GEO.hemi, rind, 0, H, 0, R, H, R * 0.97, Math.PI, 0, 0);
+    part(h, GEO.disc, flesh, 0, H + 0.001, 0, R, R * 0.97, 1, -Math.PI / 2, 0, 0);
+    part(h, GEO.disc, seedM, 0, H + 0.0015, 0, R * 0.45, R * 0.4, 1, -Math.PI / 2, 0, 0);
+    for (let i = 0; i < 9; i++) { const an = i * 2.4; part(h, GEO.sphereLo, fm('#f3e3b4', { rough: 0.5 }), Math.cos(an) * R * 0.25 * (0.4 + (i % 3) * 0.3), H + 0.003, Math.sin(an) * R * 0.22 * (0.4 + (i % 3) * 0.3), 0.0045, 0.0018, 0.0025, 0, an, 0); }
+    h.position.set(-R * 0.4, 0, -(R * 2 + 0.03));
+    g.add(h);
+  };
+  if (cut === 'halves') { dome(g); other(); return; }
+  if (cut === 'chunks') {
+    // (the pieces off the rinds: bite-size cubes, heaped – two layers)
+    const r = rng(7), c = 0.024;
+    for (let i = 0; i < 12; i++) {
+      const L = i < 8 ? 0 : 1, j = L ? i - 8 : i, x = L ? ((j % 2) - 0.5) * c * 1.1 : ((j % 4) - 1.5) * c * 1.08, z = L ? (Math.floor(j / 2) - 0.5) * c * 1.1 : (Math.floor(j / 4) - 0.5) * c * 1.1;
+      part(g, GEO.box, flesh, x + (r() - 0.5) * 0.004, c / 2 + L * c * 0.95, z + (r() - 0.5) * 0.004, c * (0.9 + r() * 0.2), c * (0.85 + r() * 0.2), c * (0.9 + r() * 0.2), (r() - 0.5) * 0.2, r() * 0.6, (r() - 0.5) * 0.2);
+    }
+    return;
+  }
+  other();
+  // cut into slices: k of n so far – the half cut off at the last, its slices lying fallen over to the right of it, the
+  // newest on top; all cut, stood on their rinds in a row (melonBoats): cut down into (scored), the flesh off (skinned)
+  if (k < n) {
+    const C = domeGeom(a), xc = cutAt(C, k, n, cuts);
+    dome(g, xc);
+    for (let j = 0; j < k; j++) {
+      const hi = cutAt(C, j, n, cuts), lo = cutAt(C, j + 1, n, cuts), t = Math.max(0.004, (hi - lo) * 0.9), s = C.sec((hi + lo) / 2);
+      // (lying on its face, its rind's arch away from the half: newest nearest it, on top)
+      part(g, MELON.halfX, [rind, flesh, flesh], xc + 0.004 + (k - 1 - j) * 0.03, t / 2 + (j === k - 1 && k > 1 ? t * 0.6 : 0), 0, s.rz, t, s.ry, 0, Math.PI / 2, -0.06);
+    }
+    return;
+  }
+  const scored = clamp(num(st.scored, 0) | 0, 0, n + 1), skinned = clamp(num(st.skinned, 0) | 0, 0, n + 1);
+  const dark = fm(mixHex(P.c2, '#7a3a10', 0.35), { rough: 0.6 });
+  boatsOf(a, cuts, n).forEach((b, i) => {
+    const h = new THREE.Group();
+    h.position.set(b.x, 0, b.z);
+    if (i < skinned) {
+      // (the flesh off its rind: the rind lying empty, the pieces lifted out on it)
+      part(h, MELON.rindX, rind, 0, b.ry, 0, b.rz, b.t, b.ry, Math.PI / 2, 0, 0);
+      for (const sz of [-1, 1]) part(h, GEO.box, flesh, sz * b.rz * 0.36, b.ry * 0.62, 0, b.rz * 0.62, b.ry * 0.62, b.t * 0.92, 0, 0, sz * 0.12);
+    } else {
+      part(h, MELON.halfX, [rind, flesh, flesh], 0, b.ry, 0, b.rz, b.t, b.ry, Math.PI / 2, 0, 0);
+      part(h, GEO.box, flesh, 0, b.ry - 0.0006, 0, b.rz * 2, 0.0012, b.t, 0, 0, 0); // (its top: the half's cut face)
+      part(h, GEO.disc, seedM, 0, b.ry + 0.0007, 0, b.rz * 0.45, b.t * 0.38, 1, -Math.PI / 2, 0, 0); // (the hollow the seeds were in)
+      if (i < scored) part(h, GEO.box, dark, 0, b.ry * 0.58, 0, 0.0016, b.ry * 0.82, b.t * 1.01);
+    }
+    g.add(h);
+  });
 }
 // Cut into strips (n cuts): side by side where it was, each as tall and deep as it was there – turned (0 … 1) a
 // quarter round, as far as it's been turned to be cut across

@@ -80,9 +80,10 @@ const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', h
   prog: (D, st) => { const it = item(D, st); if (it && it.out == null) it.out = 0; }, eff: (S, st) => { const it = item(S, st); if (it) it.out = 1; } });
 // (still with the rest of its bunch: into an empty container from the stack by the board – the
 // bunch's own container, with what's left, stays there to go back in the fridge / pantry)
-const boxUp = (cut, pile = false) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
+// (tub: the size of glass container off the stack it goes into – 2, the big one, for a melon's pieces)
+const boxUp = (cut, pile = false, tub = null) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: tub === 2 ? 'Gather the pieces up in your hands and put them in the big glass container' : cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
   // (from a bunch: into an empty container off the stack – a small bowl (size -1, food3d.js): cut up, it takes less room than whole)
-  eff: (S, st) => { const it = item(S, st); if (it) { if (it.extra > 0) it.tub = { size: -1 }; splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
+  eff: (S, st) => { const it = item(S, st); if (it) { if (tub != null) it.tub = { size: tub }; else if (it.extra > 0) it.tub = { size: -1 }; splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
 // The knife's cuts as they were made: where each went along the thing, 0 (its end) … 1 (as far as it's cut) – the
 // phase's extra, [{cut}] (shared/cook.js actStep). The pieces are drawn as thick as they were cut (food3d.js cutAt).
 export const cutsOf = (extra) => (extra || []).map((e) => e && Number(e.cut)).filter(Number.isFinite);
@@ -110,7 +111,7 @@ function shareOf(p, u, q) {
     }),
   };
 }
-function onBoard(s, phases, cut = false) {
+function onBoard(s, phases, cut = false, tub = null) {
   const boxed = !(s.itemKind && !boxable(s.itemKind)) && !s.loose; // (loose: lying on the board already, no container)
   const q = boxed ? Math.max(1, Math.min(8, s.itemQty || 1)) : 1;
   const t = BOARD_TOOLS.find((x) => phases.some((p) => p.tool === x));
@@ -120,7 +121,7 @@ function onBoard(s, phases, cut = false) {
     out = [];
     for (let u = 0; u < q; u++) out.push(takeOne(u, q), ...phases.map((p) => shareOf(p, u, q)), toSide(u, t === 'knife' ? 'knife' : 'hand'));
   }
-  if (boxed) out.push(boxUp(cut, q > 1));
+  if (boxed) out.push(boxUp(cut, q > 1, tub));
   // the board's tool: picked up for its first use, in my hand from then on (held while the other hand works)
   if (t) {
     const k0 = out.findIndex((p) => p.tool === t);
@@ -268,6 +269,27 @@ export const ACTIONS = {
         prog: (D, st, k, v, ph, extra) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n, turned: 1, cuts: k > 0 ? cutsOf(extra) : [] }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'dice', k: ph.n, n: ph.n }); } },
     ], true),
+  },
+  // A big fruit (a melon) cut into bite-size pieces, as the user's reference video does it (refs/melon, 2026-11-09): sawn
+  // in half, the knife level, in from the knife hand's side, in a few careful strokes – not one chop; one half cut into 4 equal slices;
+  // a cut straight down into each slice, to the skin; the knife run along each slice's skin, parallel to it, freeing
+  // the pieces; and those gathered into a big glass container.
+  cube: {
+    cap: 'board', verb: 'Cut up', tool: 'knife', icon: '🔪',
+    phases: (s) => onBoard(s, [
+      { g: 'strokes', axis: 'h', n: s.saw || 4, tool: 'knife', saw: true, hint: 'Saw it in half – the knife level, in from the side, a few careful strokes, not one chop',
+        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'halving', k, n: ph.n }); },
+        eff: (S, st) => { Object.assign(item(S, st), { cut: 'halved', k: 0, n: 0 }); } },
+      { g: 'chop', mode: 'slice', whole: true, n: (s.slices || 4) - 1, cut: 'moons', tool: 'knife', hint: `Cut one half into ${s.slices || 4} equal slices`,
+        prog: (D, st, k, v, ph, extra) => { Object.assign(item(D, st), { cut: 'moons', k, n: ph.n, cuts: cutsOf(extra) }); },
+        eff: (S, st, v, fx, ph, extra) => { Object.assign(item(S, st), { cut: 'moons', k: ph.n, n: ph.n, cuts: cutsOf(extra) }); } },
+      { g: 'chop', mode: 'score', n: s.slices || 4, cut: 'scored', tool: 'knife', hint: 'A cut straight down into each slice, to the skin',
+        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'moons', k: ph.n - 1, n: ph.n - 1, scored: k }); }, // (the slices as they stand – before the last phase's end has come back from the host too)
+        eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { scored: ph.n }); } },
+      { g: 'strokes', axis: 'h', n: s.slices || 4, tool: 'knife', skin: true, once: true, hint: 'Run the knife along each slice’s skin, close to it, to free the pieces',
+        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'moons', k: ph.n - 1, n: ph.n - 1, scored: ph.n, skinned: k }); },
+        eff: (S, st) => { Object.assign(item(S, st), { cut: 'chunks', k: 1, n: 1, scored: 0, skinned: 0, cuts: [] }); } },
+    ], true, 2),
   },
   mince: {
     cap: 'board', verb: 'Mince', tool: 'knife', icon: '🔪',

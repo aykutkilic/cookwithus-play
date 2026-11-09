@@ -750,6 +750,19 @@ export const MORE_RECIPES = [
     ],
   },
   {
+    // (the user's melon video, refs/melon – shared/actions.js cube)
+    id: 'kavun', name: 'Kavun', cuisine: 'turkish', level: 1, serves: 4,
+    blurb: 'A ripe melon cut into bite-size pieces the careful way – sawn in half, sliced, cut down to the rind and run off it – heaped into a big glass bowl.',
+    ing: { melon: 1 },
+    ves: {},
+    dish: { base: 'bowl', main: 'fruit', color: '#f39a4c', bits: ['melon'], garnish: null },
+    steps: [
+      { id: 'washM', do: 'wash', item: 'melon', n: 3 },
+      { id: 'cube', do: 'cube', item: 'melon', after: ['washM'], title: 'Cut the melon into bite-size pieces' },
+      { id: 'serve', do: 'serve', after: ['cube'], title: 'Serve it cold, with a fork' },
+    ],
+  },
+  {
     id: 'sutlac', name: 'Sütlaç', cuisine: 'turkish', level: 2, serves: 4,
     blurb: 'Creamy Turkish rice pudding, thickened slowly, chilled in little bowls and dusted with cinnamon.',
     ing: {

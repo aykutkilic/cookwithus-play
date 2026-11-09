@@ -34,6 +34,8 @@ export const INGREDIENTS = {
   redOnion:   { name: 'Red onion', plural: 'Red onions', emoji: '🧅', art: { type: 'round', c1: '#8a2e57', c2: '#f3dbe6', c3: '#c77a9c', sx: 1, sy: 1, tip: true } },
   potato:     { name: 'Potato', plural: 'Potatoes', emoji: '🥔', art: { type: 'round', c1: '#c49a5c', c2: '#f3e3a8', c3: '#9a7340', sx: 1.25, sy: 0.85, spots: true } },
   lemon:      { name: 'Lemon', plural: 'Lemons', emoji: '🍋', art: { type: 'round', c1: '#f7d330', c2: '#fbeea0', c3: '#fff7cf', sx: 1.2, sy: 0.9, tip: true, segments: true } },
+  // (a cantaloupe: netted rind, orange flesh, a hollow of seeds)
+  melon:      { name: 'Melon', plural: 'Melons', emoji: '🍈', art: { type: 'round', c1: '#cdbf88', c2: '#f39a4c', c3: '#f7d39a', sx: 2.15, sy: 1.75, net: true } },
   garlic:     { name: 'Garlic', plural: 'Garlic', emoji: '🧄', art: { type: 'bulb', c1: '#f1ead9', c2: '#fbf6e4', c3: '#b8a77e' } },
   carrot:     { name: 'Carrot', plural: 'Carrots', emoji: '🥕', art: { type: 'long', c1: '#f08a24', c2: '#f6a84a', c3: '#4f9a3a', len: 1.5, taper: 0.85, rings: true } },
   cucumber:   { name: 'Cucumber', plural: 'Cucumbers', emoji: '🥒', art: { type: 'long', c1: '#3f8a3a', c2: '#d8efb8', c3: '#2c6a2a', len: 1.6, taper: 0.1, seeds: true } },
