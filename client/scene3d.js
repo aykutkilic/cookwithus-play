@@ -77,9 +77,9 @@ const KNIFE_ROCK = [0.06, 0.06]; // (cutting: the knife's tip down this far (rad
 // the lemon video's knife hand is, 2.8 cm before where it is at the bottom; and its edge only so far clear over the food
 // at the top (clear). Measured, not by eye: higher, or less far forward, the arm's solver (fparms3d) often found no turn of
 // forearm and wrist for the knife and gave way round the grip – the hand 4.6 cm from where it was asked; at these, 0.7.)
-// (aimed cutting: the blade turned this far from square across the food, toward the other hand – the lemon video's ~14°;
-// square, in 20 of 48 samples the arm's solver gave way round the grip, the hand 4.6 cm off; at this, only for a frame
-// or two as it lifts)
+// (aimed cutting: the knife this far from pointing straight away, toward the other hand – the lemon video's ~14° – and the
+// food turned with it, so the cut is still square across it; pointing straight away, in 20 of 48 samples the arm's solver
+// gave way round the grip, the hand 4.6 cm off; at this, only for a frame or two as it lifts)
 const CUT_YAW = 0.25;
 const CUT_REACH = { fwd: 0.03, back: -0.015, clear: 0.004 };
 const CHOP_STROKE = { lift: 1.0, slide: 0.03, rate: 9, heel: 0.075, lean: 0.12, tip: 0.2 }; // (tip: tipped no further than this – the tip comes off the board a little at the top of a stroke over a fat food: tipped steeper, the handle goes up past where the arm reaches)
@@ -3393,7 +3393,9 @@ export class Scene3D {
         // over the board (as the close-up has it); off to the side of the food, it
         // goes that way.
         const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
-        const dIt = it && D && D.items[it.id];
+        // (the cut as I've made it – the station's own, not the host's echo of it, a moment behind: aimed off that, a press
+        // could land right on the last cut)
+        const dIt = it && ((st.D && st.D.items[it.id]) || (D && D.items[it.id]));
         let C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty, dIt && dIt.cuts, dIt && dIt.cut);
         // (a melon's slices stood on their rinds, each cut down into at its middle: the knife over the next one – the
         // last one cut where it rests – food3d melonBoats)
@@ -3420,7 +3422,11 @@ export class Scene3D {
           hand(oi, mid.clone().addScaledVector(UP, 0.004).addScaledVector(yA, 0.012), 'rest', { curl: 0.12 });
           break;
         }
-        ov.yaw = out.yaw + CUT_TURN;
+        // (aimed: the food lies turned as far as the knife is from square across – CUT_YAW, for the wrist – so the blade
+        // still goes through it square, as the lemon video's lies a little turned under its knife)
+        const aimed = !!(st.aimed && st.aimed());
+        ov.yaw = out.yaw + CUT_TURN + (aimed ? (wi === 1 ? 1 : -1) * CUT_YAW : 0);
+        if (dIt) ov.st = { ...(ov.st || {}), cut: dIt.cut, k: dIt.k, n: dIt.n, cuts: dIt.cuts, scored: dIt.scored, skinned: dIt.skinned };
         const ax = new THREE.Vector3(Math.cos(ov.yaw), 0, -Math.sin(ov.yaw)); // (its length, to the right)
         const blade = new THREE.Vector3().crossVectors(UP, ax).normalize(); // (across it, away from me)
         const b = st.subjectBox(), top2 = b.y0 - (ph.mode === 'mince' ? 10 : 18), board2 = b.y1 - 8;
@@ -3429,7 +3435,7 @@ export class Scene3D {
         // Aimed (the mouse, the pad – station.aimed): the knife where I point along the food, just clear over it, its
         // outline down through it and a line round the food where it will cut; a press is one stroke of it (CUT_T) –
         // over to the place, down through it pushed forward along its length, the slice tipping over as it comes up
-        const aimed = !!(st.aimed && st.aimed()), S = aimed ? g.stroke : null;
+        const S = aimed ? g.stroke : null;
         let aim = null;
         if (aimed && C.score) { this.cutFrame = null; aim = { x: C.score.x, f: null }; } else if (aimed) { this.cutFrame = { id: it.id, pos: ov.pos.clone(), ax: ax.clone(), C, at }; aim = this.cutAimX(C, ax.dot(at(pt).sub(ov.pos))); }
         const want = !aimed ? C.next + off * w.S : S && S.f != null && !C.score ? C.xOf(S.f) : aim.x;
@@ -3470,9 +3476,7 @@ export class Scene3D {
         // its little finger past what a wrist does – the arm's solver then turned the palm up and the elbow out)
         // (the tip stays on the board beyond the food – only the heel rises and falls: tipped just so far that the tip's
         // edge, up the blade's curved belly, is on the board while the edge at the cut is at E)
-        // (aimed: the blade pointing away and a little toward the other hand, as the lemon video's knife does – square
-        // across, the wrist was at the end of its turn and the arm's solver kept giving way round the grip)
-        const bladeK = aimed ? blade.clone().applyAxisAngle(UP, (wi === 1 ? 1 : -1) * CUT_YAW) : blade;
+        const bladeK = blade; // (square across the food – the food's turned for the wrist instead: see ov.yaw)
         const K = this.knifeAt(Ek.addScaledVector(ax, this.knifeFix || 0), bladeK, Math.min(CHOP_STROKE.tip, tipDown(E.y - (ov.pos.y + 0.001), CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });

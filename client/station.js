@@ -685,8 +685,11 @@ export class Station {
   cutMade(S) {
     const g = this.g, ph = g.ph, n = phaseTarget(ph);
     if (!g.cuts) g.cuts = cutsOf(this.c.C.steps[this.sid] && this.c.C.steps[this.sid].extra).slice(0, this.k);
-    const prev = g.cuts.length ? g.cuts[g.cuts.length - 1] : 0;
-    const f = Math.round(Math.max(prev + 0.01, Math.min(1, S.f ?? (this.k + 1) / n)) * 1000) / 1000;
+    // (no thinner a slice than a third of an even one, and room left for the cuts still to come – as the aim has it, but
+    // from my own cuts, in case the picture's a moment behind)
+    const prev = g.cuts.length ? g.cuts[g.cuts.length - 1] : 0, minF = 0.35 / (n + (ph.whole ? 1 : 0));
+    const hi = Math.max(prev + minF, 1 - (n - g.cuts.length - (ph.whole ? 0 : 1)) * minF);
+    const f = Math.round(Math.max(prev + minF, Math.min(hi, S.f ?? (this.k + 1) / n)) * 1000) / 1000;
     g.cuts.push(f);
     this.hooks.sfx('chop');
     if (ph.mode === 'slice' && S.len > 0) {
