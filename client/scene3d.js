@@ -3022,10 +3022,26 @@ export class Scene3D {
           const it = D && D.items[g.source.id], U = it && boardUnits(it);
           const P = g.drag ? this.boardAt(w, at(g.pos)) : w.O.clone();
           const push = this.pileSpot(w).sub(w.O).setY(0).normalize();
-          out.ov.set(k, U && U.cur ? { pos: P.clone(), yaw: out.yaw + CUT_TURN, st: U.cur } : { hide: true });
+          // (its slices, fallen under physics where it was cut: pushed along by the knife's blade – or my hand's edge – as
+          // it goes, onto the pile of those before; nothing else of it drawn – its end's gone to the scraps)
+          const S0 = this.slicer && this.slicer.key.split('|')[0] === g.source.id && this.slicer.unitCount > 0 ? this.slicer : null;
+          const d = new THREE.Vector3().crossVectors(UP, push).normalize();
+          if (d.dot(w.N) > 0) d.negate(); // (pointing away from me)
+          if (S0) {
+            // (the knife – or hand – put down behind them along its length where they lie: the blade's middle, 1.5 cm short of
+            // where it's held from along it, in line with their middle – kept so through the drag)
+            if (g.drag && !(this.pushLat && this.pushLat.g === g && this.pushLat.on)) {
+              const c = S0.unitCenter(), mid = P.clone().addScaledVector(d, ph.tool === 'knife' ? -0.015 : 0);
+              this.pushLat = { g, on: true, lat: c ? Math.max(-0.06, Math.min(0.06, d.dot(c.sub(mid).setY(0)))) : 0 };
+            } else if (!g.drag && this.pushLat) this.pushLat.on = false;
+            if (g.drag) P.addScaledVector(d, this.pushLat.lat);
+            // (once it's there: on till its face is PILE_GAP short of the pile's middle – they lie on it, ahead of the blade)
+            const face = P.clone().addScaledVector(push, ph.tool === 'knife' ? -0.05 : -0.045).addScaledVector(d, ph.tool === 'knife' ? -0.015 : 0).setY(w.O.y);
+            S0.push(this.dt || 0.016, g.drag ? { at: face, along: d, dir: push, end: push.dot(this.pileSpot(w).sub(face).setY(0)) - PILE_GAP } : null);
+            this.slicerT = this.t;
+          }
+          out.ov.set(k, U && U.cur ? { pos: P.clone(), yaw: out.yaw + CUT_TURN, st: S0 ? { ...U.cur, sliceSim: true } : U.cur } : { hide: true });
           if (ph.tool === 'knife') {
-            const d = new THREE.Vector3().crossVectors(UP, push).normalize();
-            if (d.dot(w.N) > 0) d.negate(); // (pointing away from me)
             const K = this.knifeAt(P.clone().addScaledVector(push, -0.05).setY(w.O.y + 0.001), d, 0.04);
             out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
             hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
@@ -3116,7 +3132,7 @@ export class Scene3D {
           if (!taking) {
             // (waiting for me: the slices where they are – fallen, under physics, its cut-off end where it was cut – my left
             // hand by the container, my right on the knife)
-            if (S0) { S0.settle(this.dt || 0.016, gIt && gIt.n ? { ...gIt, k: gIt.n } : null); this.slicerT = this.t; out.ov.set(k, { pos: S0.food.pos.clone(), yaw: S0.food.yaw, st: { sliceSim: true } }); }
+            if (S0) { S0.settle(this.dt || 0.016, gIt && gIt.n && S0.units < 2 ? { ...gIt, k: gIt.n } : null); this.slicerT = this.t; out.ov.set(k, { pos: S0.food.pos.clone(), yaw: S0.food.yaw, st: { sliceSim: true } }); }
             else out.ov.set(k, { pos: Pc.clone(), yaw: out.yaw + CUT_TURN });
             hand(O, LH.w, LH.kind, { curl: LH.curl, ...(LH.dir ? { dir: LH.dir } : {}) });
             if (!knifeHeld || t >= T.knife) hand(M, onHandle, 'hand', { curl: 0.45 });
@@ -3492,11 +3508,14 @@ export class Scene3D {
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
         // (cut in slices or rings, one thing: the slices fall aside and stack under physics – client/slicephys.js – once
         // its engine's loaded; the thing drawn without its row of them meanwhile)
-        // (several cut one after another: the one being cut – its own cuts, k of n – each its own phase, so its own slices)
+        // (several cut one after another: the one being cut – its own cuts, k of n – each its own phase, so its own slices,
+        // added to the same physics: the ones before lie where they were pushed)
         if (aimed && !C.score && dIt && (dIt.cut === 'slices' || dIt.cut === 'rings' || dIt.cut === 'moons') && rapier()) {
-          const key = `${it.id}|${st.ph}`;
-          if (this.slicer && (this.slicer.key !== key || this.slicer.count > (dIt.k | 0))) { this.slicer.dispose(); this.slicer = null; }
+          const key = `${it.id}|`;
+          if (this.slicer && this.slicer.key !== key) { this.slicer.dispose(); this.slicer = null; }
           if (!this.slicer) this.slicer = new SlicePhysics(key, this.dynamic);
+          this.slicer.beginUnit(st.ph);
+          if (this.slicer.unitCount > (C.k | 0)) this.slicer.trimUnit(C.k | 0); // (a cut taken back)
           ov.st = { ...(ov.st || {}), sliceSim: true };
           const sec = C.sec && C.sec((C.xL + C.face) / 2);
           this.slicer.update(this.dt || 0.016, { pos: ov.pos, yaw: ov.yaw, face: C.face, xL: C.xL, top: C.top, rz: sec ? sec.rz : 0.02 }, it.kind, { ...dIt, k: C.k, n: C.n }, { K0: K.K0, xA: K.xA, yA: K.yA, edge: KNIFE_EDGE, on: !!(S && S.t < CUT_T.down) });
@@ -3762,7 +3781,11 @@ export class Scene3D {
         out.boxes = out.boxes.filter(([id]) => id !== uId);
         out.boxes.push([uId, { pos: this.boxSpot(w), yaw: out.yaw, st: left > 0 ? { ...uIt, qty: left, extra: 0, cut: null, k: 0, n: 0, peeled: 0 } : null }]);
       }
-      if (U.pile && !(g.kind === 'drag' && g.source && g.source.pieces)) out.sprites.push({ tex: null, kind: uIt.kind, st: U.pile, pos: this.pileSpot(w), size: 0.12 });
+      // (those pushed aside under physics – client/slicephys.js – lie on the pile as they were pushed, still settling while
+      // the next is taken out and cut: not drawn here)
+      const SU = this.slicer && this.slicer.key.split('|')[0] === uId ? this.slicer : null;
+      if (SU && this.slicerT !== this.t) { SU.settle(this.dt || 0.016); this.slicerT = this.t; }
+      if (U.pile && !(SU && SU.units >= U.aside) && !(g.kind === 'drag' && g.source && g.source.pieces)) out.sprites.push({ tex: null, kind: uIt.kind, st: U.pile, pos: this.pileSpot(w), size: 0.12 });
       const ov = out.ov.get(`i:${uId}`);
       if (ov && !ov.hide && !(g.source && (g.source.fromBox || g.source.unit || g.source.pieces))) { if (U.cur) ov.st = { ...U.cur, ...(ov.st || {}) }; else ov.hide = true; }
     }
@@ -4492,6 +4515,7 @@ const t0Ready = (G) => G.t >= GATHER.t.wait;
 // them and cup them; carry them over; let them fall in)
 const MOCAP_T = { wait: 3.5, take: 3.6, cup: 0.5, carry: 1.3, drop: 5.5, open: 5.3, apart: 6.3, ease: 0.25, grab1: 1.3, set1: 2.35, grab2: 6.7, set2: 8.4 }; // (the contacts: off FAH's left hand, nearest the bowl)
 const GATHER = { t: { knife: 0.4, reach: 0.35, grab: 1.1, set: 2.6, wait: 3.0 }, end: { letGo: 0.6, grab: 1.3, set: 3.3, away: 4.1 }, toSides: 0.25, cupIn: 0.3, lift: 0.03, rim: 0.042, hold: 0.04, cupCurl: 0.7, inward: 0.6, backMax: 0.115, rimNear: 0.036, rimUp: 0.012, gripCurl: 0.6, release: 0.07, sideAt: 0.45 };
+const PILE_GAP = 0.02; // (pushed to the side: how far short of the pile's middle the knife stops – its slices just ahead of it)
 const CARRY_GAP = 0.015; // (first person: the gap kept between the things carried in my two hands)
 const PASS_T = 0.55; // (first person: how long a thing takes to change hands)
 // At a worktop: my eyes leaning over the work – back from it, up from it (kitchen units), how wide they see – and my

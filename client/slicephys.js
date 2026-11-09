@@ -37,6 +37,9 @@ function sliceHull(r, rz, t) {
 // (a new slice starts leant away from the knife this far past where it would stand – atan(half its thickness / its
 // radius): it always falls that way, onto the board or the others. Leant less, it stood back up on its edge.)
 const TIP0 = 0.12;
+// The pusher: half its width along the blade, half its height, half its thickness (m); how fast it can go (m/s)
+// (and on to the pile afterwards, gently: at PUSH_V the rings – lying on their sides like logs – were knocked rolling 10 cm)
+const PUSH = { w: 0.06, h: 0.018, t: 0.005 }, PUSH_V = 0.8, PUSH_V_END = 0.25;
 
 export class SlicePhysics {
   // key: what's being sliced (the item, the step's phase); parent: where the slices are drawn (world space)
@@ -47,7 +50,29 @@ export class SlicePhysics {
     this.slices = [];
     this.floor = null; this.rest = null; this.restSig = '';
     this.knife = null;
+    // (several of a thing cut one after another – Menemen's two peppers: each one's slices added after the last one's,
+    // which stay where they were pushed. base: where this one's start; unit: its phase; units: how many begun)
+    this.base = 0; this.unit = null; this.units = 0;
+    this.pusher = null;
   }
+  // The next one of several, cut where the last was: its slices counted from here (what's left of the last one gone)
+  beginUnit(u) {
+    if (this.unit === u) return;
+    if (this.unit !== null) {
+      this.base = this.slices.length;
+      if (this.rest) { this.world.removeRigidBody(this.rest); this.rest = null; }
+      this.restSig = ''; this.last = null;
+    }
+    this.unit = u; this.units++;
+  }
+  // (this one's slices only, down to k – a cut taken back)
+  trimUnit(k) {
+    while (this.slices.length > this.base + k) {
+      const s = this.slices.pop();
+      if (s) { this.world.removeRigidBody(s.body); this.parent.remove(s.g); }
+    }
+  }
+  get unitCount() { return this.slices.length - this.base; }
   // Each frame. F: the thing as it lies – pos (on the board), yaw, its cut face and left end along it (cutLine's x),
   // its height (top) and half depth; st: its state (k cut so far of n, cuts); knife: its own frame as drawn (K0, xA, yA)
   // and how far below that line its edge is (edge); on: whether it's solid now – only coming down, before the slice is
@@ -56,7 +81,7 @@ export class SlicePhysics {
   update(dt, F, kind, st, knife) {
     const W = this.world, rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), F.yaw);
     this.food = { pos: F.pos.clone(), yaw: F.yaw }; // (where it was cut: what's left of it stays there)
-    this.last = { F, kind };
+    this.last = { F, kind, st };
     const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(rot), local = (x, y, z) => F.pos.clone().addScaledVector(ax, x).add(new THREE.Vector3(0, y, 0)).addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(rot), z);
     if (!this.floor) {
       this.floor = W.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(F.pos.x * SC, (F.pos.y - 0.01) * SC, F.pos.z * SC));
@@ -73,8 +98,8 @@ export class SlicePhysics {
     }
     // a slice for each cut made: standing where it was, a little tip and nudge away from the knife
     const k = Math.min(st.k | 0, 24);
-    while (this.slices.length < k) {
-      const j = this.slices.length, M = sliceModel(kind, st, j);
+    while (this.slices.length - this.base < k && this.slices.length < 64) {
+      const j = this.slices.length - this.base, M = sliceModel(kind, st, j);
       if (!M) { this.slices.push(null); continue; }
       // (leant over its foot's far edge, away from the knife – about UP × ax, its top toward +ax: its middle, from that edge,
       // half its thickness back and its radius up, turned with it)
@@ -99,6 +124,7 @@ export class SlicePhysics {
       this.blade = W.createCollider(R.ColliderDesc.cuboid(0.06 * SC, (knife.edge / 2) * SC, 0.0006 * SC).setTranslation(0.065 * SC, (-knife.edge / 2) * SC, 0).setFriction(0.3), this.knife);
     }
     if (this.blade) this.blade.setEnabled(!!(knife && knife.on));
+    this.unpush();
     if (knife) {
       const m = new THREE.Matrix4().makeBasis(knife.xA, knife.yA, new THREE.Vector3().crossVectors(knife.xA, knife.yA)), kq = new THREE.Quaternion().setFromRotationMatrix(m);
       this.knife.setNextKinematicTranslation(v(knife.K0));
@@ -109,10 +135,72 @@ export class SlicePhysics {
   // The cutting over, waiting for my hands to take them: they lie where they fell (still settling), the knife not there
   // (st: the thing as it is now, all cut – the last cut ended the cutting, so its slice is added here)
   settle(dt, st = null) {
-    if (st && this.last && (st.k | 0) > this.slices.length) { this.update(dt, this.last.F, this.last.kind, st, null); return; }
+    if (st && this.last && (st.k | 0) > this.unitCount) { this.update(dt, this.last.F, this.last.kind, st, null); return; }
     if (this.blade) this.blade.setEnabled(false);
     if (this.rest) { this.world.removeRigidBody(this.rest); this.rest = null; this.restSig = 'gone'; } // (its end gone to the scraps)
-    this.step(dt);
+    this.pushLive = false;
+    this.step(dt, this.pushOn(dt, true)); // (the push over, they're at the pile: the rest of its way there)
+  }
+  // (the pushing over: the pusher gone – they stay where it left them)
+  unpush() { if (this.wall && this.wall.isEnabled()) this.wall.setEnabled(false); this.pushTo = null; this.pushEnd = null; }
+  // This one's slices pushed along the board to the pile at its side – by the knife's blade, on its edge behind them, or
+  // my hand's edge: P its face – at (on the board, its middle), along it, dir the way it pushes – or null while it isn't
+  // pushing; P.end: how much further along dir it stops, once they're on the pile. A solid wall the game moves, a
+  // centimetre thick, never faster than PUSH_V; set down clear of the slices. Let go of, it goes on to where it was let go
+  // (push without P) – or, the pile reached, on to the pile (settle). The last cut ended the cutting, so its slice is
+  // added first.
+  push(dt, P) {
+    const L = this.last && this.last.st;
+    if (L && (L.n | 0) > this.unitCount) { this.update(dt, this.last.F, this.last.kind, { ...L, k: L.n }, null); return; }
+    if (this.blade) this.blade.setEnabled(false);
+    if (this.rest) { this.world.removeRigidBody(this.rest); this.rest = null; this.restSig = 'gone'; } // (its end gone to the scraps)
+    const W = this.world;
+    if (!this.pusher) {
+      this.pusher = W.createRigidBody(R.RigidBodyDesc.kinematicPositionBased());
+      this.wall = W.createCollider(R.ColliderDesc.cuboid(PUSH.w * SC, PUSH.h * SC, PUSH.t * SC).setFriction(0.4), this.pusher);
+      this.wall.setEnabled(false);
+    }
+    let kin = null;
+    if (P) {
+      const dir = P.dir.clone().setY(0).normalize(), along = P.along.clone().setY(0).normalize();
+      const q0 = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, new THREE.Vector3(0, 1, 0), new THREE.Vector3().crossVectors(along, new THREE.Vector3(0, 1, 0))));
+      const at = (back) => P.at.clone().addScaledVector(dir, -PUSH.t - back).setY(this.food.pos.y + PUSH.h + 0.001);
+      if (!this.wall.isEnabled()) {
+        // (put down where it's clear of them – back along the way it pushes as far as it has to)
+        let back = 0;
+        for (; back < 0.08; back += 0.005) if (!this.overlaps(at(back), q0)) break;
+        const p = at(back);
+        this.pusher.setTranslation(v(p), true); this.pusher.setRotation(q(q0), true);
+        this.pushAt = p; this.wall.setEnabled(true);
+      }
+      this.pushTo = { p: at(0), q: q0 };
+      this.pushEnd = { p: at(0).addScaledVector(dir, Math.max(0, P.end || 0)), q: q0 };
+    } else this.pushEnd = null;
+    this.pushLive = !!P;
+    this.step(dt, this.pushOn(dt));
+  }
+  // (the pusher's way this frame, toward where it's wanted – null once it's there and no longer pushed: then it's gone)
+  // (end: the push over, the pile reached – on to the pile)
+  pushOn(dt, end = false) {
+    const T = end && this.pushEnd ? this.pushEnd : this.pushTo;
+    if (!this.wall || !this.wall.isEnabled() || !T) return null;
+    const from = this.pushAt.clone(), d = T.p.clone().sub(from), max = (end ? PUSH_V_END : PUSH_V) * Math.min(0.1, dt);
+    if (d.length() < 1e-4) { if (!this.pushLive || end) this.unpush(); return null; } // (there, and still pushed: it waits)
+    if (d.length() > max) d.setLength(max);
+    this.pushAt = from.clone().add(d);
+    return { from, to: this.pushAt.clone(), q: this.pushTo.q };
+  }
+  // the middle of this one's slices (or null)
+  unitCenter() {
+    const ps = this.slices.slice(this.base).filter(Boolean).map((s) => s.g.position);
+    return ps.length ? ps.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / ps.length) : null;
+  }
+  // (whether a pusher at p, turned q, would be in any slice)
+  overlaps(p, rot) {
+    let hit = false;
+    const shape = new R.Cuboid(PUSH.w * SC, PUSH.h * SC, PUSH.t * SC);
+    this.world.intersectionsWithShape(v(p), q(rot), shape, (c) => { if (c !== this.wall && c.parent() && c.parent().isDynamic()) { hit = true; return false; } return true; });
+    return hit;
   }
   // Set up somewhere else, each – the melon's slices stood on their rinds for the next cuts: from where they lie, over to
   // the targets ([{pos, q}] in the world, a slice's own frame), in a little arc, over s seconds; true once there
@@ -136,11 +224,18 @@ export class SlicePhysics {
     const c = ps.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / ps.length);
     return c.setY(this.food.pos.y);
   }
-  step(dt) {
+  // kin: the pusher's way this frame (from, to, q) – moved along it a substep at a time
+  step(dt, kin = null) {
     const W = this.world;
     // (in steps no longer than 1/60 s – the frame's time, up to a tenth of a second)
-    let left = Math.min(0.1, dt);
-    while (left > 1e-4) { const h = Math.min(1 / 60, left); W.timestep = h; W.step(); left -= h; }
+    const all = Math.min(0.1, dt);
+    let left = all;
+    while (left > 1e-4) {
+      const h = Math.min(1 / 60, left);
+      left -= h;
+      if (kin) { this.pusher.setNextKinematicTranslation(v(kin.from.clone().lerp(kin.to, 1 - left / all))); this.pusher.setNextKinematicRotation(q(kin.q)); }
+      W.timestep = h; W.step();
+    }
     for (const s of this.slices) {
       if (!s) continue;
       const p = s.body.translation(), r = s.body.rotation();
