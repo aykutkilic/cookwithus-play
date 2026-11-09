@@ -78,12 +78,15 @@ export class SlicePhysics {
       if (!M) { this.slices.push(null); continue; }
       // (leant over its foot's far edge, away from the knife – about UP × ax, its top toward +ax: its middle, from that edge,
       // half its thickness back and its radius up, turned with it)
-      const tip = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), ax), a0 = Math.min(1.3, Math.atan2(M.t / 2, M.r) + TIP0);
+      // (a melon's half-moon slice – base: its origin the middle of its flat edge, on the board – topples about its middle of
+      // mass, hc high; a round one about its middle)
+      const hc = M.base ? M.hc : M.r, tip = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), ax), a0 = Math.min(1.3, Math.atan2(M.t / 2, hc) + TIP0);
       const lean = new THREE.Quaternion().setFromAxisAngle(tip, a0);
-      const c = local(M.x + 0.003 + M.t / 2 - (M.t / 2) * Math.cos(a0) + M.r * Math.sin(a0), (M.y - M.r) + (M.t / 2) * Math.sin(a0) + M.r * Math.cos(a0) + 0.0005, 0);
+      const up0 = M.base ? 0 : M.r, base = M.base ? M.y : M.y - M.r; // (the origin's height over its foot, unleant)
+      const c = local(M.x + 0.003 + M.t / 2 - (M.t / 2) * Math.cos(a0) + up0 * Math.sin(a0), base + (M.t / 2) * Math.sin(a0) + up0 * Math.cos(a0) + 0.0005, 0);
       const body = W.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(c.x * SC, c.y * SC, c.z * SC).setRotation(q(lean.multiply(rot)))
         .setLinvel(ax.x * 0.04 * SC, 0, ax.z * 0.04 * SC).setAngvel({ x: tip.x * 3, y: 0, z: tip.z * 3 }).setCcdEnabled(true).setLinearDamping(0.4).setAngularDamping(1.5));
-      const hull = sliceHull(M.r, M.rz, M.t) || R.ColliderDesc.cuboid((M.t / 2) * SC, M.r * SC, M.rz * SC);
+      const hull = (M.hull ? R.ColliderDesc.convexHull(new Float32Array(M.hull.flat().map((x) => x * SC))) : sliceHull(M.r, M.rz, M.t)) || R.ColliderDesc.cuboid((M.t / 2) * SC, M.r * SC, M.rz * SC);
       W.createCollider(hull.setDensity(1).setFriction(0.8).setRestitution(0.02), body);
       M.g.traverse((o) => { if (o.isMesh) o.raycast = () => {}; });
       this.parent.add(M.g);
@@ -110,6 +113,21 @@ export class SlicePhysics {
     if (this.blade) this.blade.setEnabled(false);
     if (this.rest) { this.world.removeRigidBody(this.rest); this.rest = null; this.restSig = 'gone'; } // (its end gone to the scraps)
     this.step(dt);
+  }
+  // Set up somewhere else, each – the melon's slices stood on their rinds for the next cuts: from where they lie, over to
+  // the targets ([{pos, q}] in the world, a slice's own frame), in a little arc, over s seconds; true once there
+  arrange(dt, targets, s = 0.5) {
+    if (!this.moving) this.moving = { t: 0, from: this.slices.map((x) => x && { pos: x.g.position.clone(), q: x.g.quaternion.clone() }) };
+    const M = this.moving;
+    M.t += dt;
+    const u = Math.min(1, M.t / s), e = u * u * (3 - 2 * u);
+    this.slices.forEach((x, i) => {
+      const T = targets[i], F = M.from[i];
+      if (!x || !T || !F) return;
+      x.g.position.copy(F.pos).lerp(T.pos, e).add(new THREE.Vector3(0, 0.04 * Math.sin(Math.PI * e), 0));
+      x.g.quaternion.copy(F.q).slerp(T.q, e);
+    });
+    return u >= 1;
   }
   // where they lie, all together: the middle of the pile (on the board – y where the thing lay) – or null
   pileCenter() {

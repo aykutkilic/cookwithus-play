@@ -3493,7 +3493,7 @@ export class Scene3D {
         // (cut in slices or rings, one thing: the slices fall aside and stack under physics – client/slicephys.js – once
         // its engine's loaded; the thing drawn without its row of them meanwhile)
         // (several cut one after another: the one being cut – its own cuts, k of n – each its own phase, so its own slices)
-        if (aimed && !C.score && dIt && (dIt.cut === 'slices' || dIt.cut === 'rings') && rapier()) {
+        if (aimed && !C.score && dIt && (dIt.cut === 'slices' || dIt.cut === 'rings' || dIt.cut === 'moons') && rapier()) {
           const key = `${it.id}|${st.ph}`;
           if (this.slicer && (this.slicer.key !== key || this.slicer.count > (dIt.k | 0))) { this.slicer.dispose(); this.slicer = null; }
           if (!this.slicer) this.slicer = new SlicePhysics(key, this.dynamic);
@@ -3501,6 +3501,19 @@ export class Scene3D {
           const sec = C.sec && C.sec((C.xL + C.face) / 2);
           this.slicer.update(this.dt || 0.016, { pos: ov.pos, yaw: ov.yaw, face: C.face, xL: C.xL, top: C.top, rz: sec ? sec.rz : 0.02 }, it.kind, { ...dIt, k: C.k, n: C.n }, { K0: K.K0, xA: K.xA, yA: K.yA, edge: KNIFE_EDGE, on: !!(S && S.t < CUT_T.down) });
           this.slicerT = this.t;
+        } else if (C.score && this.slicer && this.slicer.key.split('|')[0] === it.id) {
+          // (a melon's slices, fallen under physics, all cut: each carried over and stood on its rind where it's cut down
+          // into next – food3d melonBoats – then drawn there as before)
+          const toMe = blade.clone().negate(), yq = new THREE.Quaternion().setFromAxisAngle(UP, ov.yaw);
+          const bq = yq.clone().multiply(new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0))));
+          const targets = boat.map((b) => ({ pos: ov.pos.clone().addScaledVector(ax, b.x).addScaledVector(toMe, b.z).addScaledVector(UP, b.ry), q: bq.clone() }));
+          // (the last cut ended the slicing: its slice into the physics too, before they're carried – it rises from where it
+          // was cut)
+          const nm = dIt.n || phaseTarget(ph) - 1;
+          if (!this.slicer.moving && this.slicer.count < nm) this.slicer.settle(this.dt || 0.016, { ...dIt, cut: 'moons', k: nm, n: nm });
+          ov.st = { ...(ov.st || {}), sliceSim: this.slicer.count };
+          this.slicerT = this.t;
+          if (this.slicer.arrange(this.dt || 0.016, targets)) { this.slicer.dispose(); this.slicer = null; ov.st.sliceSim = 0; }
         }
         if (aimed) {
           // (the outline of the knife as it will be at the bottom of the stroke there – seen through the food – and a line

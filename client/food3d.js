@@ -1055,6 +1055,26 @@ function boatsOf(a, cuts, n) {
   for (const b of out) { b.x = 0; b.z = z + b.t / 2; z += b.t + gap; }
   return out;
 }
+// One slice off the melon's half, for the physics (sliceModel): a half-moon standing on its flat edge – the half's cut
+// face – its rind arched up, its thickness along x; its origin the middle of that edge (base: true), hull: its shape as
+// [x, y, z] corners for the collider, hc: how high its middle of mass is
+function melonSlice(a, st, j) {
+  const C = domeGeom(a), n = num(st.n, 0), cuts = Array.isArray(st.cuts) ? st.cuts : null, P = artPal(a, st);
+  const hi = cutAt(C, j, n, cuts), lo = cutAt(C, j + 1, n, cuts), t = Math.max(0.004, (hi - lo) * 0.92), s = C.sec((hi + lo) / 2);
+  if (!s || s.ry < 0.004) return null;
+  const rind = fm(P.c1, { rough: 0.75 }), flesh = fm(P.c2, { rough: 0.45 }), seedM = fm(P.c3, { rough: 0.55 });
+  const g = new THREE.Group(), m = new THREE.Mesh(MELON.halfX, [rind, flesh, flesh]);
+  // (the half disc – z ≥ 0, thickness along y – turned: its thickness along x, its arch up, its width along z)
+  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(v(0, 0, 1), v(1, 0, 0), v(0, 1, 0)));
+  m.scale.set(s.rz, t, s.ry);
+  g.add(m);
+  part(g, GEO.box, flesh, 0, 0.0006, 0, t, 0.0012, s.rz * 2); // (its flat edge: the half's cut face)
+  part(g, GEO.box, seedM, 0, 0.0008, 0, t * 1.01, 0.0012, s.rz * 0.9); // (where the seeds were)
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  const hull = [];
+  for (let i = 0; i <= 8; i++) { const an = (i / 8) * Math.PI; for (const x of [-t / 2, t / 2]) hull.push([x, Math.sin(an) * s.ry, Math.cos(an) * s.rz]); }
+  return { g, r: s.ry, rz: s.rz, t, x: (hi + lo) / 2, y: 0, base: true, hull, hc: (4 * s.ry) / (3 * Math.PI) };
+}
 function melonCut(g, a, P, cut, st, wet) {
   const { rx, ry } = roundDims(a), R = rx * K, H = ry * K;
   const rind = fm(P.c1, { rough: wet ? 0.3 : 0.75 }), flesh = fm(P.c2, { rough: 0.45 }), seedM = fm(P.c3, { rough: 0.55 });
@@ -1107,7 +1127,7 @@ function melonCut(g, a, P, cut, st, wet) {
   if (k < n) {
     const C = domeGeom(a), xc = cutAt(C, k, n, cuts);
     dome(g, xc);
-    for (let j = 0; j < k; j++) {
+    for (let j = 0; j < (st.sliceSim ? 0 : k); j++) {
       const hi = cutAt(C, j, n, cuts), lo = cutAt(C, j + 1, n, cuts), t = Math.max(0.004, (hi - lo) * 0.9), s = C.sec((hi + lo) / 2);
       // (lying on its face, its rind's arch away from the half: newest nearest it, on top)
       part(g, MELON.halfX, [rind, flesh, flesh], xc + 0.004 + (k - 1 - j) * 0.03, t / 2 + (j === k - 1 && k > 1 ? t * 0.6 : 0), 0, s.rz, t, s.ry, 0, Math.PI / 2, -0.06);
@@ -1116,7 +1136,9 @@ function melonCut(g, a, P, cut, st, wet) {
   }
   const scored = clamp(num(st.scored, 0) | 0, 0, n + 1), skinned = clamp(num(st.skinned, 0) | 0, 0, n + 1);
   const dark = fm(mixHex(P.c2, '#7a3a10', 0.35), { rough: 0.6 });
+  const held = st.sliceSim === true ? n : num(st.sliceSim, 0); // (being set up on their rinds by the physics – slicephys.js)
   boatsOf(a, cuts, n).forEach((b, i) => {
+    if (i < held) return;
     const h = new THREE.Group();
     h.position.set(b.x, 0, b.z);
     if (i < skinned) {
@@ -1155,7 +1177,9 @@ function sliceShape(a, P, s, t, M) {
 // (half its height), rz (half its depth), t, x and y (where its middle was in the thing, as buildFood lays it out)} – or
 // null (not a thing cut in slices)
 export function sliceModel(kind, st, j) {
-  const a = artOf(kind), C = a && cutGeom(a);
+  const a0 = artOf(kind);
+  if (a0 && a0.net && st.cut === 'moons') return melonSlice(a0, st, j);
+  const a = a0, C = a && cutGeom(a);
   if (!C || !C.sec) return null;
   const n = num(st.n, 0), cuts = Array.isArray(st.cuts) ? st.cuts : null, P = artPal(a, st);
   const hi = cutAt(C, j, n, cuts), lo = cutAt(C, j + 1, n, cuts), t = Math.max(0.002, (hi - lo) * 0.9), s = C.sec((hi + lo) / 2);
