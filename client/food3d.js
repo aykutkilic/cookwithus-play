@@ -906,6 +906,9 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   // (rings, slices cut off a long or round thing: still where it was, each standing on its edge leaning on the next –
   // the first one cut fallen flat a little apart – as the user's reference video has a cut pepper; not lying flat in a
   // chain)
+  // (all cut, the slices lying where they fell under physics – client/slicephys.js – till my hands take them: nothing
+  // more here; its end's gone to the scraps, as when they're drawn in their row)
+  if (done && (cut === 'rings' || cut === 'slices') && !loose && st.sliceSim) return;
   if (done && (cut === 'rings' || cut === 'slices') && !loose && cutGeom(a).sec) { const m = clamp(Math.round(n || defaultCount(a, cut, st)), 3, 7); return cutSlices(g, a, P, cutGeom(a), m, m, true, m === n ? st.cuts : null); } // (the video's: one fallen, six standing)
   if (done) return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
   const q = clamp(num(st.qty, 1) | 0, 1, 8);

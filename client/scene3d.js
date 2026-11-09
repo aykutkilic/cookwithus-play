@@ -3042,7 +3042,11 @@ export class Scene3D {
           // side, cup them, carry them over and let them fall in. What follows – the left hand taking the container to
           // the back of the board – is settleGather, once it's done.
           const gIt = D && D.items[g.source.id], extra = !!(gIt && gIt.extra > 0);
-          const Pc = ph.pile ? this.pileSpot(w) : w.O.clone(); // (where the slices are)
+          // (where the slices are: where they fell, under physics – kept there till my hands take them – else the pile at the
+          // board's side, or the work spot; and once taken, still where they were)
+          const S0 = this.slicer && this.slicer.key.split('|')[0] === g.source.id ? this.slicer : null, pile = S0 && S0.pileCenter();
+          if (pile) this.pileAt = { g, pc: pile.clone() };
+          const Pc = this.pileAt && this.pileAt.g === g ? this.pileAt.pc.clone() : ph.pile ? this.pileSpot(w) : w.O.clone();
           // (an empty one: a small glass bowl off the few stacked at the board's back right – the video's – else the food's own)
           const into = this.gatherSpot(w, Pc), from = extra ? this.bowlsSpot(w).addScaledVector(UP, 0.012) : this.boxSpot(w);
           const boxKey = extra ? `${g.source.id}~new` : g.source.id;
@@ -3107,9 +3111,13 @@ export class Scene3D {
           out.gatherEnd = { id: g.source.id, tool: knifeHeld ? { kind: 'knife', at: { pos: K0.clone().setY(w.O.y + 0.0025), q: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA)) } } : null, hands: [null, null], into: into.clone(), sd, restR: onHandle.clone(), endL: ref(GATHER_AT.endL), backL: ref(GATHER_AT.boxBack) };
           out.gatherEnd.hands[M] = { w: onHandle.clone(), kind: 'hand', curl: 0.45 };
           out.gatherEnd.hands[O] = { w: rim(into), kind: 'side', curl: 0.4 };
+          // (taken: the slices are in my hands now – out of the physics, cupped as the reference has them)
+          if (taking && S0) { S0.dispose(); this.slicer = null; }
           if (!taking) {
-            // (waiting for me: the slices in a row where they are, my left hand by the container, my right on the knife)
-            out.ov.set(k, { pos: Pc.clone(), yaw: out.yaw + CUT_TURN });
+            // (waiting for me: the slices where they are – fallen, under physics, its cut-off end where it was cut – my left
+            // hand by the container, my right on the knife)
+            if (S0) { S0.settle(this.dt || 0.016, gIt && gIt.n ? { ...gIt, k: gIt.n } : null); this.slicerT = this.t; out.ov.set(k, { pos: S0.food.pos.clone(), yaw: S0.food.yaw, st: { sliceSim: true } }); }
+            else out.ov.set(k, { pos: Pc.clone(), yaw: out.yaw + CUT_TURN });
             hand(O, LH.w, LH.kind, { curl: LH.curl, ...(LH.dir ? { dir: LH.dir } : {}) });
             if (!knifeHeld || t >= T.knife) hand(M, onHandle, 'hand', { curl: 0.45 });
             this.mocapHands(w, Math.min(G.real, MOCAP_T.wait), out.hands, knifeHeld && t < T.knife ? [M] : []);

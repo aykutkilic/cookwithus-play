@@ -55,6 +55,8 @@ export class SlicePhysics {
   // threw the slice off into the air)
   update(dt, F, kind, st, knife) {
     const W = this.world, rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), F.yaw);
+    this.food = { pos: F.pos.clone(), yaw: F.yaw }; // (where it was cut: what's left of it stays there)
+    this.last = { F, kind };
     const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(rot), local = (x, y, z) => F.pos.clone().addScaledVector(ax, x).add(new THREE.Vector3(0, y, 0)).addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(rot), z);
     if (!this.floor) {
       this.floor = W.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(F.pos.x * SC, (F.pos.y - 0.01) * SC, F.pos.z * SC));
@@ -99,6 +101,25 @@ export class SlicePhysics {
       this.knife.setNextKinematicTranslation(v(knife.K0));
       this.knife.setNextKinematicRotation(q(kq));
     }
+    this.step(dt);
+  }
+  // The cutting over, waiting for my hands to take them: they lie where they fell (still settling), the knife not there
+  // (st: the thing as it is now, all cut – the last cut ended the cutting, so its slice is added here)
+  settle(dt, st = null) {
+    if (st && this.last && (st.k | 0) > this.slices.length) { this.update(dt, this.last.F, this.last.kind, st, null); return; }
+    if (this.blade) this.blade.setEnabled(false);
+    if (this.rest) { this.world.removeRigidBody(this.rest); this.rest = null; this.restSig = 'gone'; } // (its end gone to the scraps)
+    this.step(dt);
+  }
+  // where they lie, all together: the middle of the pile (on the board – y where the thing lay) – or null
+  pileCenter() {
+    const ps = this.slices.filter(Boolean).map((s) => s.g.position);
+    if (!ps.length || !this.food) return null;
+    const c = ps.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / ps.length);
+    return c.setY(this.food.pos.y);
+  }
+  step(dt) {
+    const W = this.world;
     // (in steps no longer than 1/60 s – the frame's time, up to a tenth of a second)
     let left = Math.min(0.1, dt);
     while (left > 1e-4) { const h = Math.min(1 / 60, left); W.timestep = h; W.step(); left -= h; }
