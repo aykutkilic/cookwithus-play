@@ -2740,6 +2740,8 @@ function drawTags(view) {
 const pwa = initPwa({
   busy: () => !!(S.M.room && S.M.room.members.length > 1),
   onUpdateReady: () => toast('A fresh version is ready – it loads when you’re cooking alone'),
+  // (fetching a new release before reloading into it: the loading screen back over the game, how far along)
+  onRefreshing: (f) => { if (f == null) { if (window.bootDone) window.bootDone(); } else if (window.bootShow) window.bootShow('Getting the new version…', f); },
   onInstallable: () => {},
 });
 void pwa;
@@ -2752,6 +2754,8 @@ startOwnKitchen();
 if (wantJoin) setTimeout(() => joinKitchen(wantJoin), 300);
 else if (S.firstVisit) setTimeout(openWelcome, 600);
 requestAnimationFrame(frame);
+// (the loading screen – index.html – goes once the kitchen's first frame is drawn)
+requestAnimationFrame(() => requestAnimationFrame(() => { if (window.bootDone) window.bootDone(); }));
 
 // for debugging in the console
 // (tests) stand at a fixture and pick up / put down there

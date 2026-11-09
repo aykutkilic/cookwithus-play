@@ -15,7 +15,7 @@ import { VERSION } from './version.js';
 
 const CHECK_EVERY = 5 * 60 * 1000;
 
-export function initPwa({ busy, onUpdateReady, onInstallable }) {
+export function initPwa({ busy, onUpdateReady, onInstallable, onRefreshing = () => {} }) {
   let deferred = null;
   const api = {
     version: VERSION,
@@ -30,7 +30,7 @@ export function initPwa({ busy, onUpdateReady, onInstallable }) {
       deferred = null;
       onInstallable(false);
     },
-    apply: () => refreshThenReload(files),
+    apply: () => refreshThenReload(files, onRefreshing),
   };
   let files = [];
 
@@ -53,7 +53,7 @@ export function initPwa({ busy, onUpdateReady, onInstallable }) {
       files = Array.isArray(info.files) ? info.files.filter((f) => !/\.(mp3|ogg|m4a)$/.test(f)) : [];
       const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
       if (reg) reg.update().catch(() => {});
-      if (busy()) onUpdateReady(info.version); else refreshThenReload(files);
+      if (busy()) onUpdateReady(info.version); else refreshThenReload(files, onRefreshing);
     } catch { /* offline: try again later */ }
   };
   check();
@@ -66,19 +66,24 @@ export function initPwa({ busy, onUpdateReady, onInstallable }) {
 // Re-download every file of the release, bypassing the HTTP cache, before
 // reloading: a page load the service worker doesn't handle (e.g. while it is
 // being swapped) would otherwise get stale copies for up to the CDN's max-age,
-// and a half-old, half-new set of modules can't start.
-async function refreshThenReload(files) {
-  await Promise.all(files.map((f) => fetch(f, { cache: 'reload' }).catch(() => {})));
-  reloadOnce();
+// and a half-old, half-new set of modules can't start. onRefreshing(f): how far along (0 … 1) – the loading screen
+// shows it, not a game that suddenly reloads; null: not reloading after all.
+async function refreshThenReload(files, onRefreshing = () => {}) {
+  if (!canReload()) return;
+  let n = 0;
+  onRefreshing(0);
+  await Promise.all(files.map((f) => fetch(f, { cache: 'reload' }).catch(() => {}).finally(() => onRefreshing(++n / Math.max(1, files.length)))));
+  if (!reloadOnce()) onRefreshing(null);
 }
 
 // While a fresh deploy propagates through the CDN the old files can still be
 // served for a moment; never reload more than once a minute.
+function canReload() {
+  try { return Date.now() - Number(sessionStorage.getItem('cookwithus.reloadAt') || 0) >= 60000; } catch { return true; }
+}
 function reloadOnce() {
-  try {
-    const last = Number(sessionStorage.getItem('cookwithus.reloadAt') || 0);
-    if (Date.now() - last < 60000) return;
-    sessionStorage.setItem('cookwithus.reloadAt', String(Date.now()));
-  } catch { /* storage unavailable */ }
+  if (!canReload()) return false;
+  try { sessionStorage.setItem('cookwithus.reloadAt', String(Date.now())); } catch { /* storage unavailable */ }
   location.reload();
+  return true;
 }
