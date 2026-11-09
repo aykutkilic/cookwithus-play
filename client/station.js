@@ -9,12 +9,20 @@
 // which checks it and shares it with everyone.
 import { drawIngredient, drawPieces, drawVessel, drawTool, itemSize, liquidColor, vesselGrip, OUTLINE, shade } from './art.js';
 import { phaseTarget, displayState } from '../shared/cook.js';
-import { HEAT_NAMES, boardUnits } from '../shared/actions.js';
+import { HEAT_NAMES, boardUnits, cutsOf } from '../shared/actions.js';
 import { INGREDIENTS, VESSELS, TOOLS, twoHanded } from '../shared/ingredients.js';
 import { heldBy, thingName, needsOf } from '../shared/cook.js';
 import { themeOf, splashTexture, topTexture } from './theme.js';
 
 export const SW = 1000, SH = 620;
+// An aimed cut (first person: the mouse, the pad, hands in front of the camera – not fingers on a touch screen): a
+// press is one stroke of the knife where it's aimed – s from the press: lifted clear and over to it (set), down through
+// the food (the cut is made at down), the slice tipping over as the knife comes back up (end). As the user's reference
+// video of a lemon being sliced (refs/lemon-slice, 2026-11-09). scene3d.js draws it.
+// (FAH mocap of that video, its knife hand: a cut every 1.05 s – down through it in 0.35 s, drawn back toward the cook
+// 2.5–3 cm on the way down, pushed 2 cm to the right at the bottom, knocking the slice over, then up and on to the next
+// place in 0.65 s; here brisker: up and over to the place 0.2 s, down 0.28 s, the slice knocked over 0.24 s)
+export const CUT_T = { set: 0.2, down: 0.48, end: 0.72 };
 const TAU = Math.PI * 2;
 // the stains knife work leaves on a board (as client/kitchen3d.js lays them: its 52 × 36 cm top, -1 … 1 across and deep)
 function boardStains() {
@@ -286,7 +294,7 @@ export class Station {
     const names = this.c.x.names || {};
     const into = names[this.c.def.into || this.c.def.vessel] || 'pot';
     this.hooks.progress({
-      title: this.c.def.name, hint: this.tip && performance.now() < this.tip.until ? this.tip.msg : ph ? ph.hint.replace('{into}', into).replace('{from}', names[this.c.def.from] || 'pot') : 'Done!', ph: this.ph, phases: this.c.phases.length,
+      title: this.c.def.name, hint: this.tip && performance.now() < this.tip.until ? this.tip.msg : ph && this.aimed() && ph.mode === 'slice' ? 'Point where to cut – the outline shows it – and click: a slice each click, all as thick as each other' : ph ? ph.hint.replace('{into}', into).replace('{from}', names[this.c.def.from] || 'pot') : 'Done!', ph: this.ph, phases: this.c.phases.length,
       k: this.k, n: ph ? phaseTarget(ph) : 0, value: ph && ['pour', 'fill', 'paint'].includes(ph.g) ? this.g && this.g.v : null,
       band: ph && ph.band, cover: ph && ph.cover, done: this.done,
     });
@@ -493,7 +501,7 @@ export class Station {
       case 'door':
         if (dist(p, this.doorGrab(g.geo, g.v)) < 90) { g.drag = true; this.hooks.sfx('door'); }
         break;
-      case 'chop': g.last = p; this.chopMove(p); break; // pressing above the food arms the knife
+      case 'chop': if (this.aimed()) { this.cutPress(); break; } g.last = p; this.chopMove(p); break; // pressing above the food arms the knife
       case 'strokes': g.last = p; g.dir = 0; g.run = 0; break;
       case 'peel': g.start = p; break;
       case 'circle': g.lastAng = this.angleAt(p); break;
@@ -534,7 +542,7 @@ export class Station {
           }
         }
         break;
-      case 'chop': this.chopMove(p); break;
+      case 'chop': if (!this.aimed()) this.chopMove(p); break;
       case 'strokes': this.strokeMove(p); break;
       case 'circle': this.circleMove(p); break;
       case 'knob':
@@ -651,6 +659,44 @@ export class Station {
       case 'paint': if (g.v >= g.ph.cover) this.value(g.v, true); break;
       default: break;
     }
+  }
+
+  // The knife where it's aimed (see CUT_T): is this cut aimed? (aimHook(p): where along the food the point p has it,
+  // {f: 0 … 1 as cutLine has it, len: how long that is, m} – scene3d.js cutAim)
+  aimed() {
+    const g = this.g;
+    return !!(g && g.kind === 'chop' && !g.ph.flat && this.headless && !this.touchy && this.aimHook);
+  }
+  // a press: a stroke now – or, mid-stroke, the next one straight after it
+  cutPress() {
+    const g = this.g;
+    if (g.stroke) { g.queue = Math.min((g.queue || 0) + 1, Math.max(0, phaseTarget(g.ph) - this.k - 1)); return; }
+    if (!this.held()) return;
+    const a = this.aimHook(this.ptr);
+    g.stroke = { t: 0, f: a ? a.f : null, len: a ? a.len : 0 };
+  }
+  cutTick(dt) {
+    const g = this.g, S = g.stroke;
+    S.t += dt;
+    if (!S.cut && S.t >= CUT_T.down) { S.cut = true; this.cutMade(S); if (this.g !== g) return; }
+    if (S.t >= CUT_T.end) { g.stroke = null; if (g.queue > 0) { g.queue--; this.cutPress(); } }
+  }
+  // the knife through it: where it went, how thick that slice is beside the others
+  cutMade(S) {
+    const g = this.g, ph = g.ph, n = phaseTarget(ph);
+    if (!g.cuts) g.cuts = cutsOf(this.c.C.steps[this.sid] && this.c.C.steps[this.sid].extra).slice(0, this.k);
+    const prev = g.cuts.length ? g.cuts[g.cuts.length - 1] : 0;
+    const f = Math.round(Math.max(prev + 0.01, Math.min(1, S.f ?? (this.k + 1) / n)) * 1000) / 1000;
+    g.cuts.push(f);
+    this.hooks.sfx('chop');
+    if (ph.mode === 'slice' && S.len > 0) {
+      const mm = (c, i) => (c - (i ? g.cuts[i - 1] : 0)) * S.len * 1000, now = mm(f, g.cuts.length - 1);
+      const before = g.cuts.slice(0, -1).map(mm), m = before.length ? before.reduce((a, b) => a + b, 0) / before.length : 0;
+      const d = m ? (now - m) / m : 0;
+      const how = !m ? '' : Math.abs(d) <= 0.15 ? ' – even ✓' : d > 0 ? ` – thicker than the others (${Math.round(m)} mm)` : ` – thinner than the others (${Math.round(m)} mm)`;
+      this.tip = { msg: `Slice ${g.cuts.length} of ${n}: ${Math.max(1, Math.round(now))} mm${how}`, until: performance.now() + 2600 };
+    }
+    this.count({ cut: f });
   }
 
   // knife: arm above the food, come down to the board = one cut, go back up to re-arm
@@ -1055,6 +1101,7 @@ export class Station {
         this.report();
         if (Math.random() < 0.5) this.hooks.sfx(g.kind === 'fill' ? 'water' : 'pourTick', 0.4);
       }
+      if (g.kind === 'chop' && g.stroke) this.cutTick(dt);
       if (g.kind === 'dip' && g.inside) { g.hold += dt; if (Math.random() < 0.2) this.bubbles(MAIN.x, MAIN.y - 100); }
     }
     // the cook's hands, for everyone else to see
@@ -1077,7 +1124,7 @@ export class Station {
     this.preparedFor = C; this.preparedKey = key;
     if (this.mode === 'store') { this.D = displayState(C, this.c.x, this.c.K); return; }
     const st = C.steps[this.sid];
-    const patched = { ...C, steps: { ...C.steps, [this.sid]: { ...st, s: this.done ? 'done' : 'active', ph: Math.min(this.ph, this.c.phases.length - 1), k: this.k, v: g ? g.v || 0 : 0 } } };
+    const patched = { ...C, steps: { ...C.steps, [this.sid]: { ...st, s: this.done ? 'done' : 'active', ph: Math.min(this.ph, this.c.phases.length - 1), k: this.k, v: g ? g.v || 0 : 0, ...(g && g.kind === 'chop' && g.cuts ? { extra: g.cuts.map((c) => ({ cut: c })) } : {}) } } };
     if (this.done) patched.steps[this.sid] = st;
     this.D = displayState(patched, this.c.x, this.c.K);
   }

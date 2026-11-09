@@ -83,6 +83,9 @@ const takeOut = () => ({ g: 'drag', obj: 'fromBox', to: 'board', tool: 'hand', h
 const boxUp = (cut, pile = false) => ({ g: 'drag', obj: 'pieces', to: 'box', tool: 'hand', pile, hint: cut ? 'Gather it up in your hands and put it in its container' : 'Put them back in their container',
   // (from a bunch: into an empty container off the stack – a small bowl (size -1, food3d.js): cut up, it takes less room than whole)
   eff: (S, st) => { const it = item(S, st); if (it) { if (it.extra > 0) it.tub = { size: -1 }; splitRest(S, st.item); delete it.out; delete it.aside; delete it.pile; } } });
+// The knife's cuts as they were made: where each went along the thing, 0 (its end) … 1 (as far as it's cut) – the
+// phase's extra, [{cut}] (shared/cook.js actStep). The pieces are drawn as thick as they were cut (food3d.js cutAt).
+export const cutsOf = (extra) => (extra || []).map((e) => e && Number(e.cut)).filter(Number.isFinite);
 const pickTool = (t) => ({ g: 'tap', hot: 'pick', takes: t, tool: 'hand', hint: `Pick up the ${t}` });
 // Several of a thing are worked one at a time: one taken out onto the board, worked
 // (its share of the cuts, strokes …), and moved to the side of the board – pushed
@@ -99,7 +102,7 @@ function shareOf(p, u, q) {
   const b = (j) => Math.round((j * p.n) / q), before = b(u), mine = Math.max(1, b(u + 1) - before), all = { n: p.n };
   return {
     ...p, n: mine,
-    prog: p.prog && ((D, st, k, v, ph) => p.prog(D, st, before + k, v, { ...ph, ...all })),
+    prog: p.prog && ((D, st, k, v, ph, extra) => p.prog(D, st, before + k, v, { ...ph, ...all }, extra)),
     eff: p.eff && ((S, st, v, fx, ph, extra) => {
       p.eff(S, st, v, fx, { ...ph, ...all }, extra);
       const it = item(S, st);
@@ -250,19 +253,19 @@ export const ACTIONS = {
     cap: 'board', verb: 'Slice', tool: 'knife', icon: '🔪',
     phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'slice', n: s.n || 6, cut: s.cut || 'slices', tool: 'knife', hint: 'Knife down through it, then back up – one per slice',
-        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n }); },
-        eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n }); } },
+        prog: (D, st, k, v, ph, extra) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n, cuts: cutsOf(extra) }); },
+        eff: (S, st, v, fx, ph, extra) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n, cuts: cutsOf(extra) }); } },
     ], true),
   },
   dice: {
     cap: 'board', verb: 'Dice', tool: 'knife', icon: '🔪',
     phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'slice', n: s.n || 4, cut: 'strips', tool: 'knife', hint: 'Cut it into strips – down and up for each cut',
-        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: 'strips', k, n: ph.n }); },
+        prog: (D, st, k, v, ph, extra) => { Object.assign(item(D, st), { cut: 'strips', k, n: ph.n, cuts: cutsOf(extra) }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'strips', k: ph.n, n: ph.n }); } },
       { g: 'circle', n: 0.25, tool: 'hand', turn: true, hint: 'Turn the strips a quarter round' },
       { g: 'chop', mode: 'slice', n: s.n || 4, cut: 'dice', tool: 'knife', hint: 'Now cut across into little cubes',
-        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n, turned: 1 }); },
+        prog: (D, st, k, v, ph, extra) => { Object.assign(item(D, st), { cut: k > 0 ? 'dice' : 'strips', k: k > 0 ? k : ph.n, n: ph.n, turned: 1, cuts: k > 0 ? cutsOf(extra) : [] }); },
         eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: 'dice', k: ph.n, n: ph.n }); } },
     ], true),
   },
@@ -278,8 +281,8 @@ export const ACTIONS = {
     cap: 'board', verb: 'Chop', tool: 'knife', icon: '🔪',
     phases: (s) => onBoard(s, [
       { g: 'chop', mode: 'slice', n: s.n || 5, cut: s.cut || 'chunks', tool: 'knife', hint: 'Knife down and up – one per cut',
-        prog: (D, st, k, v, ph) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n }); },
-        eff: (S, st, v, fx, ph) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n }); } },
+        prog: (D, st, k, v, ph, extra) => { Object.assign(item(D, st), { cut: ph.cut, k, n: ph.n, cuts: cutsOf(extra) }); },
+        eff: (S, st, v, fx, ph, extra) => { Object.assign(item(S, st), { cut: ph.cut, k: ph.n, n: ph.n, cuts: cutsOf(extra) }); } },
     ], true),
   },
   slit: {

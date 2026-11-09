@@ -110,7 +110,7 @@ function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map((
 // ------------------------------------------------------------------ the food
 const CACHE = new Map();
 export function foodKey(kind, st) {
-  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units']) : ''}`;
+  return `${typeof kind === 'string' ? kind : JSON.stringify(kind)}|${st ? JSON.stringify(st, ['qty', 'washed', 'peeled', 'cut', 'k', 'n', 'cook', 'shape', 'size', 'form', 'sauce', 'coverage', 'toppings', 'x', 'y', 'kind', 'boiled', 'cored', 'peelStripes', 'rolls', 'stuffed', 'filled', 'fill', 'filling', 'cracked', 'open', 'spread', 'box', 'bits', 'extra', 'slots', 'mix', 'balls', 'ballsOf', 'turned', 'fold', 'roll', 'units', 'cuts']) : ''}`;
 }
 export function buildFood(kind, st) {
   const key = foodKey(kind, st);
@@ -832,11 +832,11 @@ function cutGeom(a) {
   const S = sizeArt(a);
   return { xL: (-S.w * K) / 2, xR: (S.w * K) / 2, top: S.h * K, sec: null };
 }
-// the k-th of n cuts' line (k = 0: the right end)
-const cutAt = (C, k, n) => {
-  const L = C.xR - C.xL, keep = clamp(0.032, L * KEEP, L * 0.4);
-  return C.xR - (L - keep) * clamp(k / Math.max(1, n), 0, 1);
-};
+// the k-th of n cuts' line (k = 0: the right end) – where it was made (cuts: each one's place, 0 the right end … 1
+// as far as it's cut, shared/actions.js cutsOf), else where it would be cutting evenly
+const cutSpan = (C) => { const L = C.xR - C.xL; return L - clamp(0.032, L * KEEP, L * 0.4); };
+const cutF = (k, n, cuts) => (k <= 0 ? 0 : cuts && Number.isFinite(cuts[k - 1]) ? clamp(cuts[k - 1], 0, 1) : clamp(k / Math.max(1, n), 0, 1));
+const cutAt = (C, k, n, cuts) => C.xR - cutSpan(C) * cutF(k, n, cuts);
 // Several of a thing are cut one after the other, the n cuts shared out among
 // them: which one is being cut (u), its cuts so far and in all (kk of nn), and the
 // cuts on the ones before it.
@@ -849,13 +849,17 @@ function unitOf(k, n, q) {
 // For the knife in first person: on a thing being cut (qty of them: the one being
 // cut), k of n cuts made, where the next cut goes and where the cut face is now (x,
 // as buildFood lays it out), and how tall it is.
-export function cutLine(kind, k, n, qty = 1) {
+// (cuts: where those made went – see cutAt; fOf / xOf: a place along it as a cut's 0 … 1 and back; sec: its section
+// there, as cutGeom has it)
+export function cutLine(kind, k, n, qty = 1, cuts = null) {
   const a = artOf(kind);
   if (!a) return null;
   const C = cutGeom(a);
   const q = clamp(num(qty, 1) | 0, 1, 8);
   if (q > 1) { const U = unitOf(k, n, q); k = U.kk; n = U.nn; }
-  return { next: cutAt(C, Math.min(n, k + 1), n), face: cutAt(C, k, n), xL: C.xL, xR: C.xR, top: C.top };
+  const span = cutSpan(C);
+  return { next: cutAt(C, Math.min(n, k + 1), n, cuts), face: cutAt(C, k, n, cuts), faceF: cutF(k, n, cuts), k, n, xL: C.xL, xR: C.xR, top: C.top, span,
+    fOf: (x) => (C.xR - x) / span, xOf: (f) => C.xR - span * f, sec: C.sec };
 }
 
 // Several, cut one after the other: the one being cut where one alone would be,
@@ -900,7 +904,7 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
   // (rings, slices cut off a long or round thing: still where it was, each standing on its edge leaning on the next –
   // the first one cut fallen flat a little apart – as the user's reference video has a cut pepper; not lying flat in a
   // chain)
-  if (done && (cut === 'rings' || cut === 'slices') && !loose && cutGeom(a).sec) { const m = clamp(Math.round(n || defaultCount(a, cut, st)), 3, 7); return cutSlices(g, a, P, cutGeom(a), m, m, true); } // (the video's: one fallen, six standing)
+  if (done && (cut === 'rings' || cut === 'slices') && !loose && cutGeom(a).sec) { const m = clamp(Math.round(n || defaultCount(a, cut, st)), 3, 7); return cutSlices(g, a, P, cutGeom(a), m, m, true, m === n ? st.cuts : null); } // (the video's: one fallen, six standing)
   if (done) return pieces(g, a, P, cut, defaultCount(a, cut, st), seed, st);
   const q = clamp(num(st.qty, 1) | 0, 1, 8);
   if (q > 1 && cut !== 'halves') return cutMany(g, a, P, cut, st, seed, wet, q, k, n);
@@ -919,7 +923,8 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
     return;
   }
   const C = cutGeom(a);
-  const xc = cutAt(C, k, n);
+  const cuts = Array.isArray(st.cuts) ? st.cuts : null;
+  const xc = cutAt(C, k, n, cuts);
   const row = cut === 'slices' || cut === 'rings';
   const cnt = row ? Math.min(12, Math.max(1, k)) : Math.max(1, Math.round(defaultCount(a, cut, st) * frac));
   if (C.sec) {
@@ -936,7 +941,7 @@ function cutProgress(g, a, P, cut, st, seed, wet) {
       g.add(wholeG);
       cutFace(g, a, P, C.sec(xc), xc);
     }
-    if (row) return cutSlices(g, a, P, C, k, n);
+    if (row) return cutSlices(g, a, P, C, k, n, false, cuts);
     const pg = new THREE.Group();
     pieces(pg, a, P, cut, cnt, seed, st);
     pg.position.x = xc + 0.006 + heapGap(a, cut, cnt, st);
@@ -969,28 +974,39 @@ function cutFace(g, a, P, s, x) {
   part(g, GEO.disc, flesh, x, s.y, 0, s.rz, s.ry, 1, 0, Math.PI / 2, 0);
   if (a.type === 'round' && !a.spots) part(g, GEO.disc, fm(P.c3, { rough: 0.5 }), x + 0.0004, s.y, 0, s.rz * 0.55, s.ry * 0.55, 1, 0, Math.PI / 2, 0);
 }
-// the slices cut off so far, standing against each other beside it: the
-// newest nearly upright by the knife, the older ones further over
-// (fallen: the left one lying flat a little apart from the rest, as the user's reference video has it)
-function cutSlices(g, a, P, C, k, n, fallen = false) {
+// the slices cut off so far, as thick as each was cut (cuts – cutAt): fallen over to the right, away from the knife, the
+// first one cut lying flat furthest over, the others each leaning on the one before – as the user's reference
+// video of a lemon being sliced has them (2026-11-09). The newest, by the knife, is marked (userData.fresh: how far
+// it leans, as it lies) – scene3d tips it over from standing as it comes off.
+// (fallen – all cut: the left one lying flat a little apart from the rest, as the user's gathering video has it)
+function cutSlices(g, a, P, C, k, n, fallen = false, cuts = null) {
   const skin = fm(P.c1, { rough: 0.45 }), flesh = fm(P.c2, { rough: 0.5 }), inner = fm(P.c2, { rough: 0.5, side: THREE.BackSide });
   // (all cut, a hollow thing's rings: its thin wall's cut face as green as its skin, a few pale seeds inside – and all of a
   // size, the middle's, as the video's pepper rings are; not tapering off toward its tip)
   const face = fallen && a.hollow ? fm(mixHex(P.c1, P.c2, 0.25), { rough: 0.5 }) : flesh, seedM = fm(mixHex(P.c2, '#fffbe8', 0.6), { rough: 0.7 });
   const mid0 = fallen && C.sec((C.xL + C.xR) / 2), mid = mid0 && { ...mid0, ry: mid0.ry * 1.12, rz: mid0.rz * 1.12 }; // (a little rounder than the section: rings spring open once cut)
-  let px = cutAt(C, k, n) + 0.004;
+  let px = cutAt(C, k, n, cuts) + 0.004, lastPhi = 0, lastT = 0;
   const first = g.children.length, xs = [];
   for (let j = k - 1; j >= 0; j--) {
-    const hi = cutAt(C, j, n), lo = cutAt(C, j + 1, n), t = Math.max(0.002, (hi - lo) * (fallen ? 0.55 : 0.9)); // (all cut: thin rings, as the video's)
+    const hi = cutAt(C, j, n, cuts), lo = cutAt(C, j + 1, n, cuts), t = Math.max(0.002, (hi - lo) * (fallen ? 0.55 : 0.9)); // (all cut: thin rings, as the video's)
     const s = mid || C.sec((hi + lo) / 2);
     if (!s || s.ry < 0.002) continue;
-    const flat = fallen && j === k - 1;
-    const phi = flat ? Math.PI / 2 - 0.04 : fallen ? 0.85 + 0.06 * ((j * 7) % 3) : Math.min(0.85, 0.3 + 0.2 * (k - 1 - j));
-    px += j === k - 1 ? (flat ? s.ry : t / 2) : fallen && j === k - 2 ? s.ry * 1.9 + 0.012 : (t / Math.cos(phi)) * 1.08 + 0.0015;
+    let phi;
+    if (fallen) {
+      const flat = j === k - 1;
+      phi = flat ? Math.PI / 2 - 0.04 : 0.85 + 0.06 * ((j * 7) % 3);
+      px += j === k - 1 ? (flat ? s.ry : t / 2) : j === k - 2 ? s.ry * 1.9 + 0.012 : (t / Math.cos(phi)) * 1.08 + 0.0015;
+    } else {
+      // (cutting: the first one flat, the rest leaning over onto it, a little apart where they'd rest on each other)
+      phi = j === 0 ? Math.PI / 2 - 0.03 : 1.05 + 0.04 * ((j * 7) % 3);
+      px += j === k - 1 ? t / 2 : j === 0 ? Math.max(lastT * Math.tan(lastPhi) * 1.2, 0.008) + 0.002 : (lastT / Math.cos(lastPhi)) * 1.08 + 0.0015;
+      lastPhi = phi; lastT = t;
+    }
     // (leaning over from its foot)
     const h = new THREE.Group();
     h.position.set(px, (Math.sin(phi) * t) / 2, 0);
     h.rotation.z = -phi;
+    if (!fallen && j === k - 1) Object.assign(h.userData, { fresh: { phi, t }, keep: true }); // (kept a group of its own: it moves)
     // (the slice standing on its edge, its cut faces to the sides: built round y, turned)
     const sl = new THREE.Group();
     sl.position.y = s.ry;

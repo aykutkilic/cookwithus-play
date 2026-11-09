@@ -423,6 +423,8 @@ function onEvent(e) {
       if (!mine) sfx.play({ chop: 'chop', strokes: 'scrub', circle: 'stir', peel: 'peel', crack: 'crack', place: 'plop', flick: 'whoosh', drag: 'clunk', tap: 'tap' }[e.g] || 'pop', 0.25);
       break;
     case 'finish': sfx.play('fanfare'); break;
+    // (my slices, all cut: how even they came out)
+    case 'even': if (mine) toast(e.q >= 0.97 ? '🔪 Even slices – a cook’s hand!' : e.q >= 0.8 ? '🔪 Nearly even slices' : '🔪 Uneven slices – thick and thin', 2600); break;
     // Şakir
     case 'sakirComes': sfx.play('whoosh', 0.5); toast('👻 Uh-oh… Şakir is floating about the kitchen', 3500); break;
     case 'sakir': { sfx.play('clunk'); const it = S.M.cook && S.M.cook.items[e.id]; toast(`👻 Şakir bumped the ${it ? thingName(S.M.cook, S.x, `i:${e.id}`) : 'food'} off the counter! Fresh ones are back – do them again (and sweep up the bits)`, 5200); break; }
@@ -1133,6 +1135,9 @@ function openWork(sid, fx) {
   S.pending = null;
   S.working = { sid, fx: f.id, fp: true };
   station.headless = true;
+  // (cutting: where along the food the knife would go for a point of the close-up – the outline shows it)
+  station.aimHook = (p) => scene.cutAim(p);
+  scene.cutFrame = null;
   // things put under the tap / in the colander go where the water falls in the basin
   station.targetHook = (to, vid) => {
     // (cleaning freehand: the pointer on the board's top / the pot's floor – and where that surface is, as the pointer has it)
@@ -1285,6 +1290,7 @@ function closeStation(silent = false) {
   document.body.classList.remove('fpwork');
   station.headless = false;
   station.targetHook = null;
+  station.aimHook = null;
   if (!S.working) { $('station').hidden = true; return; }
   const sid = S.working.sid;
   const st = sid && S.M.cook && S.M.cook.steps[sid];

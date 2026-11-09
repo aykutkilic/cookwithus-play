@@ -23,10 +23,11 @@ import { contactOffset, planAlongRay, handSpheres, clearance } from './reachplan
 // (motion capture off reference videos – scripts/refloop/mocap*.mjs – played back by the hands; loaded once, as it's there)
 const MOCAP = {};
 for (const name of ['slices-into-bowl']) fetch(new URL(`./mocap/${name}.json`, import.meta.url)).then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) MOCAP[name] = m; }).catch(() => {});
-import { MAIN, SIDE } from './station.js';
+import { MAIN, SIDE, CUT_T } from './station.js';
 import { buildFood, foodKey, boxedFood, boxable, boxSpec, cutLine, syncCuts, hasCuts, emptyBox, emptyBoxSize } from './food3d.js';
 import { lookOf } from './figure.js';
 import { mat, M, ball, cyl, lathe, ring, box, rod, v3 } from './parts3d.js';
+import { setOutline, outlineCopy, setOutlineRes } from './outline3d.js';
 import { vesselModel, GRIP3D, chefKnifeMesh, peelerMesh, graterMesh, utensilMesh, knifeEdgeAt, KNIFE_HANG } from './props3d.js';
 import { ACTIONS, BOARD_TOOLS, boardUnits } from '../shared/actions.js';
 import { SAKIR, phaseTarget, glovesOn, BOARD_X } from '../shared/cook.js';
@@ -72,6 +73,15 @@ const KNIFE_ROCK = [0.06, 0.06]; // (cutting: the knife's tip down this far (rad
 // the blade from its bolster it cuts – near the heel, the hand just behind and beside the food, the rest of the blade
 // on beyond it, as the reference has it; how far its spine leans away from the holding hand – a cook's knife isn't
 // held plumb, and plumb it's seen edge-on from my eyes, a grey needle, not a blade)
+// (aimed cutting: the knife along its blade at the top of a stroke (fwd) and at the bottom (back) – forward at the top, as
+// the lemon video's knife hand is, 2.8 cm before where it is at the bottom; and its edge only so far clear over the food
+// at the top (clear). Measured, not by eye: higher, or less far forward, the arm's solver (fparms3d) often found no turn of
+// forearm and wrist for the knife and gave way round the grip – the hand 4.6 cm from where it was asked; at these, 0.7.)
+// (aimed cutting: the blade turned this far from square across the food, toward the other hand – the lemon video's ~14°;
+// square, in 20 of 48 samples the arm's solver gave way round the grip, the hand 4.6 cm off; at this, only for a frame
+// or two as it lifts)
+const CUT_YAW = 0.25;
+const CUT_REACH = { fwd: 0.03, back: -0.015, clear: 0.004 };
 const CHOP_STROKE = { lift: 1.0, slide: 0.03, rate: 9, heel: 0.075, lean: 0.12, tip: 0.2 }; // (tip: tipped no further than this – the tip comes off the board a little at the top of a stroke over a fat food: tipped steeper, the handle goes up past where the arm reaches)
 // How far a chef's knife is tipped (rad) for its edge at `at` along the blade to be h over the board with its tip's
 // edge on the board (the edge curves up toward the tip – chefKnifeMesh's belly – so even flat on the board it tips).
@@ -104,7 +114,8 @@ export const LITE = new URLSearchParams(location.search).has('lite');
 export class Scene3D {
   constructor(canvas) {
     this.canvas = canvas;
-    const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+    // (a stencil buffer: outlines – outline3d.js – are drawn round a mask of the thing itself)
+    const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true, powerPreference: 'high-performance' });
     this.dpr = LITE ? 1 : Math.min(devicePixelRatio, mobile ? 1.5 : 2);
     r.setPixelRatio(this.dpr);
     r.shadowMap.enabled = !LITE;
@@ -142,7 +153,10 @@ export class Scene3D {
     if (!mobile && !LITE && innerWidth * innerHeight * this.dpr * this.dpr <= 2.6e6) {
       try {
         // (the scene drawn with its depth kept, for the occlusion)
-        const composer = new EffectComposer(r, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(1, 1) }));
+        // (its depth with a stencil in it, for the outlines)
+        const dt = new THREE.DepthTexture(1, 1, THREE.UnsignedInt248Type);
+        dt.format = THREE.DepthStencilFormat;
+        const composer = new EffectComposer(r, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4, stencilBuffer: true, depthTexture: dt }));
         composer.addPass(new RenderPass(this.scene, this.camera));
         const ao = new GTAOPass(this.scene, this.camera, 1, 1);
         ao.updateGtaoMaterial({ radius: 0.25, distanceExponent: 2, thickness: 1, scale: 1, samples: 8 });
@@ -831,6 +845,8 @@ export class Scene3D {
     this.updateSakir(view, dt);
     this.updateSteam(dt);
     this.renderer.shadowMap.needsUpdate = true;
+    const db = this.renderer.getDrawingBufferSize(this.dbSize || (this.dbSize = new THREE.Vector2()));
+    setOutlineRes(db.x / this.renderer.getPixelRatio(), db.y / this.renderer.getPixelRatio()); // (widths in the page's pixels)
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
   }
@@ -2079,46 +2095,14 @@ export class Scene3D {
     R.scale.setScalar(pose.scale || 1);
     R.visible = true;
   }
-  // (a see-through copy of a thing's meshes, made afresh as it changes – cut, filled – shapes shared, not copied)
+  // (an outline of the thing's own shapes, made afresh as it changes – cut, filled – shapes shared, not copied)
   buildGhost(src, sig, skip = null) {
     const old = this.ghostPut;
-    if (old) { this.scene.remove(old.root); for (const m of old.mats) m.dispose(); }
-    const mats = [], seeThrough = new Map();
-    const look = (m) => {
-      if (Array.isArray(m)) return m.map(look);
-      if (!seeThrough.has(m)) {
-        let g;
-        if (m.isShaderMaterial || m.isSpriteMaterial || !m.clone) g = new THREE.MeshBasicMaterial({ color: 0xffffff });
-        else g = m.clone();
-        g.transparent = true; g.opacity = GHOST_OPACITY * (m.opacity ?? 1); g.depthWrite = false;
-        if (g.emissive) { g.emissive.set(0xffffff); g.emissiveIntensity = 0.12; }
-        mats.push(g); seeThrough.set(m, g);
-      }
-      return seeThrough.get(m);
-    };
-    const copy = (o) => {
-      if (o === skip || o.userData.glow || !o.visible || o.isSprite || o.isLine || o.isPoints) return null;
-      let c;
-      if (o.isInstancedMesh) { c = new THREE.InstancedMesh(o.geometry, look(o.material), o.count); c.instanceMatrix.copy(o.instanceMatrix); }
-      else if (o.isMesh) c = new THREE.Mesh(o.geometry, look(o.material));
-      else c = new THREE.Group();
-      c.position.copy(o.position); c.quaternion.copy(o.quaternion); c.scale.copy(o.scale);
-      if (o.isMesh) {
-        c.renderOrder = 5;
-        c.castShadow = c.receiveShadow = false;
-        c.raycast = () => {};
-        if (!o.isInstancedMesh) { const rim = new THREE.Mesh(o.geometry, GLOW_GHOST); rim.renderOrder = 6; rim.raycast = () => {}; c.add(rim); }
-      }
-      for (const ch of o.children) { const cc = copy(ch); if (cc) c.add(cc); }
-      return c;
-    };
-    const root = new THREE.Group();
-    const body = copy(src) || new THREE.Group();
-    body.position.set(0, 0, 0); body.quaternion.identity(); body.scale.set(1, 1, 1); // (posed by the root, as the thing's own root is)
-    root.add(body);
+    if (old) this.scene.remove(old.root);
+    const root = outlineCopy(src, LINE_GHOST, skip);
     root.visible = false;
     this.scene.add(root);
-    this.ghostPut = { root, mats, sig, made: this.t };
+    this.ghostPut = { root, sig, made: this.t };
   }
   // the object a thing is drawn as: a pot's group, a food (in its container), a tool – or null
   thingObj(k) {
@@ -2210,8 +2194,8 @@ export class Scene3D {
     }
     if (o && !o.visible) o = null;
     if (o === (this.ptGlowOn || null)) return;
-    if (this.ptGlowOn) setGhost(this.ptGlowOn, false, GLOW_POINT, 'ptGhost');
-    if (o) setGhost(o, true, GLOW_POINT, 'ptGhost');
+    if (this.ptGlowOn) setOutline(this.ptGlowOn, false, LINE_POINT, 'ptLine');
+    if (o) setOutline(o, true, LINE_POINT, 'ptLine');
     this.ptGlowOn = o;
   }
   // a thing's box in its own frame (as it's drawn: its vessel, its food, its tool) – or null
@@ -3402,7 +3386,7 @@ export class Scene3D {
         // over the board (as the close-up has it); off to the side of the food, it
         // goes that way.
         const it = st.subjectItem(), ov = it && out.ov.get(`i:${it.id}`);
-        const C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty);
+        const C = it && cutLine(it.kind, st.k, phaseTarget(ph), boardUnits(it) ? 1 : it.qty, D && D.items[it.id] && D.items[it.id].cuts);
         if (!ov || !C) { toolHand(at(pt)); break; }
         if (ph.flat) {
           // Crushing (cardamom pods, a garlic clove): the knife on its side over the food, its edge away from
@@ -3427,25 +3411,66 @@ export class Scene3D {
         const b = st.subjectBox(), top2 = b.y0 - (ph.mode === 'mince' ? 10 : 18), board2 = b.y1 - 8;
         const lift = p.seen ? Math.max(0, Math.min(1.6, (board2 - p.y) / (board2 - top2))) : 1.3;
         const off = !p.seen ? 0 : p.x < b.x0 - 40 ? p.x - (b.x0 - 40) : p.x > b.x1 + 60 ? p.x - (b.x1 + 60) : 0;
-        const want = C.next + off * w.S;
+        // Aimed (the mouse, the pad – station.aimed): the knife where I point along the food, just clear over it, its
+        // outline down through it and a line round the food where it will cut; a press is one stroke of it (CUT_T) –
+        // over to the place, down through it pushed forward along its length, the slice tipping over as it comes up
+        const aimed = !!(st.aimed && st.aimed()), S = aimed ? g.stroke : null;
+        let aim = null;
+        if (aimed) { this.cutFrame = { id: it.id, pos: ov.pos.clone(), ax: ax.clone(), C, at }; aim = this.cutAimX(C, ax.dot(at(pt).sub(ov.pos))); }
+        const want = !aimed ? C.next + off * w.S : S && S.f != null ? C.xOf(S.f) : aim.x;
         const ck = this.chopAt && this.chopAt.id === it.id ? this.chopAt : (this.chopAt = { id: it.id, x: want });
-        ck.x += (want - ck.x) * Math.min(1, (this.dt || 0.016) * 14 * BRISK);
+        const dt = this.dt || 0.016;
+        // (aimed: between cuts the knife rests on the board at the cut face, as the reference's does – the outline shows
+        // where it will go; a press lifts it over there)
+        if (!aimed) ck.x += (want - ck.x) * Math.min(1, dt * 14 * BRISK);
+        else if (!S) { ck.x += (C.face - ck.x) * Math.min(1, dt * 10); ck.x0 = null; }
+        else { if (ck.x0 == null) ck.x0 = ck.x; const v = Math.min(1, S.t / CUT_T.set); ck.x = ck.x0 + (want - ck.x0) * v * v * (3 - 2 * v); }
         // (as a cook slices – the fal.ai video, docs/work-by-buttons.md: the blade lifted only just clear of the food, not
         // swung back up at me; pushed forward along its length as it goes down through it, drawn back as it comes up)
-        const dt = this.dt || 0.016, lv = Math.min(CHOP_STROKE.lift, lift), down = lv < (ck.lv ?? lv) - 1e-4, up = lv > (ck.lv ?? lv) + 1e-4;
-        ck.lv = lv;
-        if (down || up) ck.dir = down ? 1 : -1;
-        ck.slide = (ck.slide || 0) + ((ck.dir || 0) * CHOP_STROKE.slide / 2 - (ck.slide || 0)) * Math.min(1, dt * CHOP_STROKE.rate);
-        const E = ov.pos.clone().addScaledVector(ax, ck.x).setY(ov.pos.y + 0.001 + lv * (C.top + 0.012));
+        let lv;
+        if (aimed) {
+          const u = S ? S.t : CUT_T.end, ez = (v) => v * v * (3 - 2 * v);
+          // (the reference's knife hand – station.js CUT_T: forward at the top, drawn back toward me going down through it,
+          // at the bottom pushed along the food away from it, knocking the slice over; up again and forward)
+          let sl, push = 0;
+          if (!S) { lv = 0; sl = -1; } // (resting at the face)
+          else if (u < CUT_T.set) { const v = u / CUT_T.set; lv = ez(Math.min(1, v * 1.5)); sl = -1 + 2 * ez(v); } // (up and over to it, the blade forward)
+          else if (u < CUT_T.down) { const v = ez((u - CUT_T.set) / (CUT_T.down - CUT_T.set)); lv = 1 - v; sl = 1 - 2 * v; } // (down through it, drawn back)
+          else { const v = Math.min(1, (u - CUT_T.down) / (CUT_T.end - CUT_T.down)); lv = 0; sl = -1; push = 0 * v; } // (the slice knocked over; it rests there)
+          ck.slide = CUT_REACH.back + ((sl + 1) / 2) * (CUT_REACH.fwd - CUT_REACH.back); // (top: forward; bottom: drawn back)
+          lv *= (C.top + CUT_REACH.clear) / (C.top + 0.012); // (at the top just clear of it)
+          ck.push = push;
+          ck.lv = lv;
+        } else {
+          lv = Math.min(CHOP_STROKE.lift, lift);
+          const down = lv < (ck.lv ?? lv) - 1e-4, up = lv > (ck.lv ?? lv) + 1e-4;
+          ck.lv = lv;
+          if (down || up) ck.dir = down ? 1 : -1;
+          ck.slide = (ck.slide || 0) + ((ck.dir || 0) * CHOP_STROKE.slide / 2 - (ck.slide || 0)) * Math.min(1, dt * CHOP_STROKE.rate);
+        }
+        const E = ov.pos.clone().addScaledVector(ax, ck.x + (aimed ? ck.push || 0 : 0)).setY(ov.pos.y + 0.001 + lv * (C.top + 0.012));
         const Ek = E.clone().addScaledVector(blade, ck.slide);
         // (rocking only a little: the tip tipped further down as it lifts would have the thumb-up hand bent down toward
         // its little finger past what a wrist does – the arm's solver then turned the palm up and the elbow out)
         // (the tip stays on the board beyond the food – only the heel rises and falls: tipped just so far that the tip's
         // edge, up the blade's curved belly, is on the board while the edge at the cut is at E)
-        const K = this.knifeAt(Ek.addScaledVector(ax, this.knifeFix || 0), blade, Math.min(CHOP_STROKE.tip, tipDown(E.y - (ov.pos.y + 0.001), CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
+        // (aimed: the blade pointing away and a little toward the other hand, as the lemon video's knife does – square
+        // across, the wrist was at the end of its turn and the arm's solver kept giving way round the grip)
+        const bladeK = aimed ? blade.clone().applyAxisAngle(UP, (wi === 1 ? 1 : -1) * CUT_YAW) : blade;
+        const K = this.knifeAt(Ek.addScaledVector(ax, this.knifeFix || 0), bladeK, Math.min(CHOP_STROKE.tip, tipDown(E.y - (ov.pos.y + 0.001), CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
         out.tool = { kind: 'knife', grip: K.fist, dir: K.xA, hand: wi, off: K.K0.clone().sub(K.fist) };
         hand(wi, K.fist, 'knife', { dir: K.xA, up: K.yA });
         out.cut = { at: E, ax }; // (the blade's plane: through E, square to ax)
+        if (aimed) {
+          // (the outline of the knife as it will be at the bottom of the stroke there – seen through the food – and a line
+          // round the food where it goes through; not while it's going down)
+          if (!S || S.t < CUT_T.set) {
+            const G = this.knifeAt(ov.pos.clone().addScaledVector(ax, aim.x + (this.knifeFix || 0)).setY(ov.pos.y + 0.001), bladeK, Math.min(CHOP_STROKE.tip, tipDown(0, CHOP_STROKE.heel)), CHOP_STROKE.heel, CHOP_STROKE.lean);
+            const sec = C.sec && C.sec(aim.x);
+            out.cutGhost = { K0: G.K0, xA: G.xA, yA: G.yA, ring: sec && sec.ry > 0.002 ? { pos: ov.pos.clone().addScaledVector(ax, aim.x).addScaledVector(UP, sec.y), yaw: ov.yaw, ry: sec.ry, rz: sec.rz } : null };
+          }
+          this.tipFresh(`item:${it.id}`);
+        }
         // (on a touch screen it's held where the second finger is – not at all without one;
         // never nearer the blade than CLAW_GAP, even at the very end of it)
         // (behind the next cut already as the knife goes to it – the hand moves back first, the knife after)
@@ -3783,6 +3808,34 @@ export class Scene3D {
     if (B.rest) M.set(B.rest.id, B.rest);
   }
 
+  // Aimed cutting: where the knife would go for a point x along the food (cutLine's frame) – no thinner a slice than a
+  // third of an even one, and leaving room for the cuts still to make: {f (0 … 1, cutLine's), x, len (m)}
+  cutAimX(C, x) {
+    const minF = 0.35 / Math.max(1, C.n), lo = C.faceF + minF, hi = Math.max(lo, 1 - (C.n - C.k - 1) * minF);
+    const f = Math.max(lo, Math.min(hi, C.fOf(x)));
+    return { f, x: C.xOf(f), len: C.span };
+  }
+  // (station.aimHook: for a point of the close-up)
+  cutAim(p) {
+    const F = this.cutFrame;
+    if (!F || !p) return null;
+    return this.cutAimX(F.C, F.ax.dot(F.at(p).sub(F.pos)));
+  }
+  // the slice just cut (food3d cutSlices' fresh one) tipping over from standing, away from the knife, onto the others
+  tipFresh(slot) {
+    const f = this.foods.get(slot);
+    if (!f) return;
+    if (f.freshG !== f.g) {
+      f.freshG = f.g; f.fresh = null; f.freshT = this.t;
+      f.g.traverse((o) => { if (o.userData.fresh) f.fresh = o; });
+    }
+    const h = f.fresh;
+    if (!h) return;
+    const { phi, t } = h.userData.fresh, v = Math.min(1, (this.t - f.freshT) / 0.24), a = 0.1 + (phi - 0.1) * v * v; // (falling: faster as it goes)
+    h.rotation.z = -a;
+    h.position.y = (Math.sin(a) * t) / 2;
+  }
+
   // The knife in my hand: its edge at E (the middle of it), the blade pointing d
   // (level), its tip rocked down by tilt – the knife's own origin (chefKnife's)
   // and my fist on its handle there; xA: along it, tip-wards.
@@ -3919,6 +3972,29 @@ export class Scene3D {
         const zA = T.up ? new THREE.Vector3().crossVectors(xA, T.up).normalize() : new THREE.Vector3().crossVectors(xA, UP).normalize(), yA = new THREE.Vector3().crossVectors(zA, xA);
         fx.tool.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
       } else fx.tool.quaternion.setFromUnitVectors(UP, T.dir); // (hanging from the fist, leaning toward me)
+      }
+    }
+    // aimed cutting: the knife's outline where it will go down, a line round the food there
+    const CG = W && W.cutGhost && this.firstPerson ? W.cutGhost : null;
+    if (CG && !fx.cutGhost) {
+      fx.cutGhost = outlineCopy(chefKnifeMesh(), LINE_CUT);
+      const rg = new THREE.Group(), tor = new THREE.Mesh(new THREE.TorusGeometry(1, 0.07, 6, 56), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false }));
+      tor.rotation.y = Math.PI / 2; tor.renderOrder = 29; tor.raycast = () => {};
+      rg.add(tor);
+      fx.cutRing = rg;
+      this.scene.add(fx.cutGhost, fx.cutRing);
+    }
+    if (fx.cutGhost) {
+      fx.cutGhost.visible = !!CG;
+      fx.cutRing.visible = !!(CG && CG.ring);
+      if (CG) {
+        fx.cutGhost.position.copy(CG.K0);
+        fx.cutGhost.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(CG.xA, CG.yA, new THREE.Vector3().crossVectors(CG.xA, CG.yA)));
+        if (CG.ring) {
+          fx.cutRing.position.copy(CG.ring.pos);
+          fx.cutRing.rotation.set(0, CG.ring.yaw, 0);
+          fx.cutRing.scale.set(CG.ring.ry, CG.ring.ry * 1.06, CG.ring.rz * 1.06);
+        }
       }
     }
     // a lid in my hand (a towel under it), and lids lying aside where they were put down
@@ -4360,11 +4436,11 @@ void main() { float f = 1.0 - abs(dot(normalize(vN), normalize(vV))); gl_FragCol
   polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
 });
 const GLOW_MAT = glowMat(0.5, 0.06), GLOW_THING = glowMat(0.85, 0.14);
-// (what's pointed at: a soft warm-white rim, steady; the ghost of what I hold: its rim of light, white)
-const GLOW_POINT = glowMat(1.0, 0.2), GLOW_GHOST = glowMat(0.7, 0.05);
-GLOW_POINT.uniforms.uColor.value.set('#ffd98a'); GLOW_POINT.uniforms.uK.value = 0.9;
-GLOW_GHOST.uniforms.uColor.value.set('#ffffff'); GLOW_GHOST.uniforms.uK.value = 0.6;
-const GHOST_OPACITY = 0.45;
+// (outline3d.js – what's pointed at: a warm line round it; the ghost of what I hold: a white line where it will go;
+// the knife's cut: its outline seen through the food it will go down into)
+const LINE_POINT = { color: '#ffd98a', width: 2, opacity: 0.95 };
+const LINE_GHOST = { color: '#ffffff', width: 2, opacity: 0.9 };
+const LINE_CUT = { color: '#ffffff', width: 1.5, opacity: 0.85, xray: true };
 // lit or not: a mesh's glowing copy rides along as its child (doors, knobs, a pan all move) – each kind of
 // glow its own copy (slot), so the recipe's breathing glow and the pointed-at one don't trade materials
 function setGhost(o, on, mat = GLOW_MAT, slot = 'ghost') {

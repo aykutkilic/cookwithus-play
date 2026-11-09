@@ -19,7 +19,7 @@
 // work is. A step starts only when what it needs is there (or in your hands –
 // you put it down as you start). Nothing walks by itself.
 
-import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool, useItem } from './actions.js';
+import { ACTIONS, phasesOf, stepCap, stepTitle, stepVessel, scrapsOf, stepHands, splitRest, stepTool, useItem, cutsOf } from './actions.js';
 import { simTick, simDone, simVerdict, IN_ORDER, simSeason, simStir, TEMP } from './sim.js';
 import { INGREDIENTS, VESSELS, TOOLS, ingName, storeOf, twoHanded, stocked, boxable } from './ingredients.js';
 import { FIXTURES, SIZES, SIZE_ORDER, kitchenCaps, fixtureById, bakeKind, isStore, storeFx, splitPlace, bayOf } from './kitchens.js';
@@ -1216,6 +1216,14 @@ export function actStep(C, x, K, sid, memberId, a) {
       const px = Math.max(-1, Math.min(1, Number(a.x) || 0)), py = Math.max(-1, Math.min(1, Number(a.y) || 0));
       st.extra.push({ kind: ph.piece, x: Math.round(px * 100) / 100, y: Math.round(py * 100) / 100 });
     }
+    // (the knife: where each cut went along it – where it was aimed, else evenly – each a little past the last)
+    if (ph.g === 'chop') {
+      for (let j = st.k + 1; j <= Math.min(k, target); j++) {
+        const prev = st.extra.length ? st.extra[st.extra.length - 1].cut : 0;
+        const aim = j === Math.min(k, target) && a.cut != null && Number.isFinite(Number(a.cut)) ? Number(a.cut) : j / target;
+        st.extra.push({ cut: Math.round(Math.max(prev + 0.01, Math.min(1, aim)) * 1000) / 1000 });
+      }
+    }
     st.k = Math.min(k, target);
     // (a simulated kitchen: a turn of the spoon round the pan is a stir – nothing catches for a while)
     if (x.sim && ph.g === 'circle' && C.vessels[s.vessel]) simStir(C, C.vessels[s.vessel]);
@@ -1265,6 +1273,11 @@ export function hangGloves(C, memberId) {
 
 function completePhase(C, x, K, s, st, ph, v, f, ev) {
   if (ph.eff) ph.eff(C, s, v, fxState(C, st.fx), ph, st.extra);
+  // (sliced: as good as the slices are even)
+  if (ph.g === 'chop' && ph.mode === 'slice' && !ph.flat) {
+    const q = evenQ(cutsOf(st.extra));
+    if (q != null) { st.q = Math.min(st.q, q); ev.push({ k: 'even', sid: s.id, q }); }
+  }
   if (ph.g === 'tap' && ph.hot === 'gloves') wearGloves(C, st.by, st.fx);
   const a = ACTIONS[s.do];
   // a pot dragged onto a burner / under the tap is there from now on
@@ -1641,6 +1654,20 @@ export function displayState(C, x, K) {
     if (ph && ph.prog) ph.prog(D, s, st.k, st.v, ph, st.extra);
   }
   return D;
+}
+
+// How even slices are: the spread of their thicknesses over their mean (0: all alike) – cuts as cutsOf gives them; null
+// for fewer than two
+export function cutSpread(cuts) {
+  if (!cuts || cuts.length < 2) return null;
+  const t = cuts.map((c, i) => c - (i ? cuts[i - 1] : 0)), m = t.reduce((a, b) => a + b, 0) / t.length;
+  if (!(m > 0)) return null;
+  return Math.sqrt(t.reduce((a, b) => a + (b - m) ** 2, 0) / t.length) / m;
+}
+// …and the step's quality for it: a tenth's spread is a cook's hand (1), half again as thick as each other about 0.75
+export function evenQ(cuts) {
+  const cv = cutSpread(cuts);
+  return cv == null ? null : Math.max(0.5, Math.min(1, 1 - Math.max(0, cv - 0.1) * 1.2));
 }
 
 export function stepIcon(s) { const a = ACTIONS[s.do]; return a ? a.icon : '•'; }

@@ -138,6 +138,13 @@ export class PadWork {
         break;
       }
       case 'chop': {
+        // aimed (first person): a press is a stroke where the hand points – the mouse or the right stick put it there
+        if (st.aimed()) {
+          const p = { x: st.ptr.x, y: st.ptr.y };
+          this.ev('down', p); this.ev('up', p);
+          for (let t = 0; t < 100 && st.g === g && (g.stroke || g.queue); t++) await sleep(20);
+          break;
+        }
         // a cut: the knife lifted over the food, down through it to the board, up again – about two and a half
         // a second, as a home cook slices; the next cut further along
         const b = st.subjectBox(), n = Math.max(1, phaseTarget(ph));
